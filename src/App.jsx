@@ -1,7 +1,8 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useState, useEffect } from 'react'
+import { InventoryProvider } from './context/InventoryContext'
 import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
+import Dashboard, { Client, Devices, Location, Assigning, GroundTeam, Installation, Return } from './pages/dashboard'
 import SuperAdmin from './pages/superadmin/SuperAdmin'
 import Layout from './components/Layout'
 
@@ -44,6 +45,7 @@ function App() {
   }
 
   return (
+    <InventoryProvider>
     <Router>
       <Routes>
         <Route 
@@ -65,6 +67,13 @@ function App() {
           }
         >
           <Route path="dashboard" element={<Dashboard userRole={userRole} />} />
+          <Route path="dashboard/client" element={<Client />} />
+          <Route path="dashboard/devices" element={<Devices />} />
+          <Route path="dashboard/location" element={<Location />} />
+          <Route path="dashboard/assigning" element={<Assigning />} />
+          <Route path="dashboard/ground-team" element={<GroundTeam />} />
+          <Route path="dashboard/installation" element={<Installation />} />
+          <Route path="dashboard/return" element={<Return />} />
           <Route 
             path="super-admin" 
             element={
@@ -77,6 +86,7 @@ function App() {
         </Route>
       </Routes>
     </Router>
+    </InventoryProvider>
   )
 }
 

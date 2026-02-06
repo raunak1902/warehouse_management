@@ -5,7 +5,14 @@ import {
   Settings, 
   LogOut,
   Menu,
-  X
+  X,
+  Users,
+  Smartphone,
+  MapPin,
+  Link2,
+  UsersRound,
+  Wrench,
+  RotateCcw
 } from 'lucide-react'
 
 const Layout = ({ userRole, onLogout }) => {
@@ -17,6 +24,13 @@ const Layout = ({ userRole, onLogout }) => {
     ...(userRole === 'SuperAdmin' || userRole === 'Admin' ? [
       { path: '/super-admin', icon: Settings, label: 'Super Admin' },
     ] : []),
+    { path: '/dashboard/client', icon: Users, label: 'Client' },
+    { path: '/dashboard/devices', icon: Smartphone, label: 'Devices' },
+    { path: '/dashboard/location', icon: MapPin, label: 'Location' },
+    { path: '/dashboard/assigning', icon: Link2, label: 'Assigning' },
+    { path: '/dashboard/ground-team', icon: UsersRound, label: 'Ground Team' },
+    { path: '/dashboard/installation', icon: Wrench, label: 'Installation' },
+    { path: '/dashboard/return', icon: RotateCcw, label: 'Return' },
   ]
 
   const isActive = (path) => location.pathname === path

@@ -1,0 +1,8 @@
+export { default } from './Dashboard'
+export { default as Client } from './Client'
+export { default as Devices } from './Devices'
+export { default as Location } from './Location'
+export { default as Assigning } from './Assigning'
+export { default as GroundTeam } from './GroundTeam'
+export { default as Installation } from './Installation'
+export { default as Return } from './Return'
