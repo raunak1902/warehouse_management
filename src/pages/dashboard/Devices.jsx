@@ -43,6 +43,7 @@ import {
 } from '../../config/deviceConfig'
 
 const LIFECYCLE_OPTIONS = [
+  { value: 'all', label: 'All Devices', icon: Layers, desc: 'View all devices in system' },
   { value: 'deployed', label: 'Deployed', icon: Truck, desc: 'In use by client at location' },
   { value: 'assigning', label: 'Assigning', icon: Link2, desc: 'Ordered, not yet deployed' },
   { value: 'warehouse', label: 'In Warehouse', icon: Package, desc: 'In Warehouse A, B or C' },
@@ -82,7 +83,7 @@ const Devices = () => {
     addDevice,
   } = useInventory()
 
-  const [lifecycleFilter, setLifecycleFilter] = useState('deployed')
+  const [lifecycleFilter, setLifecycleFilter] = useState('all')
   const [selectedType, setSelectedType] = useState(null)
   const [searchCode, setSearchCode] = useState('')
   const [detailDevice, setDetailDevice] = useState(null)
@@ -107,6 +108,7 @@ const Devices = () => {
   const [newMfgDate, setNewMfgDate] = useState('')
   const [newModel, setNewModel] = useState('')
   const [newDeviceCode, setNewDeviceCode] = useState('')
+  const [newLifecycleStatus, setNewLifecycleStatus] = useState('warehouse')
 
   const filterOptions = useMemo(() => getUniqueDeviceFilterOptions(), [getUniqueDeviceFilterOptions])
   // Use static Indian states/places so Location dropdown always has options when opened
@@ -123,9 +125,10 @@ const Devices = () => {
     return `${prefix}-${String(next).padStart(3, '0')}`
   }, [devices, newProductType])
 
-  const getDevicesForLifecycle = (list) => {
-    return list.filter((d) => getDeviceLifecycleStatus(d) === lifecycleFilter)
-  }
+ const getDevicesForLifecycle = (list) => {
+  if (lifecycleFilter === 'all') return list  // NEW: Show all if 'all' selected
+  return list.filter((d) => getDeviceLifecycleStatus(d) === lifecycleFilter)
+}
 
   const filteredDevices = useMemo(() => {
     let list = selectedType ? getDevicesByType(selectedType) : devices
@@ -210,7 +213,10 @@ const Devices = () => {
       gpsId: newGpsId.trim() || undefined,
       mfgDate: newMfgDate || undefined,
       model: newModel.trim() || undefined,
+      location: newLifecycleStatus === 'warehouse' ? 'Warehouse A' : '',
+      lifecycleStatus: newLifecycleStatus,
     })
+    setNewLifecycleStatus('warehouse')
     setShowAddDevice(false)
   }
 
@@ -921,6 +927,20 @@ const Devices = () => {
                   onChange={(e) => setNewMfgDate(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Current Location *</label>
+                <select
+                  required
+                  value={newLifecycleStatus}
+                  onChange={(e) => setNewLifecycleStatus(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
+                >
+                  <option value="">Select location...</option>
+                  <option value="warehouse">In Warehouse</option>
+                  <option value="deployed">Deployed</option>
+                  <option value="out_of_warehouse">Out of Warehouse</option>
+                </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Unique code *</label>

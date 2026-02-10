@@ -7,18 +7,33 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Materio-inspired warm palette
         primary: {
-          50: '#f0f9ff',
-          100: '#e0f2fe',
-          200: '#bae6fd',
-          300: '#7dd3fc',
-          400: '#38bdf8',
-          500: '#0ea5e9',
-          600: '#0284c7',
-          700: '#0369a1',
-          800: '#075985',
-          900: '#0c4a6e',
+          50: '#FFF3E0',
+          100: '#FFE0B2',
+          200: '#FFCC80',
+          300: '#FFB74D',
+          400: '#FFA726',
+          500: '#FF9800',
+          600: '#FB8C00',
+          700: '#F57C00',
+          800: '#EF6C00',
+          900: '#E65100',
         },
+        background: {
+          main: '#F5F1E8',
+          card: '#FFFFFF',
+          secondary: '#FAFAFA',
+        },
+        text: {
+          primary: '#2C3E50',
+          secondary: '#5A6C7D',
+          muted: '#95A5A6',
+        }
+      },
+      boxShadow: {
+        'card': '0 2px 8px rgba(0, 0, 0, 0.08)',
+        'card-hover': '0 4px 16px rgba(0, 0, 0, 0.12)',
       },
     },
   },

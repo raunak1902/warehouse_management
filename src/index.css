@@ -2,16 +2,181 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@layer base {
+  body {
+    @apply bg-background-main text-text-primary;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+  }
+  
+  * {
+    @apply border-gray-200;
+  }
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+@layer components {
+  /* Card Components */
+  .card {
+    @apply bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden transition-shadow hover:shadow-card-hover;
+  }
+  
+  .stat-card {
+    @apply card p-6;
+  }
+  
+  /* Progress Bars */
+  .progress-bar {
+    @apply h-2 rounded-full bg-gray-200 overflow-hidden;
+  }
+  
+  .progress-fill {
+    @apply h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-500 ease-out;
+  }
+  
+  /* Buttons */
+  .btn-primary {
+    @apply px-4 py-2 bg-primary-500 text-white rounded-lg font-medium hover:bg-primary-600 transition-colors shadow-sm hover:shadow-md;
+  }
+  
+  .btn-secondary {
+    @apply px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors;
+  }
+  
+  /* Input Fields */
+  .input-field {
+    @apply w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all;
+  }
+  
+  /* Select Dropdown */
+  .select-field {
+    @apply px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm bg-white;
+  }
+}
+
+@layer utilities {
+  /* Custom scrollbar */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 10px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #cbd5e0;
+    border-radius: 10px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: #a0aec0;
+  }
+  
+  /* Gradient text */
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary-600 to-primary-400 bg-clip-text text-transparent;
+  }
+  
+  /* Animations */
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+  
+  @keyframes slideIn {
+    from {
+      transform: translateX(-20px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+  
+  .animate-slide-in {
+    animation: slideIn 0.4s ease-out;
+  }
+}
+
+/* Chart and Data Visualization Styles */
+.chart-bar {
+  @apply bg-gradient-to-t from-primary-500 to-primary-400 rounded-t transition-all duration-300 hover:from-primary-600 hover:to-primary-500 cursor-pointer;
+}
+
+.stat-number {
+  @apply text-3xl sm:text-4xl font-bold text-gray-900;
+}
+
+.stat-label {
+  @apply text-sm text-gray-600;
+}
+
+.metric-card {
+  @apply bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow;
+}
+
+/* Dashboard specific styles */
+.dashboard-grid {
+  @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6;
+}
+
+.dashboard-card-header {
+  @apply flex items-center justify-between mb-4;
+}
+
+.dashboard-card-title {
+  @apply text-lg font-semibold text-gray-900;
+}
+
+/* Icon containers */
+.icon-wrapper {
+  @apply p-2 rounded-lg bg-gray-50;
+}
+
+.icon-wrapper-primary {
+  @apply p-2 rounded-lg bg-primary-50 text-primary-600;
+}
+
+/* Badge styles */
+.badge {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+}
+
+.badge-success {
+  @apply bg-green-100 text-green-800;
+}
+
+.badge-warning {
+  @apply bg-yellow-100 text-yellow-800;
+}
+
+.badge-danger {
+  @apply bg-red-100 text-red-800;
+}
+
+.badge-info {
+  @apply bg-blue-100 text-blue-800;
+}
+
+/* Responsive utilities */
+@media (max-width: 640px) {
+  .stat-number {
+    @apply text-2xl;
+  }
+  
+  .dashboard-grid {
+    @apply gap-4;
+  }
 }

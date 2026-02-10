@@ -2,7 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-
 import { useState, useEffect } from 'react'
 import { InventoryProvider } from './context/InventoryContext'
 import Login from './pages/Login'
-import Dashboard, { Client, Devices, Location, Assigning, GroundTeam, Installation, Return } from './pages/dashboard'
+import Dashboard, { Client, Devices, Location, Assigning, Delivery, GroundTeam, Installation, Return } from './pages/dashboard'
 import SuperAdmin from './pages/superadmin/SuperAdmin'
 import Layout from './components/Layout'
 
@@ -72,6 +72,7 @@ function App() {
           <Route path="dashboard/location" element={<Location />} />
           <Route path="dashboard/assigning" element={<Assigning />} />
           <Route path="dashboard/ground-team" element={<GroundTeam />} />
+          <Route path="dashboard/delivery" element={<Delivery />} /> 
           <Route path="dashboard/installation" element={<Installation />} />
           <Route path="dashboard/return" element={<Return />} />
           <Route 

@@ -63,7 +63,32 @@ const Location = () => {
   const [selectedLocation, setSelectedLocation] = useState(null) // { state, district, location }
   const [searchLocation, setSearchLocation] = useState('')
 
-  const hierarchy = useMemo(() => getLocationHierarchy(), [getLocationHierarchy])
+  // Transform the hierarchy data into the format we need
+  const hierarchy = useMemo(() => {
+    const rawHierarchy = getLocationHierarchy()
+    
+    // Build the proper structure
+    const states = Object.keys(rawHierarchy).sort()
+    const districtsByState = {}
+    const locationsByStateDistrict = {}
+    
+    states.forEach(state => {
+      const districts = Object.keys(rawHierarchy[state]).sort()
+      districtsByState[state] = districts
+      
+      districts.forEach(district => {
+        const key = `${state}|${district}`
+        locationsByStateDistrict[key] = Object.keys(rawHierarchy[state][district]).sort()
+      })
+    })
+    
+    return {
+      states,
+      districtsByState,
+      locationsByStateDistrict
+    }
+  }, [getLocationHierarchy])
+
   const fullSummary = useMemo(() => getLocationSummary(), [getLocationSummary])
 
   const filteredSummary = useMemo(() => {

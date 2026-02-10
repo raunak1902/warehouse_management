@@ -12,7 +12,8 @@ import {
   Link2,
   UsersRound,
   Wrench,
-  RotateCcw
+  RotateCcw,
+  Truck
 } from 'lucide-react'
 
 const Layout = ({ userRole, onLogout }) => {
@@ -28,6 +29,7 @@ const Layout = ({ userRole, onLogout }) => {
     { path: '/dashboard/devices', icon: Smartphone, label: 'Devices' },
     { path: '/dashboard/location', icon: MapPin, label: 'Location' },
     { path: '/dashboard/assigning', icon: Link2, label: 'Assigning' },
+    { path: '/dashboard/delivery', icon: Truck, label: 'Delivery' },
     { path: '/dashboard/ground-team', icon: UsersRound, label: 'Ground Team' },
     { path: '/dashboard/installation', icon: Wrench, label: 'Installation' },
     { path: '/dashboard/return', icon: RotateCcw, label: 'Return' },
@@ -36,16 +38,16 @@ const Layout = ({ userRole, onLogout }) => {
   const isActive = (path) => location.pathname === path
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-background-main">
       {/* Sidebar */}
-      <aside className={`${sidebarOpen ? 'w-64' : 'w-20'} bg-white border-r border-gray-200 transition-all duration-300 flex flex-col`}>
+      <aside className={`${sidebarOpen ? 'w-64' : 'w-20'} bg-white border-r border-gray-200 transition-all duration-300 flex flex-col shadow-sm`}>
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
           <h1 className={`font-bold text-xl text-primary-600 ${!sidebarOpen && 'hidden'}`}>
             EDSignage
           </h1>
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 rounded-lg hover:bg-gray-100"
+            className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
           >
             {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
@@ -58,13 +60,13 @@ const Layout = ({ userRole, onLogout }) => {
               <Link
                 key={item.path}
                 to={item.path}
-                className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
+                className={`flex items-center gap-3 p-3 rounded-lg transition-all ${
                   isActive(item.path)
-                    ? 'bg-primary-50 text-primary-600 font-medium'
-                    : 'text-gray-700 hover:bg-gray-100'
+                    ? 'bg-gradient-to-r from-primary-50 to-primary-100 text-primary-700 font-medium shadow-sm'
+                    : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900'
                 }`}
               >
-                <Icon size={20} />
+                <Icon size={20} className={isActive(item.path) ? 'text-primary-600' : ''} />
                 {sidebarOpen && <span>{item.label}</span>}
               </Link>
             )
@@ -88,7 +90,7 @@ const Layout = ({ userRole, onLogout }) => {
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto">
-        <div className="p-6">
+        <div className="p-6 max-w-7xl mx-auto">
           <Outlet />
         </div>
       </main>
