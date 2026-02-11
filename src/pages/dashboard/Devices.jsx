@@ -25,6 +25,10 @@ import {
   Truck,
   Link2,
   Layers,
+  Battery,
+  Check,
+  ChevronDown,
+  Info,
 } from 'lucide-react'
 import {
   useInventory,
@@ -60,6 +64,39 @@ const PRODUCT_TYPE_ICONS = {
   istand: Monitor,
 }
 
+const SET_TYPES = {
+  aStand: {
+    label: 'A-Frame Standee',
+    icon: LayoutGrid,
+    color: 'orange',
+    components: [
+      { key: 'stand', label: 'A-Frame Stand', icon: LayoutGrid, inventoryKey: 'aFrameStands', deviceType: 'stand' },
+      { key: 'tv', label: 'TV (43" or larger)', icon: Monitor, inventoryKey: 'tvs', deviceType: 'tv' },
+      { key: 'mediaBox', label: 'Media Box', icon: Tv, inventoryKey: 'mediaBoxes', deviceType: 'mediaBox' },
+    ]
+  },
+  iStand: {
+    label: 'I-Frame Standee',
+    icon: Monitor,
+    color: 'blue',
+    components: [
+      { key: 'stand', label: 'I-Frame Stand', icon: Monitor, inventoryKey: 'iFrameStands', deviceType: 'istand' },
+      { key: 'tv', label: 'TV (43" or larger)', icon: Monitor, inventoryKey: 'tvs', deviceType: 'tv' },
+      { key: 'mediaBox', label: 'Media Box', icon: Tv, inventoryKey: 'mediaBoxes', deviceType: 'mediaBox' },
+    ]
+  },
+  tabletCombo: {
+    label: 'Tablet Combo',
+    icon: Smartphone,
+    color: 'purple',
+    components: [
+      { key: 'tablet', label: 'Tablet', icon: Smartphone, inventoryKey: 'tablets', deviceType: 'tablet' },
+      { key: 'battery', label: 'Battery', icon: Battery, inventoryKey: 'batteries', deviceType: 'battery' },
+      { key: 'fabrication', label: 'Tablet Stand (Fabrication)', icon: LayoutGrid, inventoryKey: 'fabricationTablet', deviceType: 'fabrication' },
+    ]
+  }
+}
+
 const statusStyles = {
   active: 'bg-emerald-100 text-emerald-800 border-emerald-200',
   warning: 'bg-amber-100 text-amber-800 border-amber-200',
@@ -81,6 +118,11 @@ const Devices = () => {
     getDevicesByType,
     getUniqueDeviceFilterOptions,
     addDevice,
+    componentInventory,
+    deviceSets,
+    createDeviceSet,
+    deleteDeviceSet,
+    getAvailableDevicesForComponent,
   } = useInventory()
 
   const [lifecycleFilter, setLifecycleFilter] = useState('all')
@@ -89,6 +131,16 @@ const Devices = () => {
   const [detailDevice, setDetailDevice] = useState(null)
   const [showAddDevice, setShowAddDevice] = useState(false)
   const [showFilters, setShowFilters] = useState(true)
+  
+  // NEW: Tab navigation state
+  const [activeTab, setActiveTab] = useState('devices') // 'devices' or 'makeset'
+  
+  // NEW: Make Set modal state
+  const [showMakeSetModal, setShowMakeSetModal] = useState(false)
+  const [selectedSetType, setSelectedSetType] = useState(null)
+  const [selectedComponents, setSelectedComponents] = useState({})
+  const [setName, setSetName] = useState('')
+  const [expandedSet, setExpandedSet] = useState(null)
 
   // Filters: status, client, location (multilevel), brand, size, model
   const [filterClientId, setFilterClientId] = useState('')
@@ -258,29 +310,140 @@ const Devices = () => {
     setHoveredDistrict(null)
   }
 
+  // NEW: Make Set handlers
+  const handleOpenMakeSetModal = () => {
+    setShowMakeSetModal(true)
+    setSelectedSetType(null)
+    setSelectedComponents({})
+    setSetName('')
+  }
+
+  const handleCloseMakeSetModal = () => {
+    setShowMakeSetModal(false)
+    setSelectedSetType(null)
+    setSelectedComponents({})
+    setSetName('')
+  }
+
+  const handleSetTypeSelect = (typeKey) => {
+    setSelectedSetType(typeKey)
+    setSelectedComponents({})
+    setSetName('')
+  }
+
+  const handleComponentSelect = (componentKey, value) => {
+    setSelectedComponents(prev => ({
+      ...prev,
+      [componentKey]: value
+    }))
+  }
+
+  const canCreateSet = () => {
+    if (!selectedSetType || !setName.trim()) return false
+    
+    const setType = SET_TYPES[selectedSetType]
+    const allComponentsSelected = setType.components.every(
+      comp => selectedComponents[comp.key]
+    )
+    
+    return allComponentsSelected
+  }
+
+  const handleCreateSet = () => {
+    if (!canCreateSet()) return
+
+    const setType = SET_TYPES[selectedSetType]
+    
+    createDeviceSet({
+      type: selectedSetType,
+      name: setName.trim(),
+      components: selectedComponents,
+      setTypeLabel: setType.label,
+    })
+
+    handleCloseMakeSetModal()
+  }
+
+  const handleDeleteSet = (setId) => {
+    if (confirm('Are you sure you want to dismantle this set? Components will be returned to inventory.')) {
+      deleteDeviceSet(setId)
+    }
+  }
+
+  const getAvailableStock = (inventoryKey) => {
+    return componentInventory[inventoryKey] || 0
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-            <Smartphone className="w-8 h-8 text-primary-600" />
-            Devices
-          </h1>
-          <p className="text-gray-600 mt-1">
-            Track devices by product type, brand, size, model. Filter by status, client, location, and more.
-          </p>
+      {/* Header with Tabs */}
+      <div>
+        <div className="flex items-center justify-between flex-wrap gap-4 mb-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+              <Smartphone className="w-8 h-8 text-primary-600" />
+              Devices & Sets
+            </h1>
+            <p className="text-gray-600 mt-1">
+              Manage devices, create sets, and track inventory
+            </p>
+          </div>
+          {activeTab === 'devices' ? (
+            <button
+              type="button"
+              onClick={handleAddDeviceOpen}
+              className="flex items-center gap-2 px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium"
+            >
+              <Plus className="w-5 h-5" />
+              Add Device
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleOpenMakeSetModal}
+              className="flex items-center gap-2 px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium"
+            >
+              <Plus className="w-5 h-5" />
+              Make New Set
+            </button>
+          )}
         </div>
-        <button
-          type="button"
-          onClick={handleAddDeviceOpen}
-          className="flex items-center gap-2 px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium"
-        >
-          <Plus className="w-5 h-5" />
-          Add Device
-        </button>
+
+        {/* Tab Navigation */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-1 inline-flex gap-1">
+          <button
+            onClick={() => setActiveTab('devices')}
+            className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all ${
+              activeTab === 'devices'
+                ? 'bg-primary-600 text-white shadow-sm'
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <Smartphone className="w-4 h-4" />
+            Devices
+          </button>
+          <button
+            onClick={() => setActiveTab('makeset')}
+            className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all ${
+              activeTab === 'makeset'
+                ? 'bg-orange-600 text-white shadow-sm'
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <Box className="w-4 h-4" />
+            Make Sets
+            {deviceSets && deviceSets.length > 0 && (
+              <span className="px-2 py-0.5 bg-white text-orange-600 rounded-full text-xs font-bold">
+                {deviceSets.length}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Lifecycle view — single source of truth; all counts and list sync to selected view */}
+      {/* Content based on active tab */}
+      {activeTab === 'devices' ? (
+        <>
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="p-4">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">View by lifecycle</p>
@@ -835,6 +998,493 @@ const Devices = () => {
       )}
 
       {/* Add device modal — multiple dropdowns, synced by product type */}
+      {showAddDevice && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          onClick={() => setShowAddDevice(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold text-gray-900 mb-2">Add device</h3>
+            <p className="text-sm text-gray-500 mb-4">Product type drives available brands and sizes. All fields can be linked to other modules.</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Product type *</label>
+                <select
+                  value={newProductType}
+                  onChange={(e) => handleProductTypeChange(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
+                >
+                  {Object.entries(PRODUCT_TYPES).map(([key, label]) => (
+                    <option key={key} value={key}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Brand</label>
+                <select
+                  value={newBrand}
+                  onChange={(e) => setNewBrand(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
+                >
+                  <option value="">Select brand</option>
+                  {brandsForNewProduct.map((b) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Size</label>
+                <select
+                  value={newSize}
+                  onChange={(e) => setNewSize(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
+                >
+                  <option value="">Select size</option>
+                  {sizesForNewProduct.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Sizes shown match selected product type.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Model</label>
+                <input
+                  type="text"
+                  value={newModel}
+                  onChange={(e) => setNewModel(e.target.value)}
+                  placeholder="e.g. Tab S8, Frame 55"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Color</label>
+                <select
+                  value={newColor}
+                  onChange={(e) => setNewColor(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
+                >
+                  <option value="">Select color</option>
+                  {DEVICE_COLORS.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">GPS ID</label>
+                <input
+                  type="text"
+                  value={newGpsId}
+                  onChange={(e) => setNewGpsId(e.target.value)}
+                  placeholder="Optional tracking ID"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">MFG date</label>
+                <input
+                  type="date"
+                  value={newMfgDate}
+                  onChange={(e) => setNewMfgDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Current Location *</label>
+                <select
+                  required
+                  value={newLifecycleStatus}
+                  onChange={(e) => setNewLifecycleStatus(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
+                >
+                  <option value="">Select location...</option>
+                  <option value="warehouse">In Warehouse</option>
+                  <option value="deployed">Deployed</option>
+                  <option value="out_of_warehouse">Out of Warehouse</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Unique code *</label>
+                <input
+                  type="text"
+                  value={newDeviceCode}
+                  onChange={(e) => setNewDeviceCode(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))}
+                  placeholder={suggestedCode}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 font-mono"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Suggested: <button type="button" onClick={() => setNewDeviceCode(suggestedCode)} className="text-primary-600 hover:underline font-mono">{suggestedCode}</button>
+                </p>
+                {newDeviceCode && devices.some((d) => d.code === newDeviceCode.trim()) && (
+                  <p className="text-xs text-red-600 mt-1">This code is already used.</p>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => setShowAddDevice(false)}
+                className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAddDeviceSubmit}
+                disabled={!canAddDevice}
+                className="flex-1 px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      </> 
+      ) : (
+        /* Make Set Tab Content */
+        <>
+          {/* Available Stock Overview */}
+          <div className="bg-gradient-to-br from-blue-50 to-white rounded-xl shadow-sm border border-blue-100 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Available Components</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-4">
+              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
+                <div className="flex items-center gap-2 mb-2">
+                  <Smartphone className="w-5 h-5 text-purple-500" />
+                  <span className="text-xs text-gray-600">Tablets</span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900">{componentInventory.tablets}</p>
+              </div>
+              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
+                <div className="flex items-center gap-2 mb-2">
+                  <Battery className="w-5 h-5 text-green-500" />
+                  <span className="text-xs text-gray-600">Batteries</span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900">{componentInventory.batteries}</p>
+              </div>
+              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
+                <div className="flex items-center gap-2 mb-2">
+                  <LayoutGrid className="w-5 h-5 text-amber-500" />
+                  <span className="text-xs text-gray-600">Tablet Stands</span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900">{componentInventory.fabricationTablet}</p>
+              </div>
+              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
+                <div className="flex items-center gap-2 mb-2">
+                  <Monitor className="w-5 h-5 text-blue-500" />
+                  <span className="text-xs text-gray-600">TVs</span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900">{componentInventory.tvs}</p>
+              </div>
+              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
+                <div className="flex items-center gap-2 mb-2">
+                  <Tv className="w-5 h-5 text-indigo-500" />
+                  <span className="text-xs text-gray-600">Media Boxes</span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900">{componentInventory.mediaBoxes}</p>
+              </div>
+              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
+                <div className="flex items-center gap-2 mb-2">
+                  <LayoutGrid className="w-5 h-5 text-orange-500" />
+                  <span className="text-xs text-gray-600">A-Stands</span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900">{componentInventory.aFrameStands}</p>
+              </div>
+              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
+                <div className="flex items-center gap-2 mb-2">
+                  <Monitor className="w-5 h-5 text-cyan-500" />
+                  <span className="text-xs text-gray-600">I-Stands</span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900">{componentInventory.iFrameStands}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Created Sets */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+            <div className="p-6 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">Created Device Sets</h3>
+              <p className="text-sm text-gray-600 mt-1">
+                {deviceSets.length} set{deviceSets.length !== 1 ? 's' : ''} ready for deployment
+              </p>
+            </div>
+
+            {deviceSets.length === 0 ? (
+              <div className="p-12 text-center">
+                <Box className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                <p className="text-gray-500 mb-2">No device sets created yet</p>
+                <p className="text-sm text-gray-400">Click "Make New Set" to build your first set</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-200">
+                {deviceSets.map((set) => {
+                  const setType = SET_TYPES[set.type]
+                  const SetIcon = setType.icon
+                  const isExpanded = expandedSet === set.id
+
+                  return (
+                    <div key={set.id} className="p-6 hover:bg-gray-50 transition-colors">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className={`p-2 bg-${setType.color}-100 rounded-lg`}>
+                              <SetIcon className={`w-6 h-6 text-${setType.color}-600`} />
+                            </div>
+                            <div>
+                              <h4 className="text-lg font-semibold text-gray-900">{set.name}</h4>
+                              <p className="text-sm text-gray-600">{setType.label}</p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 mt-2 flex-wrap">
+                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">
+                              Ready for deployment
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              Created: {new Date(set.createdAt).toLocaleDateString()}
+                            </span>
+                          </div>
+
+                          <button
+                            onClick={() => setExpandedSet(isExpanded ? null : set.id)}
+                            className="mt-3 flex items-center gap-2 text-sm text-orange-600 hover:text-orange-700 font-medium"
+                          >
+                            <Info className="w-4 h-4" />
+                            {isExpanded ? 'Hide' : 'View'} Component Details
+                            <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                          </button>
+
+                          {isExpanded && (
+                            <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                              <p className="text-sm font-medium text-gray-700 mb-3">Components in this set:</p>
+                              <div className="space-y-2">
+                                {setType.components.map((comp) => {
+                                  const CompIcon = comp.icon
+                                  const componentDeviceId = set.components[comp.key]
+                                  const device = devices.find(d => d.id.toString() === componentDeviceId || d.id === componentDeviceId)
+                                  
+                                  return (
+                                    <div key={comp.key} className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-200">
+                                      <div className="flex items-center gap-3">
+                                        <CompIcon className="w-5 h-5 text-gray-600" />
+                                        <div>
+                                          <p className="text-sm font-medium text-gray-900">{comp.label}</p>
+                                          {device ? (
+                                            <div className="text-xs text-gray-600 mt-1">
+                                              <p className="font-mono font-semibold">{device.code}</p>
+                                              <p>{device.brand || 'No Brand'} {device.model || ''} {device.size || ''}</p>
+                                              {device.color && <p>Color: {device.color}</p>}
+                                            </div>
+                                          ) : (
+                                            <p className="text-xs text-gray-500">ID: {componentDeviceId}</p>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <Check className="w-5 h-5 text-green-600" />
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={() => handleDeleteSet(set.id)}
+                          className="ml-4 p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Dismantle set"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Make Set Modal */}
+          {showMakeSetModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+                <div className="sticky top-0 bg-white border-b border-gray-200 p-6 z-10">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-2xl font-bold text-gray-900">Make New Device Set</h2>
+                      <p className="text-sm text-gray-600 mt-1">
+                        Select set type and choose components from available stock
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleCloseMakeSetModal}
+                      className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-6 space-y-6">
+                  {!selectedSetType ? (
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                        Step 1: Choose Set Type
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {Object.entries(SET_TYPES).map(([key, type]) => {
+                          const TypeIcon = type.icon
+                          const hasEnoughStock = type.components.every(
+                            comp => getAvailableStock(comp.inventoryKey) > 0
+                          )
+
+                          return (
+                            <button
+                              key={key}
+                              onClick={() => hasEnoughStock && handleSetTypeSelect(key)}
+                              disabled={!hasEnoughStock}
+                              className={`p-6 rounded-xl border-2 transition-all ${
+                                hasEnoughStock
+                                  ? `border-${type.color}-200 hover:border-${type.color}-400 hover:shadow-lg cursor-pointer bg-${type.color}-50`
+                                  : 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed'
+                              }`}
+                            >
+                              <TypeIcon className={`w-12 h-12 mx-auto mb-3 text-${type.color}-600`} />
+                              <h4 className="font-semibold text-gray-900 mb-2">{type.label}</h4>
+                              <p className="text-xs text-gray-600 mb-3">
+                                {type.components.length} components required
+                              </p>
+                              {!hasEnoughStock && (
+                                <p className="text-xs text-red-600 font-medium">
+                                  Insufficient stock
+                                </p>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <div className="flex items-center justify-between mb-4">
+                          <h3 className="text-lg font-semibold text-gray-900">
+                            Step 2: Select Components for {SET_TYPES[selectedSetType].label}
+                          </h3>
+                          <button
+                            onClick={() => setSelectedSetType(null)}
+                            className="text-sm text-gray-600 hover:text-gray-800"
+                          >
+                            Change Set Type
+                          </button>
+                        </div>
+
+                        <div className="space-y-4">
+                          {SET_TYPES[selectedSetType].components.map((comp) => {
+                            const CompIcon = comp.icon
+                            const availableStock = getAvailableStock(comp.inventoryKey)
+                            const availableDevices = getAvailableDevicesForComponent(comp.deviceType)
+
+                            return (
+                              <div key={comp.key} className="p-4 border-2 border-gray-200 rounded-lg hover:border-orange-300 transition-colors">
+                                <div className="flex items-center gap-3 mb-3">
+                                  <CompIcon className="w-6 h-6 text-gray-600" />
+                                  <div className="flex-1">
+                                    <h4 className="font-medium text-gray-900">{comp.label}</h4>
+                                    <p className="text-sm text-gray-600">
+                                      {availableDevices.length} available in warehouse
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Select {comp.label} *
+                                  </label>
+                                  <select
+                                    value={selectedComponents[comp.key] || ''}
+                                    onChange={(e) => handleComponentSelect(comp.key, e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                                  >
+                                    <option value="">-- Select {comp.label} --</option>
+                                    {availableDevices.map(device => (
+                                      <option key={device.id} value={device.id}>
+                                        {device.code} - {device.brand || 'No Brand'} {device.model || ''} {device.size || ''} ({device.color || 'No Color'})
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {availableDevices.length === 0 && (
+                                    <p className="text-xs text-red-600 mt-1">
+                                      No available {comp.label.toLowerCase()} in warehouse
+                                    </p>
+                                  )}
+                                  {selectedComponents[comp.key] && (
+                                    <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                                      <Check className="w-3 h-3" />
+                                      Selected: {availableDevices.find(d => d.id.toString() === selectedComponents[comp.key])?.code}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+
+                      <div>
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                          Step 3: Name Your Set
+                        </h3>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Set Name *
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g., A-Stand Set #1, Store Display Unit"
+                            value={setName}
+                            onChange={(e) => setSetName(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                        <h4 className="font-medium text-gray-900 mb-2">Summary</h4>
+                        <ul className="text-sm text-gray-700 space-y-1">
+                          <li>• Set Type: {SET_TYPES[selectedSetType].label}</li>
+                          <li>• Components: {SET_TYPES[selectedSetType].components.length}</li>
+                          <li>• Completed: {Object.keys(selectedComponents).length}/{SET_TYPES[selectedSetType].components.length}</li>
+                        </ul>
+                      </div>
+
+                      <div className="flex gap-3 pt-4 border-t border-gray-200">
+                        <button
+                          onClick={handleCloseMakeSetModal}
+                          className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleCreateSet}
+                          disabled={!canCreateSet()}
+                          className="flex-1 px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 font-medium transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                        >
+                          Create Set
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Add Device Modal (existing modal remains unchanged) */}
       {showAddDevice && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"

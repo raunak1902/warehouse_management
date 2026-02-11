@@ -161,6 +161,9 @@ export function InventoryProvider({ children }) {
   // NEW: Reminders state
   const [reminders, setReminders] = useState([])
   const [dismissedReminders, setDismissedReminders] = useState([])
+  
+  // NEW: Device Sets state
+  const [deviceSets, setDeviceSets] = useState([])
 
   // NEW: Auto-generate reminders for subscription expiry
   useEffect(() => {
@@ -488,6 +491,124 @@ export function InventoryProvider({ children }) {
     )
   }, [])
 
+  // NEW: Get available devices for component selection (not assigned to client, not in a set)
+  const getAvailableDevicesForComponent = useCallback((componentType) => {
+    // Map component types to device types
+    const typeMapping = {
+      'stand': 'stand',        // A-Frame stand
+      'istand': 'istand',      // I-Frame stand
+      'tv': 'tv',              // TV (for both A and I frames)
+      'tablet': 'tablet',      // Tablet
+      'mediaBox': 'mediaBox',  // Media box
+      'battery': 'battery',    // Battery
+      'fabrication': 'fabrication', // Tablet stand
+    }
+    
+    const deviceType = typeMapping[componentType]
+    if (!deviceType) return []
+    
+    // Return devices that are:
+    // 1. Not assigned to any client
+    // 2. Not already in a set
+    // 3. Match the component type
+    // 4. In warehouse
+    return devices.filter(device => 
+      !device.clientId && 
+      !device.setId &&
+      device.type === deviceType &&
+      getDeviceLifecycleStatus(device) === 'warehouse'
+    )
+  }, [devices])
+
+  // NEW: Device Sets Management
+  const createDeviceSet = useCallback((setData) => {
+    const newSet = {
+      id: Math.max(0, ...deviceSets.map(s => s.id)) + 1,
+      ...setData,
+      createdAt: new Date().toISOString(),
+    }
+    
+    setDeviceSets(prev => [...prev, newSet])
+    
+    // Mark devices as used in a set (set their setId)
+    const componentDeviceIds = Object.values(setData.components).filter(Boolean)
+    setDevices(prev => prev.map(device => {
+      if (componentDeviceIds.includes(device.id.toString()) || componentDeviceIds.includes(device.id)) {
+        return { ...device, setId: newSet.id }
+      }
+      return device
+    }))
+    
+    // Deduct components from inventory
+    const setType = setData.type
+    const componentUpdates = {}
+    
+    if (setType === 'aStand') {
+      componentUpdates.aFrameStands = -1
+      componentUpdates.tvs = -1
+      componentUpdates.mediaBoxes = -1
+    } else if (setType === 'iStand') {
+      componentUpdates.iFrameStands = -1
+      componentUpdates.tvs = -1
+      componentUpdates.mediaBoxes = -1
+    } else if (setType === 'tabletCombo') {
+      componentUpdates.tablets = -1
+      componentUpdates.batteries = -1
+      componentUpdates.fabricationTablet = -1
+    }
+    
+    setComponentInventoryState(prev => {
+      const updated = { ...prev }
+      Object.entries(componentUpdates).forEach(([key, delta]) => {
+        updated[key] = Math.max(0, (updated[key] || 0) + delta)
+      })
+      return updated
+    })
+  }, [deviceSets])
+
+  const deleteDeviceSet = useCallback((setId) => {
+    const set = deviceSets.find(s => s.id === setId)
+    if (!set) return
+    
+    // Remove setId from devices that were in this set
+    const componentDeviceIds = Object.values(set.components).filter(Boolean)
+    setDevices(prev => prev.map(device => {
+      if (componentDeviceIds.includes(device.id.toString()) || componentDeviceIds.includes(device.id)) {
+        const { setId: _, ...rest } = device
+        return rest
+      }
+      return device
+    }))
+    
+    // Return components to inventory
+    const setType = set.type
+    const componentUpdates = {}
+    
+    if (setType === 'aStand') {
+      componentUpdates.aFrameStands = 1
+      componentUpdates.tvs = 1
+      componentUpdates.mediaBoxes = 1
+    } else if (setType === 'iStand') {
+      componentUpdates.iFrameStands = 1
+      componentUpdates.tvs = 1
+      componentUpdates.mediaBoxes = 1
+    } else if (setType === 'tabletCombo') {
+      componentUpdates.tablets = 1
+      componentUpdates.batteries = 1
+      componentUpdates.fabricationTablet = 1
+    }
+    
+    setComponentInventoryState(prev => {
+      const updated = { ...prev }
+      Object.entries(componentUpdates).forEach(([key, delta]) => {
+        updated[key] = (updated[key] || 0) + delta
+      })
+      return updated
+    })
+    
+    setDeviceSets(prev => prev.filter(s => s.id !== setId))
+  }, [deviceSets])
+
   // NEW: Statistics
   const statistics = useMemo(() => {
     return {
@@ -512,6 +633,7 @@ export function InventoryProvider({ children }) {
     // NEW: Reminders
     reminders,
     statistics,
+    deviceSets,
     
     // Existing functions
     updateComponentInventory,
@@ -537,6 +659,9 @@ export function InventoryProvider({ children }) {
     dismissReminder,
     extendSubscription,
     returnDeviceFromClient,
+    createDeviceSet,
+    deleteDeviceSet,
+    getAvailableDevicesForComponent,
     
     // Constants
     DEVICE_TYPES,
