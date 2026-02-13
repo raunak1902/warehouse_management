@@ -1,26 +1,48 @@
-import { useState } from 'react'
-import { Shield } from 'lucide-react'
+import { useState } from "react";
+import { Shield } from "lucide-react";
+import axios from "axios";
 
 const Login = ({ onLogin }) => {
   const [formData, setFormData] = useState({
-    email: '',
-    password: '',
-  })
-  const [error, setError] = useState('')
+    email: "",
+    password: "",
+  });
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    setError('')
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
 
-    // Demo login - in real app, this would call an API
-    if (formData.email && formData.password) {
-      // For demo purposes, accept any credentials and assign SuperAdmin role
-      // In production, this would validate against backend
-      onLogin('SuperAdmin')
-    } else {
-      setError('Please enter both email and password')
+    try {
+      const response = await axios.post(
+        "http://localhost:5000/login",
+        {
+          email: formData.email,
+          password: formData.password,
+        }
+      );
+
+      const { token, user } = response.data;
+
+      // Save token
+      localStorage.setItem("token", token);
+
+        // Save user
+        localStorage.setItem("user", JSON.stringify(user));
+
+        // Pass role to parent
+        onLogin(user.role);
+
+    } catch (err) {
+      setError(
+        err.response?.data?.message || "Login failed. Please try again."
+      );
+    } finally {
+      setLoading(false);
     }
-  }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-100">
@@ -43,30 +65,32 @@ const Login = ({ onLogin }) => {
           )}
 
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               Email Address
             </label>
             <input
-              id="email"
               type="email"
               value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition"
+              onChange={(e) =>
+                setFormData({ ...formData, email: e.target.value })
+              }
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg"
               placeholder="admin@edsignage.com"
               required
             />
           </div>
 
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               Password
             </label>
             <input
-              id="password"
               type="password"
               value={formData.password}
-              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition"
+              onChange={(e) =>
+                setFormData({ ...formData, password: e.target.value })
+              }
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg"
               placeholder="Enter your password"
               required
             />
@@ -74,18 +98,15 @@ const Login = ({ onLogin }) => {
 
           <button
             type="submit"
-            className="w-full bg-primary-600 text-white py-3 rounded-lg font-semibold hover:bg-primary-700 transition-colors shadow-lg hover:shadow-xl"
+            disabled={loading}
+            className="w-full bg-primary-600 text-white py-3 rounded-lg font-semibold hover:bg-primary-700 transition-colors"
           >
-            Sign In
+            {loading ? "Signing In..." : "Sign In"}
           </button>
         </form>
-
-        <p className="mt-6 text-center text-sm text-gray-600">
-          Demo: Enter any email and password to login as SuperAdmin
-        </p>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default Login
+export default Login;

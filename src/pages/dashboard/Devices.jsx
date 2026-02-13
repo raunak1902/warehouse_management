@@ -29,6 +29,10 @@ import {
   Check,
   ChevronDown,
   Info,
+  ScanBarcode,
+  Camera,
+  Warehouse,
+  ArrowRight,
 } from 'lucide-react'
 import {
   useInventory,
@@ -45,6 +49,7 @@ import {
   DEVICE_COLORS,
   getIndianLocationHierarchyForFilter,
 } from '../../config/deviceConfig'
+import BarcodeScanner from '../../components/BarcodeScanner'
 
 const LIFECYCLE_OPTIONS = [
   { value: 'all', label: 'All Devices', icon: Layers, desc: 'View all devices in system' },
@@ -141,6 +146,9 @@ const Devices = () => {
   const [selectedComponents, setSelectedComponents] = useState({})
   const [setName, setSetName] = useState('')
   const [expandedSet, setExpandedSet] = useState(null)
+  
+  // NEW: Barcode Scanner state
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
 
   // Filters: status, client, location (multilevel), brand, size, model
   const [filterClientId, setFilterClientId] = useState('')
@@ -388,25 +396,37 @@ const Devices = () => {
               Manage devices, create sets, and track inventory
             </p>
           </div>
-          {activeTab === 'devices' ? (
-            <button
-              type="button"
-              onClick={handleAddDeviceOpen}
-              className="flex items-center gap-2 px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium"
-            >
-              <Plus className="w-5 h-5" />
-              Add Device
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleOpenMakeSetModal}
-              className="flex items-center gap-2 px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium"
-            >
-              <Plus className="w-5 h-5" />
-              Make New Set
-            </button>
-          )}
+          <div className="flex gap-3">
+            {activeTab === 'devices' ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowBarcodeScanner(true)}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 transition-all font-medium shadow-md hover:shadow-lg"
+                >
+                  <ScanBarcode className="w-5 h-5" />
+                  Scan Barcode
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddDeviceOpen}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium"
+                >
+                  <Plus className="w-5 h-5" />
+                  Add Device
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={handleOpenMakeSetModal}
+                className="flex items-center gap-2 px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium"
+              >
+                <Plus className="w-5 h-5" />
+                Make New Set
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Tab Navigation */}
@@ -1628,6 +1648,11 @@ const Devices = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Barcode Scanner Modal */}
+      {showBarcodeScanner && (
+        <BarcodeScanner onClose={() => setShowBarcodeScanner(false)} />
       )}
     </div>
   )

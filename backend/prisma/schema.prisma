@@ -1,0 +1,91 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =======================
+// ROLES
+// =======================
+model Role {
+  id          Int              @id @default(autoincrement())
+  name        String           @unique
+  description String?
+  createdAt   DateTime         @default(now())
+
+  users           User[]
+  rolePermissions RolePermission[]
+}
+
+// =======================
+// USERS
+// =======================
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique
+  password  String
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+
+  roleId Int
+  role   Role @relation(fields: [roleId], references: [id])
+
+  @@index([roleId])
+}
+
+// =======================
+// PERMISSIONS
+// =======================
+model Permission {
+  id          Int              @id @default(autoincrement())
+  module      String
+  operation   String
+  description String?
+  createdAt   DateTime         @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@unique([module, operation])
+}
+
+// =======================
+// ROLE - PERMISSION (JOIN TABLE)
+// =======================
+model RolePermission {
+  roleId       Int
+  permissionId Int
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+// =======================
+// CLIENTS
+// =======================
+model Client {
+  id                Int      @id @default(autoincrement())
+  name              String
+  phone             String
+  email             String
+  company           String?
+  address           String?
+  notes             String?
+  subscriptionStart DateTime
+  subscriptionEnd   DateTime
+  createdAt         DateTime @default(now())
+
+  @@index([subscriptionEnd])
+}
+
