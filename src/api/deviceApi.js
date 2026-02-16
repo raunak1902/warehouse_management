@@ -28,15 +28,23 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Only handle 401 if user was actually logged in
+    const token = localStorage.getItem("token");
+
     if (error.response?.status === 401) {
-      // Token expired or invalid
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
-    }
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  localStorage.removeItem('isAuthenticated');
+  localStorage.removeItem('userRole');
+  
+  // ✅ Use custom event - NO page reload
+  window.dispatchEvent(new CustomEvent('auth-expired'));
+}
+
     return Promise.reject(error);
   }
 );
+
 
 // ==========================================
 // DEVICE API METHODS

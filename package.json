@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@zxing/library": "^0.21.3",
     "axios": "^1.13.5",
     "lucide-react": "^0.294.0",
     "qrcode.react": "^4.2.0",
