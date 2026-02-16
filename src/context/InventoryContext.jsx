@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react'
+import { deviceApi } from '../api/deviceApi'
 
 // Product types we rent
 export const DEVICE_TYPES = {
@@ -45,6 +46,7 @@ export const getSubscriptionStatus = (endDateStr) => {
   return { label: 'Active', type: 'active', days }
 }
 
+// Demo clients data (keep this for now until clients are also in backend)
 const defaultClients = [
   {
     id: 1,
@@ -97,582 +99,388 @@ export const DEVICE_CODE_PREFIX = { stand: 'ATV', istand: 'ITV', tablet: 'TAB' }
 
 // Device lifecycle: In warehouse (Warehouse A/B/C) | Assigning (ordered, not yet deployed) | Deployed (at client location)
 export const getDeviceLifecycleStatus = (device) => {
-  // NEW: Check lifecycleStatus field first if it exists
+  // Check lifecycleStatus field from database
   if (device.lifecycleStatus) {
     return device.lifecycleStatus
   }
   
-  // LEGACY: Fallback to old logic for existing devices
+  // Fallback logic for backward compatibility
   if (!device.clientId) return 'warehouse'
-  const hasDeploymentLocation = !!(device.state || '').trim() && !!(device.location || '').trim()
-  return hasDeploymentLocation ? 'deployed' : 'assigning'
+  if (device.clientId && !device.state && !device.district && !device.pinpoint) return 'assigning'
+  if (device.clientId && (device.state || device.district || device.pinpoint)) return 'deployed'
+  return 'warehouse'
 }
 
-// Device shape: id, code, type, clientId, subscriptionStart, subscriptionEnd,
-// plus optional: brand, size, model, color, gpsId, mfgDate, state, district, location (pinpoint)
-// Lifecycle: warehouse (no client, location = Warehouse A/B/C) | assigning (client set, not yet at site) | deployed (client + location)
-const defaultDevices = [
-  { id: 1, code: 'ATV-001', type: 'stand', clientId: 1, subscriptionStart: '2024-06-01', subscriptionEnd: '2025-06-01', brand: 'Samsung', size: '55"', model: 'Frame 55', color: 'Black', gpsId: 'GPS-001', mfgDate: '2023-01-15', state: 'Maharashtra', district: 'Mumbai', location: 'Andheri Godown A', lifecycleStatus: 'deployed' },
-  { id: 2, code: 'ATV-002', type: 'stand', clientId: 1, subscriptionStart: '2024-06-01', subscriptionEnd: '2025-06-01', brand: 'LG', size: '43"', model: '43UP75', color: 'Black', gpsId: 'GPS-002', mfgDate: '2023-03-01', state: 'Maharashtra', district: 'Mumbai', location: 'Andheri Godown A', lifecycleStatus: 'deployed' },
-  { id: 3, code: 'ATV-003', type: 'stand', clientId: null, subscriptionStart: null, subscriptionEnd: null, brand: 'Samsung', size: '65"', model: 'QB65B', color: 'Silver', gpsId: '', mfgDate: '2023-06-10', state: '', district: '', location: 'Warehouse B', lifecycleStatus: 'warehouse' },
-  { id: 4, code: 'ITV-001', type: 'istand', clientId: 2, subscriptionStart: '2024-12-01', subscriptionEnd: '2025-02-15', brand: 'EDSignage', size: 'Standard', model: 'IS-1', color: 'Black', gpsId: 'GPS-004', mfgDate: '2023-02-01', state: 'Maharashtra', district: 'Mumbai', location: 'Andheri Godown A', lifecycleStatus: 'deployed' },
-  { id: 5, code: 'ITV-002', type: 'istand', clientId: null, subscriptionStart: null, subscriptionEnd: null, brand: 'EDSignage', size: 'Large', model: 'IS-2', color: 'White', gpsId: '', mfgDate: '2023-04-01', state: '', district: '', location: 'Warehouse B', lifecycleStatus: 'warehouse' },
-  { id: 6, code: 'ITV-003', type: 'istand', clientId: 3, subscriptionStart: '2024-09-01', subscriptionEnd: '2025-01-20', brand: 'Generic', size: 'Standard', model: 'GEN-I', color: 'Gray', gpsId: 'GPS-006', mfgDate: '2022-11-01', state: 'Maharashtra', district: 'Mumbai', location: 'Andheri Godown A', lifecycleStatus: 'deployed' },
-  { id: 7, code: 'TAB-001', type: 'tablet', clientId: 3, subscriptionStart: '2024-09-01', subscriptionEnd: '2025-01-20', brand: 'Samsung', size: '10.5"', model: 'Tab S6 Lite', color: 'Gray', gpsId: 'GPS-007', mfgDate: '2023-01-20', state: 'Maharashtra', district: 'Mumbai', location: 'Andheri Godown A', lifecycleStatus: 'deployed' },
-  { id: 8, code: 'TAB-002', type: 'tablet', clientId: 3, subscriptionStart: '2024-09-01', subscriptionEnd: '2025-01-20', brand: 'Samsung', size: '10"', model: 'Tab A8', color: 'Black', gpsId: 'GPS-008', mfgDate: '2023-05-01', state: 'Maharashtra', district: 'Pune', location: 'Hinjewadi Warehouse A', lifecycleStatus: 'deployed' },
-  { id: 9, code: 'TAB-003', type: 'tablet', clientId: null, subscriptionStart: null, subscriptionEnd: null, brand: 'Apple', size: '10.9"', model: 'iPad Air', color: 'Space Gray', gpsId: '', mfgDate: '2023-07-01', state: '', district: '', location: 'Warehouse C', lifecycleStatus: 'warehouse' },
-  { id: 10, code: 'ATV-004', type: 'stand', clientId: 4, subscriptionStart: '2024-11-01', subscriptionEnd: '2025-05-01', brand: 'LG', size: '50"', model: '50NANO76', color: 'Black', gpsId: 'GPS-010', mfgDate: '2023-02-15', state: 'Maharashtra', district: 'Pune', location: 'Hinjewadi Warehouse B', lifecycleStatus: 'deployed' },
-  { id: 11, code: 'ATV-005', type: 'stand', clientId: 4, subscriptionStart: '2024-11-01', subscriptionEnd: '2025-05-01', brand: 'Samsung', size: '43"', model: 'Crystal 43', color: 'Black', gpsId: 'GPS-011', mfgDate: '2023-04-10', state: 'Tamil Nadu', district: 'Chennai', location: 'Anna Nagar Godown A', lifecycleStatus: 'deployed' },
-  { id: 12, code: 'ATV-006', type: 'stand', clientId: 4, subscriptionStart: '2024-11-01', subscriptionEnd: '2025-05-01', brand: 'TCL', size: '55"', model: '55S546', color: 'Black', gpsId: 'GPS-012', mfgDate: '2023-01-01', state: 'Maharashtra', district: 'Mumbai', location: 'Andheri Godown A', lifecycleStatus: 'deployed' },
-  { id: 13, code: 'ITV-004', type: 'istand', clientId: 4, subscriptionStart: '2024-11-01', subscriptionEnd: '2025-05-01', brand: 'EDSignage', size: 'Standard', model: 'IS-1', color: 'Black', gpsId: 'GPS-013', mfgDate: '2023-03-01', state: 'Maharashtra', district: 'Mumbai', location: 'Andheri Godown A', lifecycleStatus: 'deployed' },
-  { id: 14, code: 'ITV-005', type: 'istand', clientId: 4, subscriptionStart: '2024-11-01', subscriptionEnd: '2025-05-01', brand: 'EDSignage', size: 'Large', model: 'IS-2', color: 'Black', gpsId: 'GPS-014', mfgDate: '2023-05-01', state: 'Maharashtra', district: 'Pune', location: 'Hinjewadi Warehouse B', lifecycleStatus: 'deployed' },
-  { id: 15, code: 'TAB-004', type: 'tablet', clientId: 4, subscriptionStart: '2024-11-01', subscriptionEnd: '2025-05-01', brand: 'Samsung', size: '10.5"', model: 'Tab S7', color: 'Silver', gpsId: 'GPS-015', mfgDate: '2023-02-01', state: 'Delhi', district: 'Central Delhi', location: 'Connaught Place Store 101', lifecycleStatus: 'deployed' },
-  { id: 16, code: 'TAB-005', type: 'tablet', clientId: 4, subscriptionStart: '2024-11-01', subscriptionEnd: '2025-05-01', brand: 'Lenovo', size: '10"', model: 'Tab M10', color: 'Gray', gpsId: 'GPS-016', mfgDate: '2023-06-01', state: 'Karnataka', district: 'Bengaluru', location: 'Whitefield Godown B', lifecycleStatus: 'deployed' },
-  { id: 17, code: 'TAB-006', type: 'tablet', clientId: 4, subscriptionStart: '2024-11-01', subscriptionEnd: '2025-05-01', brand: 'Samsung', size: '11"', model: 'Tab S8', color: 'Pink Gold', gpsId: 'GPS-017', mfgDate: '2023-08-01', state: 'Maharashtra', district: 'Mumbai', location: 'Andheri Godown A', lifecycleStatus: 'deployed' },
-  { id: 18, code: 'TAB-007', type: 'tablet', clientId: 4, subscriptionStart: '2024-11-01', subscriptionEnd: '2025-05-01', brand: 'Samsung', size: '10"', model: 'Tab A8', color: 'Gray', gpsId: 'GPS-018', mfgDate: '2023-04-01', state: 'Tamil Nadu', district: 'Chennai', location: 'Anna Nagar Godown B', lifecycleStatus: 'deployed' },
-  { id: 19, code: 'TAB-008', type: 'tablet', clientId: 4, subscriptionStart: '2024-11-01', subscriptionEnd: '2025-05-01', brand: 'Apple', size: '10.9"', model: 'iPad Air', color: 'Blue', gpsId: 'GPS-019', mfgDate: '2023-07-15', state: 'Maharashtra', district: 'Pune', location: 'Hinjewadi Warehouse B', lifecycleStatus: 'deployed' },
-  // Haryana / Gurgaon — for Location module demo (e.g. "how many devices in Gurgaon")
-  { id: 20, code: 'ATV-007', type: 'stand', clientId: 1, subscriptionStart: '2024-06-01', subscriptionEnd: '2025-06-01', brand: 'Samsung', size: '55"', model: 'Frame 55', color: 'Black', gpsId: 'GPS-020', mfgDate: '2023-02-01', state: 'Haryana', district: 'Gurgaon', location: 'DLF Cyber City Tower A', lifecycleStatus: 'deployed' },
-  { id: 21, code: 'ITV-006', type: 'istand', clientId: 2, subscriptionStart: '2024-12-01', subscriptionEnd: '2025-02-15', brand: 'EDSignage', size: 'Standard', model: 'IS-1', color: 'Black', gpsId: 'GPS-021', mfgDate: '2023-03-01', state: 'Haryana', district: 'Gurgaon', location: 'DLF Cyber City Tower A', lifecycleStatus: 'deployed' },
-  { id: 22, code: 'TAB-009', type: 'tablet', clientId: null, subscriptionStart: null, subscriptionEnd: null, brand: 'Samsung', size: '10.5"', model: 'Tab S6 Lite', color: 'Gray', gpsId: '', mfgDate: '2023-05-01', state: '', district: '', location: 'Warehouse A', lifecycleStatus: 'warehouse' },
-  { id: 23, code: 'ATV-008', type: 'stand', clientId: 3, subscriptionStart: '2024-09-01', subscriptionEnd: '2025-01-20', brand: 'LG', size: '43"', model: '43UP75', color: 'Black', gpsId: 'GPS-023', mfgDate: '2023-01-10', state: 'Haryana', district: 'Gurgaon', location: 'MG Road Mall Unit 12', lifecycleStatus: 'deployed' },
-  { id: 24, code: 'TAB-010', type: 'tablet', clientId: 4, subscriptionStart: '2024-11-01', subscriptionEnd: '2025-05-01', brand: 'Samsung', size: '10.5"', model: 'Tab S7', color: 'Gray', gpsId: '', mfgDate: '2023-02-01', state: '', district: '', location: '', lifecycleStatus: 'deployed' },
-]
+const InventoryContext = createContext()
 
-// Component-level stock for dashboard "available sets" calculation.
-// Tablet combo = tablet + battery + fabrication (stand). A frame = TV + media box + A stand. I frame = TV + media box + I stand.
-const defaultComponentInventory = {
-  tablets: 15,
-  batteries: 18,
-  fabricationTablet: 14,
-  tvs: 8,
-  mediaBoxes: 5,
-  aFrameStands: 6,
-  iFrameStands: 5,
+export const useInventory = () => {
+  const context = useContext(InventoryContext)
+  if (!context) {
+    throw new Error('useInventory must be used within InventoryProvider')
+  }
+  return context
 }
 
-const InventoryContext = createContext(undefined)
-
-export function InventoryProvider({ children }) {
+export const InventoryProvider = ({ children }) => {
+  // State
+  const [devices, setDevices] = useState([])
   const [clients, setClients] = useState(defaultClients)
-  const [devices, setDevices] = useState(defaultDevices)
-  const [componentInventoryState, setComponentInventoryState] = useState(defaultComponentInventory)
-  
-  // NEW: Reminders state
   const [reminders, setReminders] = useState([])
-  const [dismissedReminders, setDismissedReminders] = useState([])
-  
-  // NEW: Device Sets state
   const [deviceSets, setDeviceSets] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  // NEW: Auto-generate reminders for subscription expiry
+  // Component inventory (static for now - can be moved to backend later)
+  const [componentInventory] = useState({
+    tvs: 50,
+    mediaBoxes: 50,
+    aFrameStands: 25,
+    iFrameStands: 25,
+    tablets: 30,
+    batteries: 30,
+    fabricationTablet: 30,
+  })
+
+  // ==========================================
+  // LOAD DEVICES FROM BACKEND ON MOUNT
+  // ==========================================
   useEffect(() => {
-    const generateReminders = () => {
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-      
-      const newReminders = []
-      
-      devices.forEach(device => {
-        if (device.clientId && device.subscriptionEnd) {
-          const endDate = new Date(device.subscriptionEnd)
-          endDate.setHours(0, 0, 0, 0)
-          
-          const diffTime = endDate - today
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-          
-          const client = clients.find(c => c.id === device.clientId)
-          const reminderId = `${device.id}-${device.subscriptionEnd}`
-          
-          // Skip if already dismissed
-          if (dismissedReminders.includes(reminderId)) {
-            return
-          }
-          
-          if (diffDays === 3) {
-            newReminders.push({
-              id: reminderId,
-              type: 'warning',
-              priority: 'medium',
-              message: `Subscription ending in 3 days for ${client?.name || 'Unknown Client'}`,
-              deviceCode: device.code,
-              clientName: client?.name,
-              clientId: device.clientId,
-              deviceId: device.id,
-              endDate: device.subscriptionEnd,
-              daysRemaining: 3,
-            })
-          } else if (diffDays === 1) {
-            newReminders.push({
-              id: reminderId,
-              type: 'urgent',
-              priority: 'high',
-              message: `Subscription ending tomorrow for ${client?.name || 'Unknown Client'}`,
-              deviceCode: device.code,
-              clientName: client?.name,
-              clientId: device.clientId,
-              deviceId: device.id,
-              endDate: device.subscriptionEnd,
-              daysRemaining: 1,
-            })
-          } else if (diffDays === 0) {
-            newReminders.push({
-              id: reminderId,
-              type: 'critical',
-              priority: 'critical',
-              message: `Subscription ends TODAY for ${client?.name || 'Unknown Client'}`,
-              deviceCode: device.code,
-              clientName: client?.name,
-              clientId: device.clientId,
-              deviceId: device.id,
-              endDate: device.subscriptionEnd,
-              daysRemaining: 0,
-            })
-          } else if (diffDays < 0) {
-            newReminders.push({
-              id: reminderId,
-              type: 'expired',
-              priority: 'critical',
-              message: `Subscription EXPIRED for ${client?.name || 'Unknown Client'}`,
-              deviceCode: device.code,
-              clientName: client?.name,
-              clientId: device.clientId,
-              deviceId: device.id,
-              endDate: device.subscriptionEnd,
-              daysRemaining: diffDays,
-            })
-          }
-        }
-      })
-      
-      setReminders(newReminders)
+    const loadDevices = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        const fetchedDevices = await deviceApi.getAll()
+        setDevices(fetchedDevices)
+      } catch (err) {
+        console.error('Error loading devices:', err)
+        setError('Failed to load devices. Please check your connection.')
+      } finally {
+        setLoading(false)
+      }
     }
-    
-    generateReminders()
-    const interval = setInterval(generateReminders, 60 * 60 * 1000) // Every hour
-    return () => clearInterval(interval)
-  }, [devices, clients, dismissedReminders])
 
-  const componentInventory = useMemo(() => componentInventoryState, [componentInventoryState])
+    loadDevices()
+  }, [])
 
-  const getClientById = useCallback((id) => clients.find((c) => c.id === id), [clients])
+  // ==========================================
+  // DEVICE CRUD OPERATIONS
+  // ==========================================
 
-  const getDevicesByClientId = useCallback((clientId) => devices.filter((d) => d.clientId === clientId), [devices])
+  // Add new device
+  const addDevice = useCallback(async (deviceData) => {
+    try {
+      const newDevice = await deviceApi.create({
+        code: deviceData.code.toUpperCase(),
+        type: deviceData.type,
+        brand: deviceData.brand || null,
+        size: deviceData.size || null,
+        model: deviceData.model || null,
+        color: deviceData.color || null,
+        gpsId: deviceData.gpsId || null,
+        mfgDate: deviceData.mfgDate || null,
+        lifecycleStatus: deviceData.lifecycleStatus || 'warehouse',
+        location: deviceData.location || null,
+        state: deviceData.state || null,
+        district: deviceData.district || null,
+        pinpoint: deviceData.pinpoint || null,
+        clientId: deviceData.clientId || null,
+      })
 
-  const getDevicesByType = useCallback((type) => devices.filter((d) => d.type === type), [devices])
+      // Update local state
+      setDevices(prev => [...prev, newDevice])
+      return newDevice
+    } catch (err) {
+      console.error('Error adding device:', err)
+      throw new Error(err.response?.data?.error || 'Failed to add device')
+    }
+  }, [])
 
-  // NEW: Get devices by lifecycle status
-  const getDevicesByLifecycle = useCallback((lifecycle) => {
-    return devices.filter((d) => getDeviceLifecycleStatus(d) === lifecycle)
+  // Update device
+  const updateDevice = useCallback(async (deviceId, updates) => {
+    try {
+      const updatedDevice = await deviceApi.update(deviceId, updates)
+      
+      // Update local state
+      setDevices(prev => 
+        prev.map(d => d.id === deviceId ? updatedDevice : d)
+      )
+      return updatedDevice
+    } catch (err) {
+      console.error('Error updating device:', err)
+      throw new Error(err.response?.data?.error || 'Failed to update device')
+    }
+  }, [])
+
+  // Delete device
+  const removeDevice = useCallback(async (deviceId) => {
+    try {
+      await deviceApi.delete(deviceId)
+      
+      // Update local state
+      setDevices(prev => prev.filter(d => d.id !== deviceId))
+    } catch (err) {
+      console.error('Error deleting device:', err)
+      throw new Error(err.response?.data?.error || 'Failed to delete device')
+    }
+  }, [])
+
+  // Assign device to client
+  const assignDeviceToClient = useCallback(async (deviceId, clientId, deploymentData = {}) => {
+    try {
+      const updates = {
+        clientId: clientId,
+        lifecycleStatus: deploymentData.lifecycleStatus || 'assigning',
+        state: deploymentData.state || null,
+        district: deploymentData.district || null,
+        pinpoint: deploymentData.pinpoint || null,
+      }
+
+      return await updateDevice(deviceId, updates)
+    } catch (err) {
+      console.error('Error assigning device:', err)
+      throw err
+    }
+  }, [updateDevice])
+
+  // Unassign device from client
+  const unassignDevice = useCallback(async (deviceId) => {
+    try {
+      const updates = {
+        clientId: null,
+        lifecycleStatus: 'warehouse',
+        state: null,
+        district: null,
+        pinpoint: null,
+      }
+
+      return await updateDevice(deviceId, updates)
+    } catch (err) {
+      console.error('Error unassigning device:', err)
+      throw err
+    }
+  }, [updateDevice])
+
+  // Bulk assign devices to client
+  const bulkAssignDevices = useCallback(async (deviceIds, clientId) => {
+    try {
+      await deviceApi.bulkAssign(deviceIds, clientId)
+      
+      // Reload devices to get updated data
+      const fetchedDevices = await deviceApi.getAll()
+      setDevices(fetchedDevices)
+    } catch (err) {
+      console.error('Error bulk assigning devices:', err)
+      throw new Error(err.response?.data?.error || 'Failed to assign devices')
+    }
+  }, [])
+
+  // ==========================================
+  // CLIENT OPERATIONS (Local for now)
+  // ==========================================
+
+  const addClient = useCallback((clientData) => {
+    const newClient = {
+      id: clients.length > 0 ? Math.max(...clients.map(c => c.id)) + 1 : 1,
+      ...clientData,
+    }
+    setClients(prev => [...prev, newClient])
+    return newClient
+  }, [clients])
+
+  const updateClient = useCallback((clientId, updates) => {
+    setClients(prev => prev.map(c => c.id === clientId ? { ...c, ...updates } : c))
+  }, [])
+
+  const removeClient = useCallback((clientId) => {
+    // Unassign all devices from this client
+    setDevices(prev => prev.map(d => 
+      d.clientId === clientId 
+        ? { ...d, clientId: null, lifecycleStatus: 'warehouse', state: null, district: null, pinpoint: null }
+        : d
+    ))
+    setClients(prev => prev.filter(c => c.id !== clientId))
+  }, [])
+
+  const getClientById = useCallback((clientId) => {
+    return clients.find(c => c.id === clientId)
+  }, [clients])
+
+  // ==========================================
+  // DEVICE QUERY FUNCTIONS
+  // ==========================================
+
+  const getDevicesByType = useCallback((type) => {
+    return devices.filter(d => d.type === type)
+  }, [devices])
+
+  const getDevicesByClientId = useCallback((clientId) => {
+    return devices.filter(d => d.clientId === clientId)
+  }, [devices])
+
+  const getDevicesByLifecycle = useCallback((lifecycleStatus) => {
+    return devices.filter(d => getDeviceLifecycleStatus(d) === lifecycleStatus)
   }, [devices])
 
   const getUniqueDeviceFilterOptions = useCallback(() => {
-    const states = [...new Set(devices.map((d) => d.state).filter(Boolean))]
-    const districts = [...new Set(devices.map((d) => d.district).filter(Boolean))]
-    const brands = [...new Set(devices.map((d) => d.brand).filter(Boolean))]
-    const sizes = [...new Set(devices.map((d) => d.size).filter(Boolean))]
-    const models = [...new Set(devices.map((d) => d.model).filter(Boolean))]
-    return { states, districts, brands, sizes, models }
+    const brands = [...new Set(devices.map(d => d.brand).filter(Boolean))]
+    const sizes = [...new Set(devices.map(d => d.size).filter(Boolean))]
+    const models = [...new Set(devices.map(d => d.model).filter(Boolean))]
+    const states = [...new Set(devices.map(d => d.state).filter(Boolean))]
+    const districts = [...new Set(devices.map(d => d.district).filter(Boolean))]
+
+    return { brands, sizes, models, states, districts }
   }, [devices])
 
-  const getLocationHierarchy = useCallback(() => {
-    const structure = {}
-    devices.forEach((d) => {
-      const state = d.state || '—'
-      const district = d.district || '—'
-      const location = d.location || '—'
-      if (!structure[state]) structure[state] = {}
-      if (!structure[state][district]) structure[state][district] = {}
-      if (!structure[state][district][location]) structure[state][district][location] = 0
-      structure[state][district][location]++
-    })
-    return structure
-  }, [devices])
+  // ==========================================
+  // DEVICE SETS (Local for now)
+  // ==========================================
 
-  const getDevicesByLocation = useCallback((state, district, location) => {
-    return devices.filter((d) => {
-      if (state && d.state !== state) return false
-      if (district && d.district !== district) return false
-      if (location && d.location !== location) return false
-      return true
-    })
-  }, [devices])
-
-  const getLocationSummary = useCallback(() => {
-    const keyToRow = {}
-    devices.forEach((d) => {
-      const isWarehouse = !d.clientId
-      const state = isWarehouse ? 'Warehouse' : (d.state || '—')
-      const district = isWarehouse ? '—' : (d.district || '—')
-      const location = (d.location || '—').trim() || '—'
-      const key = isWarehouse ? `Warehouse|—|${d.location}` : `${d.state || '—'}|${d.district || '—'}|${location}`
-      if (!keyToRow[key]) {
-        keyToRow[key] = { state, district, location, total: 0, inStock: 0, deployed: 0, isWarehouse: !!isWarehouse }
-      }
-      const row = keyToRow[key]
-      row.total += 1
-      if (d.clientId) row.deployed += 1
-      else row.inStock += 1
-    })
-    return Object.values(keyToRow).sort((a, b) =>
-      [a.state, a.district, a.location].join(' ').localeCompare([b.state, b.district, b.location].join(' '))
-    )
-  }, [devices])
-
-  const addClient = useCallback((client) => {
-    const id = Math.max(0, ...clients.map((c) => c.id)) + 1
-    setClients((prev) => [...prev, { ...client, id }])
-    return id
-  }, [clients])
-
-  const updateClient = useCallback((id, updates) => {
-    setClients((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)))
-    
-    // NEW: If subscription dates updated, update all devices for this client
-    if (updates.subscriptionStart || updates.subscriptionEnd) {
-      setDevices((prev) => prev.map((d) => 
-        d.clientId === id 
-          ? { 
-              ...d, 
-              subscriptionStart: updates.subscriptionStart || d.subscriptionStart,
-              subscriptionEnd: updates.subscriptionEnd || d.subscriptionEnd 
-            } 
-          : d
-      ))
-    }
-  }, [])
-
-  const removeClient = useCallback((id) => {
-    setClients((prev) => prev.filter((c) => c.id !== id))
-    // NEW: Return devices to warehouse when client is deleted
-    setDevices((prev) =>
-      prev.map((d) => (d.clientId === id 
-        ? { ...d, clientId: null, subscriptionStart: null, subscriptionEnd: null, lifecycleStatus: 'warehouse' } 
-        : d
-      ))
-    )
-  }, [])
-
-  const addDevice = useCallback((device) => {
-    const id = Math.max(0, ...devices.map((d) => d.id)) + 1
-    const defaults = { 
-      clientId: null, 
-      subscriptionStart: null, 
-      subscriptionEnd: null, 
-      brand: '', 
-      size: '', 
-      model: '', 
-      color: '', 
-      gpsId: '', 
-      mfgDate: '', 
-      state: '', 
-      district: '', 
-      location: device.location || 'Warehouse A',
-      lifecycleStatus: device.lifecycleStatus || 'warehouse' // NEW: Default to warehouse
-    }
-    setDevices((prev) => [...prev, { id, ...defaults, ...device }])
-    return id
-  }, [devices])
-
-  const updateDevice = useCallback((id, updates) => {
-    setDevices((prev) => prev.map((d) => (d.id === id ? { ...d, ...updates } : d)))
-  }, [])
-
-  const assignDevicesToClient = useCallback((clientId, deviceIds, subscriptionStart, subscriptionEnd) => {
-    setDevices((prev) =>
-      prev.map((d) =>
-        deviceIds.includes(d.id)
-          ? { 
-              ...d, 
-              clientId, 
-              subscriptionStart, 
-              subscriptionEnd,
-              lifecycleStatus: 'deployed' // NEW: Automatically set to deployed
-            }
-          : d
-      )
-    )
-  }, [])
-
-  const unassignDevice = useCallback((deviceId) => {
-    setDevices((prev) =>
-      prev.map((d) =>
-        d.id === deviceId 
-          ? { 
-              ...d, 
-              clientId: null, 
-              subscriptionStart: null, 
-              subscriptionEnd: null,
-              lifecycleStatus: 'warehouse' // NEW: Return to warehouse
-            } 
-          : d
-      )
-    )
-  }, [])
-
-  // NEW: Reminder operations
-  const dismissReminder = useCallback((reminderId) => {
-    setDismissedReminders((prev) => [...prev, reminderId])
-    setReminders((prev) => prev.filter((r) => r.id !== reminderId))
-  }, [])
-
-  const extendSubscription = useCallback((deviceId, newEndDate) => {
-    const device = devices.find((d) => d.id === deviceId)
-    if (device && device.clientId) {
-      updateDevice(deviceId, { subscriptionEnd: newEndDate })
-      
-      // Also update client if needed
-      const client = clients.find((c) => c.id === device.clientId)
-      if (client) {
-        updateClient(client.id, { subscriptionEnd: newEndDate })
-      }
-      
-      // Remove related reminders
-      const reminderId = `${deviceId}-${device.subscriptionEnd}`
-      dismissReminder(reminderId)
-    }
-  }, [devices, clients, updateDevice, updateClient, dismissReminder])
-
-  const returnDeviceFromClient = useCallback((deviceId) => {
-    const device = devices.find((d) => d.id === deviceId)
-    unassignDevice(deviceId)
-    
-    // Remove related reminders
-    if (device && device.subscriptionEnd) {
-      const reminderId = `${deviceId}-${device.subscriptionEnd}`
-      dismissReminder(reminderId)
-    }
-  }, [devices, unassignDevice, dismissReminder])
-
-  // Component inventory: updated from Devices module; used for dashboard "available sets".
-  const updateComponentInventory = useCallback((updates) => {
-    setComponentInventoryState((prev) => ({ ...prev, ...updates }))
-  }, [])
-
-  // When assigning a set to a client, deduct components (1 set = 3 components per type).
-  const deductComponentsForAssignment = useCallback((type, count = 1) => {
-    if (type === 'tablet') {
-      setComponentInventoryState((prev) => ({
-        ...prev,
-        tablets: Math.max(0, prev.tablets - count),
-        batteries: Math.max(0, prev.batteries - count),
-        fabricationTablet: Math.max(0, prev.fabricationTablet - count),
-      }))
-    } else if (type === 'stand') {
-      setComponentInventoryState((prev) => ({
-        ...prev,
-        tvs: Math.max(0, prev.tvs - count),
-        mediaBoxes: Math.max(0, prev.mediaBoxes - count),
-        aFrameStands: Math.max(0, prev.aFrameStands - count),
-      }))
-    } else if (type === 'istand') {
-      setComponentInventoryState((prev) => ({
-        ...prev,
-        tvs: Math.max(0, prev.tvs - count),
-        mediaBoxes: Math.max(0, prev.mediaBoxes - count),
-        iFrameStands: Math.max(0, prev.iFrameStands - count),
-      }))
-    }
-  }, [])
-
-  // Assign devices to a client. Available (dashboard) = unassigned devices; Deployed = assigned. Assigning moves device from available to deployed.
-  const setClientDevices = useCallback((clientId, deviceIds, subscriptionStart, subscriptionEnd) => {
-    setDevices((prev) =>
-      prev.map((d) => {
-        const assigned = deviceIds.includes(d.id)
-        return {
-          ...d,
-          clientId: assigned ? clientId : d.clientId === clientId ? null : d.clientId,
-          subscriptionStart: assigned ? subscriptionStart : d.clientId === clientId ? null : d.subscriptionStart,
-          subscriptionEnd: assigned ? subscriptionEnd : d.clientId === clientId ? null : d.subscriptionEnd,
-          lifecycleStatus: assigned ? 'deployed' : d.clientId === clientId ? 'warehouse' : d.lifecycleStatus, // NEW
-        }
-      })
-    )
-  }, [])
-
-  // NEW: Get available devices for component selection (not assigned to client, not in a set)
-  const getAvailableDevicesForComponent = useCallback((componentType) => {
-    // Map component types to device types
-    const typeMapping = {
-      'stand': 'stand',        // A-Frame stand
-      'istand': 'istand',      // I-Frame stand
-      'tv': 'tv',              // TV (for both A and I frames)
-      'tablet': 'tablet',      // Tablet
-      'mediaBox': 'mediaBox',  // Media box
-      'battery': 'battery',    // Battery
-      'fabrication': 'fabrication', // Tablet stand
-    }
-    
-    const deviceType = typeMapping[componentType]
-    if (!deviceType) return []
-    
-    // Return devices that are:
-    // 1. Not assigned to any client
-    // 2. Not already in a set
-    // 3. Match the component type
-    // 4. In warehouse
-    return devices.filter(device => 
-      !device.clientId && 
-      !device.setId &&
-      device.type === deviceType &&
-      getDeviceLifecycleStatus(device) === 'warehouse'
-    )
-  }, [devices])
-
-  // NEW: Device Sets Management
-  const createDeviceSet = useCallback((setData) => {
+  const createDeviceSet = useCallback((setType, selectedComponents, name) => {
     const newSet = {
-      id: Math.max(0, ...deviceSets.map(s => s.id)) + 1,
-      ...setData,
+      id: deviceSets.length > 0 ? Math.max(...deviceSets.map(s => s.id)) + 1 : 1,
+      type: setType,
+      name: name || `${setType} Set ${deviceSets.length + 1}`,
+      components: selectedComponents,
       createdAt: new Date().toISOString(),
     }
-    
     setDeviceSets(prev => [...prev, newSet])
-    
-    // Mark devices as used in a set (set their setId)
-    const componentDeviceIds = Object.values(setData.components).filter(Boolean)
-    setDevices(prev => prev.map(device => {
-      if (componentDeviceIds.includes(device.id.toString()) || componentDeviceIds.includes(device.id)) {
-        return { ...device, setId: newSet.id }
-      }
-      return device
-    }))
-    
-    // Deduct components from inventory
-    const setType = setData.type
-    const componentUpdates = {}
-    
-    if (setType === 'aStand') {
-      componentUpdates.aFrameStands = -1
-      componentUpdates.tvs = -1
-      componentUpdates.mediaBoxes = -1
-    } else if (setType === 'iStand') {
-      componentUpdates.iFrameStands = -1
-      componentUpdates.tvs = -1
-      componentUpdates.mediaBoxes = -1
-    } else if (setType === 'tabletCombo') {
-      componentUpdates.tablets = -1
-      componentUpdates.batteries = -1
-      componentUpdates.fabricationTablet = -1
-    }
-    
-    setComponentInventoryState(prev => {
-      const updated = { ...prev }
-      Object.entries(componentUpdates).forEach(([key, delta]) => {
-        updated[key] = Math.max(0, (updated[key] || 0) + delta)
-      })
-      return updated
-    })
+    return newSet
   }, [deviceSets])
 
   const deleteDeviceSet = useCallback((setId) => {
-    const set = deviceSets.find(s => s.id === setId)
-    if (!set) return
-    
-    // Remove setId from devices that were in this set
-    const componentDeviceIds = Object.values(set.components).filter(Boolean)
-    setDevices(prev => prev.map(device => {
-      if (componentDeviceIds.includes(device.id.toString()) || componentDeviceIds.includes(device.id)) {
-        const { setId: _, ...rest } = device
-        return rest
-      }
-      return device
-    }))
-    
-    // Return components to inventory
-    const setType = set.type
-    const componentUpdates = {}
-    
-    if (setType === 'aStand') {
-      componentUpdates.aFrameStands = 1
-      componentUpdates.tvs = 1
-      componentUpdates.mediaBoxes = 1
-    } else if (setType === 'iStand') {
-      componentUpdates.iFrameStands = 1
-      componentUpdates.tvs = 1
-      componentUpdates.mediaBoxes = 1
-    } else if (setType === 'tabletCombo') {
-      componentUpdates.tablets = 1
-      componentUpdates.batteries = 1
-      componentUpdates.fabricationTablet = 1
-    }
-    
-    setComponentInventoryState(prev => {
-      const updated = { ...prev }
-      Object.entries(componentUpdates).forEach(([key, delta]) => {
-        updated[key] = (updated[key] || 0) + delta
-      })
-      return updated
-    })
-    
     setDeviceSets(prev => prev.filter(s => s.id !== setId))
-  }, [deviceSets])
+  }, [])
 
-  // NEW: Statistics
-  const statistics = useMemo(() => {
-    return {
-      totalClients: clients.length,
-      totalDevices: devices.length,
-      deployedDevices: devices.filter((d) => getDeviceLifecycleStatus(d) === 'deployed').length,
-      warehouseDevices: devices.filter((d) => getDeviceLifecycleStatus(d) === 'warehouse').length,
-      outOfWarehouse: devices.filter((d) => getDeviceLifecycleStatus(d) === 'out_of_warehouse').length,
-      assignedDevices: devices.filter((d) => d.clientId).length,
-      availableDevices: devices.filter((d) => !d.clientId).length,
-      activeReminders: reminders.length,
-      criticalReminders: reminders.filter((r) => r.priority === 'critical').length,
+  const getAvailableDevicesForComponent = useCallback((deviceType) => {
+    return devices.filter(d => 
+      d.type === deviceType && 
+      getDeviceLifecycleStatus(d) === 'warehouse' &&
+      !d.clientId
+    )
+  }, [devices])
+
+  // ==========================================
+  // REMINDERS (Local for now)
+  // ==========================================
+
+  const generateReminders = useCallback(() => {
+    const newReminders = []
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    clients.forEach(client => {
+      const clientDevices = devices.filter(d => d.clientId === client.id)
+      if (clientDevices.length === 0) return
+
+      const endDate = new Date(client.subscriptionEnd)
+      endDate.setHours(0, 0, 0, 0)
+      const daysUntilEnd = Math.ceil((endDate - today) / (1000 * 60 * 60 * 24))
+
+      let priority = 'low'
+      let message = ''
+
+      if (daysUntilEnd < 0) {
+        priority = 'critical'
+        message = `Subscription expired ${Math.abs(daysUntilEnd)} days ago`
+      } else if (daysUntilEnd <= 7) {
+        priority = 'critical'
+        message = `Subscription expiring in ${daysUntilEnd} days`
+      } else if (daysUntilEnd <= 30) {
+        priority = 'high'
+        message = `Subscription expiring in ${daysUntilEnd} days`
+      }
+
+      if (priority !== 'low') {
+        clientDevices.forEach(device => {
+          newReminders.push({
+            id: `${client.id}-${device.id}`,
+            clientId: client.id,
+            clientName: client.name,
+            deviceId: device.id,
+            deviceCode: device.code,
+            endDate: client.subscriptionEnd,
+            priority,
+            message,
+          })
+        })
+      }
+    })
+
+    setReminders(newReminders)
+  }, [clients, devices])
+
+  useEffect(() => {
+    generateReminders()
+  }, [generateReminders])
+
+  const dismissReminder = useCallback((reminderId) => {
+    setReminders(prev => prev.filter(r => r.id !== reminderId))
+  }, [])
+
+  const extendSubscription = useCallback((deviceId, newEndDate) => {
+    const device = devices.find(d => d.id === deviceId)
+    if (device && device.clientId) {
+      updateClient(device.clientId, { subscriptionEnd: newEndDate })
     }
-  }, [clients, devices, reminders])
+  }, [devices, updateClient])
+
+  const returnDeviceFromClient = useCallback(async (deviceId) => {
+    try {
+      await unassignDevice(deviceId)
+    } catch (err) {
+      console.error('Error returning device:', err)
+      throw err
+    }
+  }, [unassignDevice])
+
+  // ==========================================
+  // CONTEXT VALUE
+  // ==========================================
 
   const value = {
-    // Existing state
-    clients,
+    // State
     devices,
-    componentInventory,
-    
-    // NEW: Reminders
+    clients,
     reminders,
-    statistics,
     deviceSets,
-    
-    // Existing functions
-    updateComponentInventory,
-    deductComponentsForAssignment,
-    getClientById,
-    getDevicesByClientId,
-    getDevicesByType,
-    getUniqueDeviceFilterOptions,
-    getLocationHierarchy,
-    getDevicesByLocation,
-    getLocationSummary,
+    componentInventory,
+    loading,
+    error,
+
+    // Device operations
+    addDevice,
+    updateDevice,
+    removeDevice,
+    assignDeviceToClient,
+    unassignDevice,
+    bulkAssignDevices,
+
+    // Client operations
     addClient,
     updateClient,
     removeClient,
-    addDevice,
-    updateDevice,
-    assignDevicesToClient,
-    unassignDevice,
-    setClientDevices,
-    
-    // NEW: Additional functions
+    getClientById,
+
+    // Device queries
+    getDevicesByType,
+    getDevicesByClientId,
     getDevicesByLifecycle,
-    dismissReminder,
-    extendSubscription,
-    returnDeviceFromClient,
+    getUniqueDeviceFilterOptions,
+
+    // Device sets
     createDeviceSet,
     deleteDeviceSet,
     getAvailableDevicesForComponent,
-    
-    // Constants
-    DEVICE_TYPES,
-    DEVICE_LIFECYCLE,
+
+    // Reminders
+    dismissReminder,
+    extendSubscription,
+    returnDeviceFromClient,
   }
 
-  return <InventoryContext.Provider value={value}>{children}</InventoryContext.Provider>
-}
-
-export function useInventory() {
-  const ctx = useContext(InventoryContext)
-  if (!ctx) throw new Error('useInventory must be used within InventoryProvider')
-  return ctx
+  return (
+    <InventoryContext.Provider value={value}>
+      {children}
+    </InventoryContext.Provider>
+  )
 }

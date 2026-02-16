@@ -50,6 +50,7 @@ import {
   getIndianLocationHierarchyForFilter,
 } from '../../config/deviceConfig'
 import BarcodeScanner from '../../components/BarcodeScanner'
+import BarcodeGenerator from '../../components/BarcodeGenerator'
 
 const LIFECYCLE_OPTIONS = [
   { value: 'all', label: 'All Devices', icon: Layers, desc: 'View all devices in system' },
@@ -137,20 +138,24 @@ const Devices = () => {
   const [showAddDevice, setShowAddDevice] = useState(false)
   const [showFilters, setShowFilters] = useState(true)
   
-  // NEW: Tab navigation state
-  const [activeTab, setActiveTab] = useState('devices') // 'devices' or 'makeset'
+  // Tab navigation state
+  const [activeTab, setActiveTab] = useState('devices')
   
-  // NEW: Make Set modal state
+  // Make Set modal state
   const [showMakeSetModal, setShowMakeSetModal] = useState(false)
   const [selectedSetType, setSelectedSetType] = useState(null)
   const [selectedComponents, setSelectedComponents] = useState({})
   const [setName, setSetName] = useState('')
   const [expandedSet, setExpandedSet] = useState(null)
   
-  // NEW: Barcode Scanner state
+  // Barcode Scanner state
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
 
-  // Filters: status, client, location (multilevel), brand, size, model
+  // NEW: Barcode Generator state
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false)
+  const [selectedDeviceForBarcode, setSelectedDeviceForBarcode] = useState(null)
+
+  // Filters
   const [filterClientId, setFilterClientId] = useState('')
   const [filterState, setFilterState] = useState('')
   const [filterDistrict, setFilterDistrict] = useState('')
@@ -159,7 +164,7 @@ const Devices = () => {
   const [filterSize, setFilterSize] = useState('')
   const [filterModel, setFilterModel] = useState('')
 
-  // Add device form state (all dropdowns + synced by product type)
+  // Add device form state
   const [newProductType, setNewProductType] = useState('tv')
   const [newBrand, setNewBrand] = useState('')
   const [newSize, setNewSize] = useState('')
@@ -169,9 +174,9 @@ const Devices = () => {
   const [newModel, setNewModel] = useState('')
   const [newDeviceCode, setNewDeviceCode] = useState('')
   const [newLifecycleStatus, setNewLifecycleStatus] = useState('warehouse')
+  const [addingDevice, setAddingDevice] = useState(false)
 
   const filterOptions = useMemo(() => getUniqueDeviceFilterOptions(), [getUniqueDeviceFilterOptions])
-  // Use static Indian states/places so Location dropdown always has options when opened
   const locationHierarchy = useMemo(() => getIndianLocationHierarchyForFilter(), [])
 
   const sizesForNewProduct = useMemo(() => getSizesForProductType(newProductType), [newProductType])
@@ -185,10 +190,10 @@ const Devices = () => {
     return `${prefix}-${String(next).padStart(3, '0')}`
   }, [devices, newProductType])
 
- const getDevicesForLifecycle = (list) => {
-  if (lifecycleFilter === 'all') return list  // NEW: Show all if 'all' selected
-  return list.filter((d) => getDeviceLifecycleStatus(d) === lifecycleFilter)
-}
+  const getDevicesForLifecycle = (list) => {
+    if (lifecycleFilter === 'all') return list
+    return list.filter((d) => getDeviceLifecycleStatus(d) === lifecycleFilter)
+  }
 
   const filteredDevices = useMemo(() => {
     let list = selectedType ? getDevicesByType(selectedType) : devices
@@ -222,7 +227,6 @@ const Devices = () => {
     searchCode,
   ])
 
-  // Counts per type for the current lifecycle only (in sync with lifecycle toggle)
   const counts = useMemo(() => {
     const types = Object.keys(ALL_PRODUCT_TYPES)
     const out = {}
@@ -233,7 +237,6 @@ const Devices = () => {
     return out
   }, [devices, getDevicesByType, lifecycleFilter])
 
-  // Total per lifecycle (for display on lifecycle tabs)
   const lifecycleTotals = useMemo(() => {
     const out = { deployed: 0, assigning: 0, warehouse: 0 }
     devices.forEach((d) => {
@@ -261,34 +264,61 @@ const Devices = () => {
     setNewSize('')
   }
 
-  const handleAddDeviceSubmit = () => {
+  // UPDATED: Modified to show barcode modal after adding device
+  const handleAddDeviceSubmit = async () => {
     const code = (newDeviceCode || suggestedCode).trim()
     if (!code || devices.some((d) => d.code === code)) return
-    addDevice({
-      code,
-      type: newProductType,
-      brand: newBrand || undefined,
-      size: newSize || undefined,
-      color: newColor || undefined,
-      gpsId: newGpsId.trim() || undefined,
-      mfgDate: newMfgDate || undefined,
-      model: newModel.trim() || undefined,
-      location: newLifecycleStatus === 'warehouse' ? 'Warehouse A' : '',
-      lifecycleStatus: newLifecycleStatus,
-    })
-    setNewLifecycleStatus('warehouse')
-    setShowAddDevice(false)
+    
+    setAddingDevice(true)
+    
+    try {
+      const deviceData = {
+        code,
+        type: newProductType,
+        brand: newBrand || undefined,
+        size: newSize || undefined,
+        color: newColor || undefined,
+        gpsId: newGpsId.trim() || undefined,
+        mfgDate: newMfgDate || undefined,
+        model: newModel.trim() || undefined,
+        location: newLifecycleStatus === 'warehouse' ? 'Warehouse A' : '',
+        lifecycleStatus: newLifecycleStatus,
+      }
+      
+      // Backend will auto-generate barcode
+      const newDevice = await addDevice(deviceData)
+      
+      // Show barcode modal with the newly created device
+      setSelectedDeviceForBarcode(newDevice)
+      setShowBarcodeModal(true)
+      
+      // Reset form
+      setNewLifecycleStatus('warehouse')
+      setShowAddDevice(false)
+      
+    } catch (error) {
+      alert('Error adding device: ' + error.message)
+    } finally {
+      setAddingDevice(false)
+    }
+  }
+
+  // NEW: Handle viewing barcode for existing devices
+  const handleViewBarcode = (device) => {
+    setSelectedDeviceForBarcode(device)
+    setShowBarcodeModal(true)
   }
 
   const canAddDevice = (newDeviceCode.trim() || suggestedCode) && !devices.some((d) => d.code === (newDeviceCode.trim() || suggestedCode))
 
   const hasActiveFilters = filterClientId || filterState || filterDistrict || filterPinpoint || filterBrand || filterSize || filterModel
 
-  // Single Location dropdown with nested hover flyouts
+  // Location dropdown
   const [locationDropdownOpen, setLocationDropdownOpen] = useState(false)
   const [hoveredState, setHoveredState] = useState(null)
-  const [hoveredDistrict, setHoveredDistrict] = useState(null) // format: 'State|District'
+  const [hoveredDistrict, setHoveredDistrict] = useState(null)
   const locationDropdownRef = useRef(null)
+  
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (locationDropdownRef.current && !locationDropdownRef.current.contains(e.target)) {
@@ -318,7 +348,7 @@ const Devices = () => {
     setHoveredDistrict(null)
   }
 
-  // NEW: Make Set handlers
+  // Make Set handlers
   const handleOpenMakeSetModal = () => {
     setShowMakeSetModal(true)
     setSelectedSetType(null)
@@ -505,7 +535,7 @@ const Devices = () => {
         </div>
       </div>
 
-      {/* Filters: Product type (cards) + Client, Location, Brand, Size, Model */}
+      {/* Filters */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <button
           type="button"
@@ -527,7 +557,7 @@ const Devices = () => {
               Counts below match your lifecycle view above. Click a card to filter by product type; use dropdowns for more filters.
             </p>
 
-            {/* Individual items — smaller icons (counts = current lifecycle) */}
+            {/* Individual items */}
             <div>
               <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
                 <Box className="w-4 h-4" />
@@ -564,7 +594,7 @@ const Devices = () => {
               </div>
             </div>
 
-            {/* Sets — bigger icons, separate section */}
+            {/* Sets */}
             <div className="pt-2 border-t border-gray-100">
               <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-1.5">
                 <Layers className="w-4 h-4" />
@@ -621,7 +651,7 @@ const Devices = () => {
                   </select>
                 </div>
               )}
-              {/* Location: single dropdown with hover flyouts (State → District → Pinpoint) */}
+              {/* Location dropdown */}
               <div className="relative" ref={locationDropdownRef}>
                 <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> Location</label>
                 <button
@@ -762,7 +792,7 @@ const Devices = () => {
         )}
       </div>
 
-      {/* Device list table — in sync with lifecycle view */}
+      {/* Device list table */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="p-4 border-b border-gray-200 flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-2">
@@ -811,7 +841,7 @@ const Devices = () => {
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Assigned to</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Subscription</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Status</th>
-                <th className="text-right py-3 px-4 font-semibold text-gray-700">Details</th>
+                <th className="text-right py-3 px-4 font-semibold text-gray-700">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
@@ -920,13 +950,26 @@ const Devices = () => {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() => setDetailDevice(device)}
-                          className="text-primary-600 hover:text-primary-700 text-sm font-medium"
-                        >
-                          View
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          {/* NEW: Barcode button */}
+                          {device.barcode && (
+                            <button
+                              type="button"
+                              onClick={() => handleViewBarcode(device)}
+                              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                              title="View barcode"
+                            >
+                              <QrCode className="w-4 h-4" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setDetailDevice(device)}
+                            className="text-primary-600 hover:text-primary-700 text-sm font-medium"
+                          >
+                            View
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -1010,6 +1053,20 @@ const Devices = () => {
                 </div>
               )}
             </div>
+            
+            {/* NEW: Show barcode button if barcode exists */}
+            {detailDevice.barcode && (
+              <div className="pt-4 border-t border-gray-200 mt-4">
+                <button
+                  onClick={() => handleViewBarcode(detailDevice)}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <QrCode className="w-4 h-4" />
+                  View Barcode
+                </button>
+              </div>
+            )}
+            
             <p className="text-xs text-gray-500 mt-4 pt-4 border-t border-gray-200">
               Device data is synced with Client and other modules.
             </p>
@@ -1017,7 +1074,7 @@ const Devices = () => {
         </div>
       )}
 
-      {/* Add device modal — multiple dropdowns, synced by product type */}
+      {/* Add device modal */}
       {showAddDevice && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
@@ -1028,7 +1085,7 @@ const Devices = () => {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-bold text-gray-900 mb-2">Add device</h3>
-            <p className="text-sm text-gray-500 mb-4">Product type drives available brands and sizes. All fields can be linked to other modules.</p>
+            <p className="text-sm text-gray-500 mb-4">Product type drives available brands and sizes. A unique barcode will be auto-generated.</p>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Product type *</label>
@@ -1141,6 +1198,17 @@ const Devices = () => {
                   <p className="text-xs text-red-600 mt-1">This code is already used.</p>
                 )}
               </div>
+              
+              {/* NEW: Barcode info */}
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <QrCode className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-sm text-blue-900">
+                    <p className="font-medium">Barcode will be auto-generated</p>
+                    <p className="text-xs mt-1">You can print/download the barcode after adding the device.</p>
+                  </div>
+                </div>
+              </div>
             </div>
             <div className="flex gap-3 mt-6">
               <button
@@ -1153,10 +1221,17 @@ const Devices = () => {
               <button
                 type="button"
                 onClick={handleAddDeviceSubmit}
-                disabled={!canAddDevice}
-                className="flex-1 px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!canAddDevice || addingDevice}
+                className="flex-1 px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Add
+                {addingDevice ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Adding...
+                  </>
+                ) : (
+                  'Add'
+                )}
               </button>
             </div>
           </div>
@@ -1404,7 +1479,6 @@ const Devices = () => {
                         <div className="space-y-4">
                           {SET_TYPES[selectedSetType].components.map((comp) => {
                             const CompIcon = comp.icon
-                            const availableStock = getAvailableStock(comp.inventoryKey)
                             const availableDevices = getAvailableDevicesForComponent(comp.deviceType)
 
                             return (
@@ -1504,155 +1578,29 @@ const Devices = () => {
         </>
       )}
 
-      {/* Add Device Modal (existing modal remains unchanged) */}
-      {showAddDevice && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
-          onClick={() => setShowAddDevice(false)}
-        >
-          <div
-            className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-bold text-gray-900 mb-2">Add device</h3>
-            <p className="text-sm text-gray-500 mb-4">Product type drives available brands and sizes. All fields can be linked to other modules.</p>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Product type *</label>
-                <select
-                  value={newProductType}
-                  onChange={(e) => handleProductTypeChange(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
-                >
-                  {Object.entries(PRODUCT_TYPES).map(([key, label]) => (
-                    <option key={key} value={key}>{label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Brand</label>
-                <select
-                  value={newBrand}
-                  onChange={(e) => setNewBrand(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
-                >
-                  <option value="">Select brand</option>
-                  {brandsForNewProduct.map((b) => (
-                    <option key={b} value={b}>{b}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Size</label>
-                <select
-                  value={newSize}
-                  onChange={(e) => setNewSize(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
-                >
-                  <option value="">Select size</option>
-                  {sizesForNewProduct.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-500 mt-1">Sizes shown match selected product type.</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Model</label>
-                <input
-                  type="text"
-                  value={newModel}
-                  onChange={(e) => setNewModel(e.target.value)}
-                  placeholder="e.g. Tab S8, Frame 55"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Color</label>
-                <select
-                  value={newColor}
-                  onChange={(e) => setNewColor(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
-                >
-                  <option value="">Select color</option>
-                  {DEVICE_COLORS.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">GPS ID</label>
-                <input
-                  type="text"
-                  value={newGpsId}
-                  onChange={(e) => setNewGpsId(e.target.value)}
-                  placeholder="Optional tracking ID"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 font-mono"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">MFG date</label>
-                <input
-                  type="date"
-                  value={newMfgDate}
-                  onChange={(e) => setNewMfgDate(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Current Location *</label>
-                <select
-                  required
-                  value={newLifecycleStatus}
-                  onChange={(e) => setNewLifecycleStatus(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
-                >
-                  <option value="">Select location...</option>
-                  <option value="warehouse">In Warehouse</option>
-                  <option value="deployed">Deployed</option>
-                  <option value="out_of_warehouse">Out of Warehouse</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Unique code *</label>
-                <input
-                  type="text"
-                  value={newDeviceCode}
-                  onChange={(e) => setNewDeviceCode(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))}
-                  placeholder={suggestedCode}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 font-mono"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Suggested: <button type="button" onClick={() => setNewDeviceCode(suggestedCode)} className="text-primary-600 hover:underline font-mono">{suggestedCode}</button>
-                </p>
-                {newDeviceCode && devices.some((d) => d.code === newDeviceCode.trim()) && (
-                  <p className="text-xs text-red-600 mt-1">This code is already used.</p>
-                )}
-              </div>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button
-                type="button"
-                onClick={() => setShowAddDevice(false)}
-                className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleAddDeviceSubmit}
-                disabled={!canAddDevice}
-                className="flex-1 px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Barcode Scanner Modal */}
       {showBarcodeScanner && (
-        <BarcodeScanner onClose={() => setShowBarcodeScanner(false)} />
+        <BarcodeScanner 
+          onClose={() => setShowBarcodeScanner(false)}
+          onDeviceFound={(device) => {
+            setShowBarcodeScanner(false)
+            // Optionally show the device's barcode
+            if (device.barcode) {
+              handleViewBarcode(device)
+            }
+          }}
+        />
+      )}
+
+      {/* NEW: Barcode Generator Modal */}
+      {showBarcodeModal && selectedDeviceForBarcode && (
+        <BarcodeGenerator
+          device={selectedDeviceForBarcode}
+          onClose={() => {
+            setShowBarcodeModal(false)
+            setSelectedDeviceForBarcode(null)
+          }}
+        />
       )}
     </div>
   )

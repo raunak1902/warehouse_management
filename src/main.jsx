@@ -15,9 +15,8 @@ function Fallback({ error }) {
 const root = ReactDOM.createRoot(document.getElementById('root'))
 try {
   root.render(
-    <React.StrictMode>
+    
       <App />
-    </React.StrictMode>
   )
 } catch (err) {
   root.render(<Fallback error={err} />)

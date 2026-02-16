@@ -8,6 +8,18 @@ export default defineConfig({
     host: 'localhost',
     port: 5174,
     strictPort: false,
-    open: true
+    open: true,
+    // Disable HMR overlay that might cause flickering
+    hmr: {
+      overlay: false
+    },
+    // Optimize file watching
+    watch: {
+      ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**']
+    }
+  },
+  // Optimize build for development
+  build: {
+    sourcemap: false
   }
 })

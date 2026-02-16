@@ -6,6 +6,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import authMiddleware from "./middleware/auth.js";
 
+// Import routes
+import deviceRoutes from "./routes/devices.js";
+
 dotenv.config();
 
 const app = express();
@@ -13,6 +16,10 @@ const prisma = new PrismaClient();
 
 app.use(cors());
 app.use(express.json());
+
+// ==========================================
+// BASIC ROUTES
+// ==========================================
 
 app.get("/", (req, res) => {
   res.json({ message: "Backend is running 🚀" });
@@ -27,6 +34,10 @@ app.get("/test-db", authMiddleware, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ==========================================
+// AUTHENTICATION ROUTES
+// ==========================================
 
 // 🔐 Login Route
 app.post("/login", async (req, res) => {
@@ -71,8 +82,43 @@ app.post("/login", async (req, res) => {
   }
 });
 
-const PORT = 5000;
+// ==========================================
+// API ROUTES
+// ==========================================
+
+// Device routes
+app.use("/api/devices", deviceRoutes);
+
+// ==========================================
+// ERROR HANDLING
+// ==========================================
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ error: "Route not found" });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ 
+    error: "Something went wrong!",
+    message: process.env.NODE_ENV === "development" ? err.message : undefined
+  });
+});
+
+// ==========================================
+// SERVER STARTUP
+// ==========================================
+
+const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+});
+
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  await prisma.$disconnect();
+  process.exit(0);
 });

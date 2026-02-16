@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -86,6 +83,40 @@ model Client {
   subscriptionEnd   DateTime
   createdAt         DateTime @default(now())
 
+  devices Device[]
+
   @@index([subscriptionEnd])
 }
 
+// =======================
+// DEVICES
+// =======================
+model Device {
+  id              Int      @id @default(autoincrement())
+  code            String   @unique // e.g., ATV-001, ITV-005, TAB-012
+  barcode         String   @unique
+  type            String   // 'tv', 'tablet', 'stand', 'istand', 'mediaBox', 'battery', 'fabrication'
+  brand           String?
+  size            String?
+  model           String?
+  color           String?
+  gpsId           String?
+  mfgDate         DateTime?
+  lifecycleStatus String   @default("warehouse") // 'warehouse', 'assigning', 'deployed'
+  location        String?  // For warehouse: "Warehouse A", For deployed: will be linked to deployment location
+  state           String?  // For deployed devices
+  district        String?  // For deployed devices
+  pinpoint        String?  // Specific location name
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Foreign key to client (nullable because device may not be assigned)
+  clientId        Int?
+  client          Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([type])
+  @@index([lifecycleStatus])
+  @@index([clientId])
+  @@index([code])
+  @@index([barcode])
+}
