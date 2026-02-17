@@ -54,57 +54,57 @@ useEffect(() => {
   }
 
   return (
-    <InventoryProvider>
-      <Router>
-        <Routes>
+    <Router>
+      <Routes>
 
-          {/* Login Route */}
-          <Route 
-            path="/login" 
-            element={
-              user ? <Navigate to="/dashboard" /> : <Login onLogin={handleLogin} />
-            } 
-          />
+        {/* Login Route */}
+        <Route 
+          path="/login" 
+          element={
+            user ? <Navigate to="/dashboard" /> : <Login onLogin={handleLogin} />
+          } 
+        />
 
-          {/* Protected Layout */}
-          <Route
-            path="/"
-            element={
-              user ? (
+        {/* Protected Layout - InventoryProvider only mounts AFTER login */}
+        <Route
+          path="/"
+          element={
+            user ? (
+              <InventoryProvider>
                 <Layout userRole={user.role} onLogout={handleLogout}>
                   <Outlet />
                 </Layout>
-              ) : (
-                <Navigate to="/login" />
-              )
-            }
-          >
-            <Route path="dashboard" element={<Dashboard userRole={user?.role} />} />
-            <Route path="dashboard/client" element={<Client />} />
-            <Route path="dashboard/devices" element={<Devices />} />
-            <Route path="dashboard/location" element={<Location />} />
-            <Route path="dashboard/assigning" element={<Assigning />} />
-            <Route path="dashboard/ground-team" element={<GroundTeam />} />
-            <Route path="dashboard/delivery" element={<Delivery />} /> 
-            <Route path="dashboard/installation" element={<Installation />} />
-            <Route path="dashboard/return" element={<Return />} />
+              </InventoryProvider>
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        >
+          <Route path="dashboard" element={<Dashboard userRole={user?.role} />} />
+          <Route path="dashboard/client" element={<Client />} />
+          <Route path="dashboard/devices" element={<Devices />} />
+          <Route path="dashboard/location" element={<Location />} />
+          <Route path="dashboard/assigning" element={<Assigning />} />
+          <Route path="dashboard/ground-team" element={<GroundTeam />} />
+          <Route path="dashboard/delivery" element={<Delivery />} /> 
+          <Route path="dashboard/installation" element={<Installation />} />
+          <Route path="dashboard/return" element={<Return />} />
 
-            {/* Role-Based Route */}
-            <Route 
-              path="super-admin" 
-              element={
-                <ProtectedRoute allowedRoles={["Admin", "SuperAdmin"]}>
-                  <SuperAdmin />
-                </ProtectedRoute>
-              } 
-            />
+          {/* Role-Based Route */}
+          <Route 
+            path="super-admin" 
+            element={
+              <ProtectedRoute allowedRoles={["Admin", "SuperAdmin"]}>
+                <SuperAdmin />
+              </ProtectedRoute>
+            } 
+          />
 
-            <Route path="*" element={<Navigate to="/dashboard" />} />
-          </Route>
+          <Route path="*" element={<Navigate to="/dashboard" />} />
+        </Route>
 
-        </Routes>
-      </Router>
-    </InventoryProvider>
+      </Routes>
+    </Router>
   )
 }
 

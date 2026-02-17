@@ -75,6 +75,18 @@ export const deviceApi = {
     return response.data;
   },
 
+  // NEW: Get next auto-assigned code for a product type
+  getNextCode: async (type) => {
+    const response = await api.get(`/api/devices/next-code/${type}`);
+    return response.data;
+  },
+
+  // Bulk create devices (same type, shared fields, system generates N codes + barcodes)
+  bulkCreate: async (bulkData) => {
+    const response = await api.post('/api/devices/bulk-add', bulkData);
+    return response.data;
+  },
+
   // Create new device
   create: async (deviceData) => {
     const response = await api.post('/api/devices', deviceData);

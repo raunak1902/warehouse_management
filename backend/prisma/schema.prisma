@@ -102,6 +102,7 @@ model Device {
   color           String?
   gpsId           String?
   mfgDate         DateTime?
+  healthStatus    String   @default("ok")
   lifecycleStatus String   @default("warehouse") // 'warehouse', 'assigning', 'deployed'
   location        String?  // For warehouse: "Warehouse A", For deployed: will be linked to deployment location
   state           String?  // For deployed devices

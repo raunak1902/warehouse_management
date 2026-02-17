@@ -1,0 +1,1 @@
+ALTER TABLE "Device" ADD COLUMN "healthStatus" TEXT NOT NULL DEFAULT 'ok';

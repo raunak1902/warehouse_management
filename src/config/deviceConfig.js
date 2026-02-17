@@ -75,6 +75,14 @@ export const DEVICE_COLORS = [
   'Red',
 ]
 
+
+// Health / Status options for devices
+export const DEVICE_HEALTH_STATUS = [
+  { value: 'ok', label: 'OK', color: 'emerald' },
+  { value: 'repair', label: 'Repair', color: 'amber' },
+  { value: 'damage', label: 'Damage', color: 'red' },
+]
+
 // Code prefix for new product types (for suggested code)
 export const DEVICE_CODE_PREFIX_MAP = {
   tv: 'TV',
@@ -89,6 +97,108 @@ export const DEVICE_CODE_PREFIX_MAP = {
 
 export function getCodePrefix(productType) {
   return DEVICE_CODE_PREFIX_MAP[productType] || 'DEV'
+}
+
+/**
+ * Normalize a device code to a canonical form for uniqueness comparison.
+ * Rules:
+ *  - Strip leading/trailing whitespace, uppercase
+ *  - Remove leading zeros from the numeric suffix: TV-001 → TV-1, TAB-007 → TAB-7
+ *  - This means TV-1, TV-01, TV-001 are all treated as the same code
+ * Example: normalizeCode('TV-001') === normalizeCode('TV-1') === 'TV-1'
+ */
+export function normalizeCode(code) {
+  if (!code) return ''
+  const upper = code.trim().toUpperCase()
+  // Split on the LAST hyphen to separate prefix from numeric suffix
+  const lastHyphen = upper.lastIndexOf('-')
+  if (lastHyphen === -1) return upper
+  const prefix = upper.slice(0, lastHyphen)
+  const suffix = upper.slice(lastHyphen + 1)
+  // If suffix is purely numeric, strip leading zeros
+  if (/^\d+$/.test(suffix)) {
+    return `${prefix}-${parseInt(suffix, 10)}`
+  }
+  return upper
+}
+
+/**
+ * Get all "occupied" numeric indices for a given prefix from an existing device list.
+ * Handles TV-1, TV-01, TV-001 as the same number.
+ */
+export function getOccupiedNumbers(devices, prefix) {
+  const nums = new Set()
+  devices.forEach((d) => {
+    const code = (d.code || '').toUpperCase()
+    if (!code.startsWith(prefix + '-')) return
+    const suffix = code.slice(prefix.length + 1)
+    if (/^\d+$/.test(suffix)) nums.add(parseInt(suffix, 10))
+  })
+  return nums
+}
+
+/**
+ * Compute next auto-assigned code for a product type.
+ * Finds the highest occupied number and increments by 1.
+ * Returns format: PREFIX-NNN (zero-padded to 3 digits).
+ */
+export function getNextAutoCode(devices, productType) {
+  const prefix = getCodePrefix(productType)
+  const occupied = getOccupiedNumbers(devices, prefix)
+  // Find first available number starting from 1 (fills gaps if any)
+  let next = 1
+  while (occupied.has(next)) next++
+  return `${prefix}-${String(next).padStart(3, '0')}`
+}
+
+/**
+ * Validate a device code:
+ *  1. Must not be empty
+ *  2. Must start with the correct prefix for the given product type
+ *  3. Must follow format PREFIX-NNN (with numeric suffix)
+ *  4. Must be unique (normalized) among existing devices, excluding the current device (for edits)
+ *
+ * Returns: { valid: boolean, error: string|null }
+ */
+export function validateDeviceCode(code, productType, allDevices, excludeCode = null) {
+  if (!code || !code.trim()) {
+    return { valid: false, error: 'Code is required.' }
+  }
+  const upper = code.trim().toUpperCase()
+  const expectedPrefix = getCodePrefix(productType)
+
+  // Must start with the correct prefix
+  if (!upper.startsWith(expectedPrefix + '-')) {
+    return {
+      valid: false,
+      error: `Code must start with "${expectedPrefix}-" for ${PRODUCT_TYPES[productType] || productType}. Example: ${expectedPrefix}-001`,
+    }
+  }
+
+  // The suffix (after prefix-) must be numeric
+  const suffix = upper.slice(expectedPrefix.length + 1)
+  if (!suffix || !/^\d+$/.test(suffix)) {
+    return {
+      valid: false,
+      error: `Code suffix must be a number. Example: ${expectedPrefix}-001`,
+    }
+  }
+
+  // Check uniqueness (normalized)
+  const normalizedInput = normalizeCode(upper)
+  const isDuplicate = allDevices.some((d) => {
+    if (excludeCode && normalizeCode(d.code) === normalizeCode(excludeCode)) return false
+    return normalizeCode(d.code) === normalizedInput
+  })
+
+  if (isDuplicate) {
+    return {
+      valid: false,
+      error: `Code "${upper}" already exists (codes like TV-1, TV-01, TV-001 are treated as the same).`,
+    }
+  }
+
+  return { valid: true, error: null }
 }
 
 // Indian states and places — dummy values for Location filter dropdown (State → District → Pinpoint)

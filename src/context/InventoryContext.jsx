@@ -195,6 +195,19 @@ export const InventoryProvider = ({ children }) => {
     }
   }, [])
 
+  // Bulk add devices — same type, shared fields, system auto-generates N codes + barcodes
+  const bulkAddDevices = useCallback(async (bulkData) => {
+    try {
+      const result = await deviceApi.bulkCreate(bulkData)
+      // Append all new devices to local state
+      setDevices(prev => [...prev, ...result.devices])
+      return result
+    } catch (err) {
+      console.error('Error bulk adding devices:', err)
+      throw new Error(err.response?.data?.error || 'Failed to bulk add devices')
+    }
+  }, [])
+
   // Update device
   const updateDevice = useCallback(async (deviceId, updates) => {
     try {
@@ -449,6 +462,7 @@ export const InventoryProvider = ({ children }) => {
 
     // Device operations
     addDevice,
+    bulkAddDevices,
     updateDevice,
     removeDevice,
     assignDeviceToClient,
