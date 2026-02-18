@@ -1,10 +1,8 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-
-// Create axios instance with default config
+// Empty base URL - all calls use relative paths, proxied by Vite
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL: '',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -19,147 +17,46 @@ api.interceptors.request.use(
     }
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
 // Handle response errors
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Only handle 401 if user was actually logged in
-    const token = localStorage.getItem("token");
-
     if (error.response?.status === 401) {
-  localStorage.removeItem('token');
-  localStorage.removeItem('user');
-  localStorage.removeItem('isAuthenticated');
-  localStorage.removeItem('userRole');
-  
-  // ✅ Use custom event - NO page reload
-  window.dispatchEvent(new CustomEvent('auth-expired'));
-}
-
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('isAuthenticated');
+      localStorage.removeItem('userRole');
+      window.dispatchEvent(new CustomEvent('auth-expired'));
+    }
     return Promise.reject(error);
   }
 );
-
 
 // ==========================================
 // DEVICE API METHODS
 // ==========================================
 
 export const deviceApi = {
-  // Get all devices
-  getAll: async () => {
-    const response = await api.get('/api/devices');
-    return response.data;
-  },
-
-  // Get single device by ID
-  getById: async (id) => {
-    const response = await api.get(`/api/devices/${id}`);
-    return response.data;
-  },
-
-  // Get device by code
-  getByCode: async (code) => {
-    const response = await api.get(`/api/devices/code/${code}`);
-    return response.data;
-  },
-
-  // NEW: Get device by barcode
-  getByBarcode: async (barcode) => {
-    const response = await api.get(`/api/devices/barcode/${barcode}`);
-    return response.data;
-  },
-
-  // NEW: Get next auto-assigned code for a product type
-  getNextCode: async (type) => {
-    const response = await api.get(`/api/devices/next-code/${type}`);
-    return response.data;
-  },
-
-  // Bulk create devices (same type, shared fields, system generates N codes + barcodes)
-  bulkCreate: async (bulkData) => {
-    const response = await api.post('/api/devices/bulk-add', bulkData);
-    return response.data;
-  },
-
-  // Create new device
-  create: async (deviceData) => {
-    const response = await api.post('/api/devices', deviceData);
-    return response.data;
-  },
-
-  // Update device
-  update: async (id, deviceData) => {
-    const response = await api.put(`/api/devices/${id}`, deviceData);
-    return response.data;
-  },
-
-  // Delete device
-  delete: async (id) => {
-    const response = await api.delete(`/api/devices/${id}`);
-    return response.data;
-  },
-
-  // Bulk assign devices to client
-  bulkAssign: async (deviceIds, clientId) => {
-    const response = await api.post('/api/devices/bulk/assign', {
-      deviceIds,
-      clientId,
-    });
-    return response.data;
-  },
-
-  // Bulk unassign devices
-  bulkUnassign: async (deviceIds) => {
-    const response = await api.post('/api/devices/bulk/unassign', {
-      deviceIds,
-    });
-    return response.data;
-  },
-
-  // Bulk update lifecycle status
-  bulkUpdateLifecycle: async (deviceIds, lifecycleData) => {
-    const response = await api.post('/api/devices/bulk/update-lifecycle', {
-      deviceIds,
-      ...lifecycleData,
-    });
-    return response.data;
-  },
-
-  // Filter devices by type
-  filterByType: async (type) => {
-    const response = await api.get(`/api/devices/filter/type/${type}`);
-    return response.data;
-  },
-
-  // Filter devices by lifecycle status
-  filterByLifecycle: async (status) => {
-    const response = await api.get(`/api/devices/filter/lifecycle/${status}`);
-    return response.data;
-  },
-
-  // Filter devices by client
-  filterByClient: async (clientId) => {
-    const response = await api.get(`/api/devices/filter/client/${clientId}`);
-    return response.data;
-  },
-
-  // Advanced search
-  search: async (filters) => {
-    const response = await api.post('/api/devices/search', filters);
-    return response.data;
-  },
-
-  // Get statistics
-  getStats: async () => {
-    const response = await api.get('/api/devices/stats/summary');
-    return response.data;
-  },
+  getAll: async () => (await api.get('/api/devices')).data,
+  getById: async (id) => (await api.get(`/api/devices/${id}`)).data,
+  getByCode: async (code) => (await api.get(`/api/devices/code/${code}`)).data,
+  getByBarcode: async (barcode) => (await api.get(`/api/devices/barcode/${barcode}`)).data,
+  getNextCode: async (type) => (await api.get(`/api/devices/next-code/${type}`)).data,
+  bulkCreate: async (bulkData) => (await api.post('/api/devices/bulk-add', bulkData)).data,
+  create: async (deviceData) => (await api.post('/api/devices', deviceData)).data,
+  update: async (id, deviceData) => (await api.put(`/api/devices/${id}`, deviceData)).data,
+  delete: async (id) => (await api.delete(`/api/devices/${id}`)).data,
+  bulkAssign: async (deviceIds, clientId) => (await api.post('/api/devices/bulk/assign', { deviceIds, clientId })).data,
+  bulkUnassign: async (deviceIds) => (await api.post('/api/devices/bulk/unassign', { deviceIds })).data,
+  bulkUpdateLifecycle: async (deviceIds, lifecycleData) => (await api.post('/api/devices/bulk/update-lifecycle', { deviceIds, ...lifecycleData })).data,
+  filterByType: async (type) => (await api.get(`/api/devices/filter/type/${type}`)).data,
+  filterByLifecycle: async (status) => (await api.get(`/api/devices/filter/lifecycle/${status}`)).data,
+  filterByClient: async (clientId) => (await api.get(`/api/devices/filter/client/${clientId}`)).data,
+  search: async (filters) => (await api.post('/api/devices/search', filters)).data,
+  getStats: async () => (await api.get('/api/devices/stats/summary')).data,
 };
 
 // ==========================================
@@ -167,10 +64,7 @@ export const deviceApi = {
 // ==========================================
 
 export const authApi = {
-  login: async (email, password) => {
-    const response = await api.post('/login', { email, password });
-    return response.data;
-  },
+  login: async (email, password) => (await api.post('/login', { email, password })).data,
 };
 
 export default api;

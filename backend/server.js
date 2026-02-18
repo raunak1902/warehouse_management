@@ -16,7 +16,15 @@ dotenv.config();
 const app = express();
 const prisma = new PrismaClient();
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    "http://localhost:5174",
+    "http://10.156.23.45:5174",
+    "https://10.156.23.45:5174"
+  ],
+  credentials: true
+}));
+
 app.use(express.json());
 
 // ==========================================
@@ -121,9 +129,10 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on network at port ${PORT}`);
 });
+
 
 // Graceful shutdown
 process.on("SIGINT", async () => {

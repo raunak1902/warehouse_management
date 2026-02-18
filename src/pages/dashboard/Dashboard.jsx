@@ -143,13 +143,13 @@ const Dashboard = ({ userRole }) => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-            Dashboard Overview
-            <Sparkles className="w-6 h-6 text-orange-500 animate-pulse" />
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900 flex items-center gap-2">
+            Dashboard
+            <Sparkles className="w-5 h-5 md:w-6 md:h-6 text-orange-500 animate-pulse" />
           </h1>
-          <p className="text-gray-600 mt-1">Welcome back, {userRole}!</p>
+          <p className="text-gray-600 mt-0.5 text-sm">Welcome back, {userRole}!</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -432,7 +432,7 @@ const Dashboard = ({ userRole }) => {
           </div>
 
           {/* Clickable Device Icons */}
-          <div className="grid grid-cols-5 gap-3">
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 md:gap-3">
             {materialCategories.map((cat, idx) => {
               const Icon = cat.icon
               return (
@@ -566,7 +566,7 @@ const Dashboard = ({ userRole }) => {
           <p className="text-sm text-gray-500 mt-1">Available device sets ready for deployment</p>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 divide-x divide-gray-100">
+        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-gray-100">
           {[
             { label: 'Tablet Combo', available: devices.filter(d => d.type === 'tablet' && !d.clientId).length, deployed: devices.filter(d => d.type === 'tablet' && d.clientId).length, color: 'orange' },
             { label: 'A-Frame Standee', available: devices.filter(d => d.type === 'stand' && !d.clientId).length, deployed: devices.filter(d => d.type === 'stand' && d.clientId).length, color: 'blue' },
@@ -606,7 +606,7 @@ const Dashboard = ({ userRole }) => {
         
         {showIndividualItems && (
           <div className="border-t border-gray-100 p-6 bg-gradient-to-b from-gray-50 to-white animate-fadeIn">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
               {individualItems.map((item) => {
                 const Icon = item.icon
                 return (

@@ -1,25 +1,30 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 
-// https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), basicSsl()],
   server: {
-    host: 'localhost',
+    host: true,
     port: 5174,
     strictPort: false,
     open: true,
-    // Disable HMR overlay that might cause flickering
-    hmr: {
-      overlay: false
-    },
-    // Optimize file watching
+    hmr: { overlay: false },
     watch: {
       ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**']
+    },
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/login': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false,
+      }
     }
   },
-  // Optimize build for development
-  build: {
-    sourcemap: false
-  }
+  build: { sourcemap: false }
 })

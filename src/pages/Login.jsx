@@ -17,7 +17,8 @@ const Login = ({ onLogin }) => {
 
     try {
       const response = await axios.post(
-        "http://localhost:5000/login",
+        `/login`
+,
         {
           email: formData.email,
           password: formData.password,
@@ -108,5 +109,7 @@ const Login = ({ onLogin }) => {
     </div>
   );
 };
+
+console.log("API URL:", import.meta.env.VITE_API_URL);
 
 export default Login;

@@ -82,7 +82,14 @@ const BarcodeScanner = ({ onClose, onDeviceFound }) => {
     try {
       setError(null)
       setIsScanning(true)
-      
+
+      // Check if camera APIs are available (requires HTTPS)
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+        setError('HTTPS_REQUIRED')
+        setIsScanning(false)
+        return
+      }
+
       console.log('Starting ZXing barcode scanner...')
       
       // Get available video devices
@@ -242,6 +249,52 @@ const BarcodeScanner = ({ onClose, onDeviceFound }) => {
     if (e.key === 'Enter') {
       handleManualEntry()
     }
+  }
+
+  const handleImageCapture = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      // Draw image to canvas and decode with ZXing
+      const img = new Image()
+      const url = URL.createObjectURL(file)
+      img.src = url
+
+      await new Promise((resolve, reject) => {
+        img.onload = resolve
+        img.onerror = reject
+      })
+
+      const canvas = document.createElement('canvas')
+      canvas.width = img.width
+      canvas.height = img.height
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0)
+
+      URL.revokeObjectURL(url)
+
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const result = await codeReaderRef.current.decodeFromImageElement(img)
+
+      if (result) {
+        const scannedText = result.getText()
+        const { barcode } = parseBarcodeData(scannedText)
+        fetchDeviceByBarcode(barcode)
+      } else {
+        setError('No barcode found in image. Try again with better lighting.')
+        setLoading(false)
+      }
+    } catch (err) {
+      setError('Could not read barcode from image. Make sure the barcode is clear and well-lit.')
+      setLoading(false)
+    }
+
+    // Reset input so same file can be selected again
+    e.target.value = ''
   }
 
   const resetScanner = () => {
@@ -415,12 +468,66 @@ const BarcodeScanner = ({ onClose, onDeviceFound }) => {
               </div>
 
               {/* Error Message */}
-              {error && (
+              {error && error !== 'HTTPS_REQUIRED' && (
                 <div className="p-4 bg-red-50 border-2 border-red-200 rounded-lg flex items-start gap-3">
                   <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
                   <div className="flex-1">
                     <p className="font-medium text-red-900">Error</p>
                     <p className="text-sm text-red-700">{error}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* HTTPS Required Error - with native camera fallback */}
+              {error === 'HTTPS_REQUIRED' && (
+                <div className="space-y-4">
+                  <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-xl">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold text-amber-900 mb-1">Camera requires HTTPS</p>
+                        <p className="text-sm text-amber-800">
+                          Chrome blocks camera access on <code className="bg-amber-100 px-1 rounded">http://</code> connections.
+                          Your app needs to be served over <code className="bg-amber-100 px-1 rounded">https://</code>.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Native camera fallback — works on HTTP */}
+                  <div className="p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
+                    <p className="font-semibold text-blue-900 mb-1 flex items-center gap-2">
+                      <Camera className="w-4 h-4" />
+                      Use phone camera directly
+                    </p>
+                    <p className="text-sm text-blue-700 mb-3">
+                      Tap below to open your camera and photograph the barcode. We'll read the code from the image.
+                    </p>
+                    <label className="block w-full">
+                      <span className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-blue-600 text-white rounded-lg font-medium cursor-pointer hover:bg-blue-700 active:bg-blue-800 transition-colors">
+                        <Camera className="w-5 h-5" />
+                        Open Camera
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        onChange={handleImageCapture}
+                      />
+                    </label>
+                    <p className="text-xs text-blue-600 mt-2 text-center">
+                      Take a photo of the barcode — it will be scanned automatically
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
+                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Fix HTTPS (permanent solution)</p>
+                    <p className="text-xs text-gray-600">Run in terminal:</p>
+                    <code className="block bg-gray-900 text-green-400 text-xs p-3 rounded-lg mt-1 font-mono">
+                      ngrok http 5173
+                    </code>
+                    <p className="text-xs text-gray-500 mt-2">Then open the <code>https://xxxx.ngrok-free.app</code> URL on your phone.</p>
                   </div>
                 </div>
               )}
