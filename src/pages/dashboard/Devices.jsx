@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Smartphone,
   LayoutGrid,
@@ -35,6 +36,8 @@ import {
   ArrowRight,
   PackagePlus,
   ShieldCheck,
+  Mouse,
+  Zap,
 } from 'lucide-react'
 import {
   useInventory,
@@ -55,6 +58,12 @@ import {
   validateDeviceCode,
   DEVICE_HEALTH_STATUS,
 } from '../../config/deviceConfig'
+import {
+  getAllTypes,
+  resolveTypeId,
+  getTypeLabel,
+  getColorClasses,
+} from '../../config/deviceTypeRegistry'
 import BarcodeScanner from '../../components/BarcodeScanner'
 import BarcodeGenerator from '../../components/BarcodeGenerator'
 import BulkBarcodeGenerator from '../../components/BulkBarcodeGenerator'
@@ -68,15 +77,32 @@ const LIFECYCLE_OPTIONS = [
 
 const PRODUCT_TYPE_ICONS = {
   tv: Tv,
+  TV: Tv,
   tablet: TabletIcon,
+  TAB: TabletIcon,
   'touch-tv': Tv,
+  TTV: Tv,
   'a-stand': LayoutGrid,
+  AST: LayoutGrid,
   'i-stand': Monitor,
+  IST: Monitor,
   'tablet-stand': TabletIcon,
+  TST: TabletIcon,
   stand: LayoutGrid,
   istand: Monitor,
+  MB: Box,
+  BAT: Battery,
+  MSE: Mouse,
+  W: Zap,
 }
 
+// SET TYPES CONFIG
+// deviceType values use canonical forms (from deviceConfig.js) to match any variation:
+// - 'stand' matches: "stand", "a-stand", "A stand", "A-Frame Stand", etc.
+// - 'istand' matches: "istand", "i-stand", "I stand", "I-Frame Stand", etc.
+// - 'mediaBox' matches: "mediaBox", "Media Box", "MB", etc.
+// - 'battery' matches: "battery", "Battery Pack", etc.
+// - 'fabrication' matches: "fabrication", "Tablet Stand", etc.
 const SET_TYPES = {
   aStand: {
     label: 'A-Frame Standee',
@@ -120,19 +146,12 @@ const statusStyles = {
 }
 
 function getDeviceTypeLabel(type) {
-  if (ALL_PRODUCT_TYPES[type]) return ALL_PRODUCT_TYPES[type]
-  // Check custom types stored in localStorage
-  try {
-    const custom = JSON.parse(localStorage.getItem('customProductTypes') || '[]')
-    const found = custom.find(t => t.key === type)
-    if (found) return found.label
-  } catch {}
-  // Fallback: if type is 'custom-MSE', show 'MSE' at minimum
-  if (type && type.startsWith('custom-')) return type.replace('custom-', '')
-  return type || '—'
+  // Registry resolves any type string (legacy or canonical) to a display label
+  return getTypeLabel(type) || type || '—'
 }
 
 const Devices = () => {
+  const navigate = useNavigate()
   const {
     devices,
     clients,
@@ -279,7 +298,8 @@ const Devices = () => {
 
   const filteredDevices = useMemo(() => {
     let list = selectedType
-      ? devices.filter(d => d.type === selectedType)
+      // Filter by canonical type ID — resolveTypeId maps any legacy type string to the ID
+      ? devices.filter(d => resolveTypeId(d.type) === selectedType || d.type === selectedType)
       : devices
     list = getDevicesForLifecycle(list)
     if (lifecycleFilter !== 'warehouse' && filterClientId) list = list.filter((d) => d.clientId === Number(filterClientId))
@@ -312,23 +332,19 @@ const Devices = () => {
   ])
 
   const counts = useMemo(() => {
+    // Group devices by canonical type ID (resolves all legacy strings automatically)
     const out = {}
-    // Count all known types
-    const types = Object.keys(ALL_PRODUCT_TYPES)
-    types.forEach((t) => {
-      const list = lifecycleFilter === 'all'
-        ? devices.filter(d => d.type === t)
-        : devices.filter(d => d.type === t && getDeviceLifecycleStatus(d) === lifecycleFilter)
-      out[t] = list.length
-    })
-    // Count custom types dynamically from actual device data
     devices.forEach((d) => {
-      if (d.type && d.type.startsWith('custom-') && !(d.type in out)) {
-        const filtered = lifecycleFilter === 'all'
-          ? devices.filter(x => x.type === d.type)
-          : devices.filter(x => x.type === d.type && getDeviceLifecycleStatus(x) === lifecycleFilter)
-        out[d.type] = filtered.length
+      const canonicalId = resolveTypeId(d.type) || d.type
+      if (!canonicalId) return
+      const passes = lifecycleFilter === 'all' || getDeviceLifecycleStatus(d) === lifecycleFilter
+      if (passes) {
+        out[canonicalId] = (out[canonicalId] || 0) + 1
       }
+    })
+    // Ensure all registry types have a 0 entry even if no devices
+    getAllTypes().forEach(t => {
+      if (!(t.id in out)) out[t.id] = 0
     })
     return out
   }, [devices, lifecycleFilter])
@@ -615,81 +631,54 @@ const Devices = () => {
             </p>
           </div>
           <div className="flex gap-3">
-            {activeTab === 'devices' ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setShowBarcodeScanner(true)}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 transition-all font-medium shadow-md hover:shadow-lg"
-                >
-                  <ScanBarcode className="w-5 h-5" />
-                  Scan Barcode
-                </button>
-                <button
-                  type="button"
-                  onClick={handleBulkAddOpen}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors font-medium"
-                >
-                  <PackagePlus className="w-5 h-5" />
-                  Bulk Add
-                </button>
-                <button
-                  type="button"
-                  onClick={handleAddDeviceOpen}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium"
-                >
-                  <Plus className="w-5 h-5" />
-                  Add Product
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={handleOpenMakeSetModal}
-                className="flex items-center gap-2 px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium"
-              >
-                <Plus className="w-5 h-5" />
-                Make New Set
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => setShowBarcodeScanner(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 transition-all font-medium shadow-md hover:shadow-lg"
+            >
+              <ScanBarcode className="w-5 h-5" />
+              Scan Barcode
+            </button>
+            <button
+              type="button"
+              onClick={handleBulkAddOpen}
+              className="flex items-center gap-2 px-4 py-2.5 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors font-medium"
+            >
+              <PackagePlus className="w-5 h-5" />
+              Bulk Add
+            </button>
+            <button
+              type="button"
+              onClick={handleAddDeviceOpen}
+              className="flex items-center gap-2 px-4 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium"
+            >
+              <Plus className="w-5 h-5" />
+              Add Product
+            </button>
           </div>
         </div>
 
         {/* Tab Navigation */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-1 inline-flex gap-1">
           <button
-            onClick={() => setActiveTab('devices')}
-            className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all ${
-              activeTab === 'devices'
-                ? 'bg-primary-600 text-white shadow-sm'
-                : 'text-gray-600 hover:bg-gray-50'
-            }`}
+            onClick={() => {}}
+            className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all bg-primary-600 text-white shadow-sm`}
           >
             <Smartphone className="w-4 h-4" />
             Devices
           </button>
           <button
-            onClick={() => setActiveTab('makeset')}
-            className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all ${
-              activeTab === 'makeset'
-                ? 'bg-orange-600 text-white shadow-sm'
-                : 'text-gray-600 hover:bg-gray-50'
-            }`}
+            onClick={() => navigate('/dashboard/makesets')}
+            className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium transition-all text-gray-600 hover:bg-gray-50`}
           >
             <Box className="w-4 h-4" />
             Make Sets
-            {deviceSets && deviceSets.length > 0 && (
-              <span className="px-2 py-0.5 bg-white text-orange-600 rounded-full text-xs font-bold">
-                {deviceSets.length}
-              </span>
-            )}
           </button>
         </div>
       </div>
 
-      {/* Content based on active tab */}
-      {activeTab === 'devices' ? (
-        <>
+      {/* Device list content */}
+      <>
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="p-4">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">View by lifecycle</p>
@@ -760,51 +749,39 @@ const Devices = () => {
                 Individual items
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-                {(() => {
-                  // Base product types
-                  const baseEntries = Object.entries(PRODUCT_TYPES).map(([key, label]) => ({ key, label, isCustom: false }))
-                  // Custom types that actually have devices
-                  const customTypesInUse = [...new Set(devices.filter(d => d.type && d.type.startsWith('custom-')).map(d => d.type))]
-                  const customEntries = customTypesInUse.map(key => {
-                    const label = getDeviceTypeLabel(key)
-                    return { key, label, isCustom: true }
-                  })
-                  // Also include custom types from localStorage even if 0 devices (so user can see them)
-                  const allCustomKeys = new Set(customTypesInUse)
-                  customProductTypes.forEach(t => {
-                    if (!allCustomKeys.has(t.key)) customEntries.push({ key: t.key, label: t.label, isCustom: true })
-                  })
-                  return [...baseEntries, ...customEntries].map(({ key: typeKey, label, isCustom }) => {
-                    const Icon = PRODUCT_TYPE_ICONS[typeKey] || Box
-                    const count = counts[typeKey] ?? 0
-                    const isSelected = selectedType === typeKey
-                    return (
-                      <button
-                        key={typeKey}
-                        type="button"
-                        onClick={() => setSelectedType(isSelected ? null : typeKey)}
-                        className={`rounded-xl border-2 p-3 text-left transition-all ${
-                          isSelected
-                            ? 'border-primary-500 bg-primary-50 shadow-md'
-                            : 'border-gray-200 bg-white hover:border-primary-200 hover:bg-gray-50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className={`p-1.5 rounded-md shrink-0 ${isCustom ? 'bg-violet-100 text-violet-600' : 'bg-primary-100 text-primary-600'}`}>
-                            <Icon className="w-5 h-5" />
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-xs font-bold text-gray-900 truncate">{label}</p>
-                            <p className={`text-base font-bold ${isCustom ? 'text-violet-600' : 'text-primary-600'}`}>{count}</p>
-                          </div>
+                {/* Registry-driven: all built-in + custom types, counts by canonical ID */
+                getAllTypes().map((typeEntry) => {
+                  const Icon = PRODUCT_TYPE_ICONS[typeEntry.id] || Box
+                  const count = counts[typeEntry.id] ?? 0
+                  const isSelected = selectedType === typeEntry.id
+                  const colors = getColorClasses(typeEntry.color)
+                  return (
+                    <button
+                      key={typeEntry.id}
+                      type="button"
+                      onClick={() => setSelectedType(isSelected ? null : typeEntry.id)}
+                      className={`rounded-xl border-2 p-3 text-left transition-all ${
+                        isSelected
+                          ? 'border-primary-500 bg-primary-50 shadow-md'
+                          : 'border-gray-200 bg-white hover:border-primary-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className={`p-1.5 rounded-md shrink-0 ${typeEntry.isBuiltin ? 'bg-primary-100 text-primary-600' : 'bg-violet-100 text-violet-600'}`}>
+                          <Icon className="w-5 h-5" />
                         </div>
-                        {isCustom && (
-                          <span className="mt-1 inline-block text-xs bg-violet-50 text-violet-500 px-1.5 py-0.5 rounded font-medium">Custom</span>
-                        )}
-                      </button>
-                    )
-                  })
-                })()}
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-gray-900 truncate">{typeEntry.label}</p>
+                          <p className={`text-base font-bold ${typeEntry.isBuiltin ? 'text-primary-600' : 'text-violet-600'}`}>{count}</p>
+                          <p className="text-xs text-gray-400 font-mono">{typeEntry.id}</p>
+                        </div>
+                      </div>
+                      {!typeEntry.isBuiltin && (
+                        <span className="mt-1 inline-block text-xs bg-violet-50 text-violet-500 px-1.5 py-0.5 rounded font-medium">Custom</span>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             </div>
 
@@ -816,23 +793,15 @@ const Devices = () => {
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 {[
-                  { typeKey: 'stand', label: 'A stand' },
-                  { typeKey: 'istand', label: 'I stand' },
-                  { typeKey: 'tablet', label: 'Tablet' },
-                ].map(({ typeKey, label }) => {
-                  const Icon = PRODUCT_TYPE_ICONS[typeKey] || Box
-                  const count = counts[typeKey] ?? 0
-                  const isSelected = selectedType === typeKey
+                  { typeKey: 'aStand',      label: 'A stand',  icon: LayoutGrid },
+                  { typeKey: 'iStand',      label: 'I stand',  icon: Monitor },
+                  { typeKey: 'tabletCombo', label: 'Tablet',   icon: TabletIcon },
+                ].map(({ typeKey, label, icon: Icon }) => {
+                  const setCount = deviceSets.filter(s => s.setType === typeKey).length
                   return (
-                    <button
+                    <div
                       key={typeKey}
-                      type="button"
-                      onClick={() => setSelectedType(isSelected ? null : typeKey)}
-                      className={`rounded-xl border-2 p-4 text-left transition-all ${
-                        isSelected
-                          ? 'border-primary-500 bg-primary-50 shadow-md'
-                          : 'border-gray-200 bg-white hover:border-primary-200 hover:bg-gray-50'
-                      }`}
+                      className="rounded-xl border-2 border-gray-200 bg-white p-4"
                     >
                       <div className="flex items-center gap-3">
                         <div className="p-3 rounded-lg bg-primary-100 text-primary-600 shrink-0">
@@ -840,10 +809,10 @@ const Devices = () => {
                         </div>
                         <div>
                           <p className="text-sm font-bold text-gray-900">{label}</p>
-                          <p className="text-xl font-bold text-primary-600">{count}</p>
+                          <p className="text-xl font-bold text-primary-600">{setCount}</p>
                         </div>
                       </div>
-                    </button>
+                    </div>
                   )
                 })}
               </div>
@@ -1055,19 +1024,19 @@ const Devices = () => {
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Brand</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Size</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Model</th>
+                <th className="text-left py-3 px-4 font-semibold text-gray-700">In Set</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Lifecycle</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Location</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Assigned to</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Subscription</th>
                 <th className="text-left py-3 px-4 font-semibold text-gray-700">Health</th>
-                <th className="text-left py-3 px-4 font-semibold text-gray-700">Status</th>
                 <th className="text-right py-3 px-4 font-semibold text-gray-700">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
               {filteredDevices.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-gray-500">
+                  <td colSpan={10} className="py-12 text-center text-gray-500">
                     No {lifecycleFilter === 'deployed' ? 'deployed' : lifecycleFilter === 'assigning' ? 'assigning' : 'warehouse'} devices
                     {selectedType || filterClientId || filterState || filterBrand || filterSize || filterModel || searchCode ? '. Try clearing filters.' : '.'}
                   </td>
@@ -1111,6 +1080,19 @@ const Devices = () => {
                       <td className="py-3 px-4 text-sm text-gray-700">{device.brand || '—'}</td>
                       <td className="py-3 px-4 text-sm text-gray-700">{device.size || '—'}</td>
                       <td className="py-3 px-4 text-sm text-gray-700">{device.model || '—'}</td>
+                      <td className="py-3 px-4 text-sm">
+                        {device.setId ? (() => {
+                          const set = deviceSets.find(s => s.id === device.setId || s.id === Number(device.setId))
+                          return (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border bg-orange-100 text-orange-800 border-orange-200">
+                              <Layers className="w-3 h-3" />
+                              {set ? (set.code || set.name || `Set #${device.setId}`) : `Set #${device.setId}`}
+                            </span>
+                          )
+                        })() : (
+                          <span className="text-gray-400 text-xs">Individual</span>
+                        )}
+                      </td>
                       <td className="py-3 px-4">
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${lifecycleStyles[lifecycle]}`}>
                           <LifecycleIcon className="w-3.5 h-3.5" />
@@ -1161,21 +1143,6 @@ const Devices = () => {
                           const l = { ok: '✓ OK', repair: '🔧 Repair', damage: '⚠ Damage' }
                           return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s[h] || s.ok}`}>{l[h] || 'OK'}</span>
                         })()}
-                      </td>
-                      <td className="py-3 px-4">
-                        {device.clientId && device.subscriptionEnd ? (
-                          <span
-                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium border ${statusStyles[statusType] || statusStyles.active}`}
-                          >
-                            {statusType === 'active' && statusLabel !== 'Upcoming' && <CheckCircle className="w-3.5 h-3.5" />}
-                            {(statusType === 'warning' || statusType === 'urgent') && <AlertTriangle className="w-3.5 h-3.5" />}
-                            {statusType === 'expired' && <XCircle className="w-3.5 h-3.5" />}
-                            {statusType === 'upcoming' && <Clock className="w-3.5 h-3.5" />}
-                            {statusLabel}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400">—</span>
-                        )}
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-2">
@@ -1234,6 +1201,18 @@ const Devices = () => {
             </div>
             <div className="space-y-3 text-sm">
               <div className="flex justify-between"><span className="text-gray-500">Type</span><span className="font-medium">{getDeviceTypeLabel(detailDevice.type)}</span></div>
+              {detailDevice.setId && (() => {
+                const set = deviceSets.find(s => s.id === detailDevice.setId || s.id === Number(detailDevice.setId))
+                return (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500">In Set</span>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border bg-orange-100 text-orange-800 border-orange-200">
+                      <Layers className="w-3 h-3" />
+                      {set ? (set.code || set.name || `Set #${detailDevice.setId}`) : `Set #${detailDevice.setId}`}
+                    </span>
+                  </div>
+                )
+              })()}
               <div className="flex justify-between items-center">
                 <span className="text-gray-500">Lifecycle</span>
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${
@@ -1529,346 +1508,7 @@ const Devices = () => {
           </div>
         </div>
       )}
-      </> 
-      ) : (
-        /* Make Set Tab Content */
-        <>
-          {/* Available Stock Overview */}
-          <div className="bg-gradient-to-br from-blue-50 to-white rounded-xl shadow-sm border border-blue-100 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Available Components</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-4">
-              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
-                <div className="flex items-center gap-2 mb-2">
-                  <Smartphone className="w-5 h-5 text-purple-500" />
-                  <span className="text-xs text-gray-600">Tablets</span>
-                </div>
-                <p className="text-2xl font-bold text-gray-900">{componentInventory.tablets}</p>
-              </div>
-              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
-                <div className="flex items-center gap-2 mb-2">
-                  <Battery className="w-5 h-5 text-green-500" />
-                  <span className="text-xs text-gray-600">Batteries</span>
-                </div>
-                <p className="text-2xl font-bold text-gray-900">{componentInventory.batteries}</p>
-              </div>
-              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
-                <div className="flex items-center gap-2 mb-2">
-                  <LayoutGrid className="w-5 h-5 text-amber-500" />
-                  <span className="text-xs text-gray-600">Tablet Stands</span>
-                </div>
-                <p className="text-2xl font-bold text-gray-900">{componentInventory.fabricationTablet}</p>
-              </div>
-              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
-                <div className="flex items-center gap-2 mb-2">
-                  <Monitor className="w-5 h-5 text-blue-500" />
-                  <span className="text-xs text-gray-600">TVs</span>
-                </div>
-                <p className="text-2xl font-bold text-gray-900">{componentInventory.tvs}</p>
-              </div>
-              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
-                <div className="flex items-center gap-2 mb-2">
-                  <Tv className="w-5 h-5 text-indigo-500" />
-                  <span className="text-xs text-gray-600">Media Boxes</span>
-                </div>
-                <p className="text-2xl font-bold text-gray-900">{componentInventory.mediaBoxes}</p>
-              </div>
-              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
-                <div className="flex items-center gap-2 mb-2">
-                  <LayoutGrid className="w-5 h-5 text-orange-500" />
-                  <span className="text-xs text-gray-600">A-Stands</span>
-                </div>
-                <p className="text-2xl font-bold text-gray-900">{componentInventory.aFrameStands}</p>
-              </div>
-              <div className="bg-white rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
-                <div className="flex items-center gap-2 mb-2">
-                  <Monitor className="w-5 h-5 text-cyan-500" />
-                  <span className="text-xs text-gray-600">I-Stands</span>
-                </div>
-                <p className="text-2xl font-bold text-gray-900">{componentInventory.iFrameStands}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Created Sets */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-            <div className="p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Created Device Sets</h3>
-              <p className="text-sm text-gray-600 mt-1">
-                {deviceSets.length} set{deviceSets.length !== 1 ? 's' : ''} ready for deployment
-              </p>
-            </div>
-
-            {deviceSets.length === 0 ? (
-              <div className="p-12 text-center">
-                <Box className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                <p className="text-gray-500 mb-2">No device sets created yet</p>
-                <p className="text-sm text-gray-400">Click "Make New Set" to build your first set</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-200">
-                {deviceSets.map((set) => {
-                  const setType = SET_TYPES[set.type]
-                  const SetIcon = setType.icon
-                  const isExpanded = expandedSet === set.id
-
-                  return (
-                    <div key={set.id} className="p-6 hover:bg-gray-50 transition-colors">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <div className={`p-2 bg-${setType.color}-100 rounded-lg`}>
-                              <SetIcon className={`w-6 h-6 text-${setType.color}-600`} />
-                            </div>
-                            <div>
-                              <h4 className="text-lg font-semibold text-gray-900">{set.name}</h4>
-                              <p className="text-sm text-gray-600">{setType.label}</p>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2 mt-2 flex-wrap">
-                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">
-                              Ready for deployment
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              Created: {new Date(set.createdAt).toLocaleDateString()}
-                            </span>
-                          </div>
-
-                          <button
-                            onClick={() => setExpandedSet(isExpanded ? null : set.id)}
-                            className="mt-3 flex items-center gap-2 text-sm text-orange-600 hover:text-orange-700 font-medium"
-                          >
-                            <Info className="w-4 h-4" />
-                            {isExpanded ? 'Hide' : 'View'} Component Details
-                            <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                          </button>
-
-                          {isExpanded && (
-                            <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                              <p className="text-sm font-medium text-gray-700 mb-3">Components in this set:</p>
-                              <div className="space-y-2">
-                                {setType.components.map((comp) => {
-                                  const CompIcon = comp.icon
-                                  const componentDeviceId = set.components[comp.key]
-                                  const device = devices.find(d => d.id.toString() === componentDeviceId || d.id === componentDeviceId)
-                                  
-                                  return (
-                                    <div key={comp.key} className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-200">
-                                      <div className="flex items-center gap-3">
-                                        <CompIcon className="w-5 h-5 text-gray-600" />
-                                        <div>
-                                          <p className="text-sm font-medium text-gray-900">{comp.label}</p>
-                                          {device ? (
-                                            <div className="text-xs text-gray-600 mt-1">
-                                              <p className="font-mono font-semibold">{device.code}</p>
-                                              <p>{device.brand || 'No Brand'} {device.model || ''} {device.size || ''}</p>
-                                              {device.color && <p>Color: {device.color}</p>}
-                                            </div>
-                                          ) : (
-                                            <p className="text-xs text-gray-500">ID: {componentDeviceId}</p>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <Check className="w-5 h-5 text-green-600" />
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        <button
-                          onClick={() => handleDeleteSet(set.id)}
-                          className="ml-4 p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Dismantle set"
-                        >
-                          <X className="w-5 h-5" />
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Make Set Modal */}
-          {showMakeSetModal && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-                <div className="sticky top-0 bg-white border-b border-gray-200 p-6 z-10">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h2 className="text-2xl font-bold text-gray-900">Make New Device Set</h2>
-                      <p className="text-sm text-gray-600 mt-1">
-                        Select set type and choose components from available stock
-                      </p>
-                    </div>
-                    <button
-                      onClick={handleCloseMakeSetModal}
-                      className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="p-6 space-y-6">
-                  {!selectedSetType ? (
-                    <div>
-                      <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                        Step 1: Choose Set Type
-                      </h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        {Object.entries(SET_TYPES).map(([key, type]) => {
-                          const TypeIcon = type.icon
-                          const hasEnoughStock = type.components.every(
-                            comp => getAvailableStock(comp.inventoryKey) > 0
-                          )
-
-                          return (
-                            <button
-                              key={key}
-                              onClick={() => hasEnoughStock && handleSetTypeSelect(key)}
-                              disabled={!hasEnoughStock}
-                              className={`p-6 rounded-xl border-2 transition-all ${
-                                hasEnoughStock
-                                  ? `border-${type.color}-200 hover:border-${type.color}-400 hover:shadow-lg cursor-pointer bg-${type.color}-50`
-                                  : 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed'
-                              }`}
-                            >
-                              <TypeIcon className={`w-12 h-12 mx-auto mb-3 text-${type.color}-600`} />
-                              <h4 className="font-semibold text-gray-900 mb-2">{type.label}</h4>
-                              <p className="text-xs text-gray-600 mb-3">
-                                {type.components.length} components required
-                              </p>
-                              {!hasEnoughStock && (
-                                <p className="text-xs text-red-600 font-medium">
-                                  Insufficient stock
-                                </p>
-                              )}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div>
-                        <div className="flex items-center justify-between mb-4">
-                          <h3 className="text-lg font-semibold text-gray-900">
-                            Step 2: Select Components for {SET_TYPES[selectedSetType].label}
-                          </h3>
-                          <button
-                            onClick={() => setSelectedSetType(null)}
-                            className="text-sm text-gray-600 hover:text-gray-800"
-                          >
-                            Change Set Type
-                          </button>
-                        </div>
-
-                        <div className="space-y-4">
-                          {SET_TYPES[selectedSetType].components.map((comp) => {
-                            const CompIcon = comp.icon
-                            const availableDevices = getAvailableDevicesForComponent(comp.deviceType)
-
-                            return (
-                              <div key={comp.key} className="p-4 border-2 border-gray-200 rounded-lg hover:border-orange-300 transition-colors">
-                                <div className="flex items-center gap-3 mb-3">
-                                  <CompIcon className="w-6 h-6 text-gray-600" />
-                                  <div className="flex-1">
-                                    <h4 className="font-medium text-gray-900">{comp.label}</h4>
-                                    <p className="text-sm text-gray-600">
-                                      {availableDevices.length} available in warehouse
-                                    </p>
-                                  </div>
-                                </div>
-
-                                <div>
-                                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Select {comp.label} *
-                                  </label>
-                                  <select
-                                    value={selectedComponents[comp.key] || ''}
-                                    onChange={(e) => handleComponentSelect(comp.key, e.target.value)}
-                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                                  >
-                                    <option value="">-- Select {comp.label} --</option>
-                                    {availableDevices.map(device => (
-                                      <option key={device.id} value={device.id}>
-                                        {device.code} - {device.brand || 'No Brand'} {device.model || ''} {device.size || ''} ({device.color || 'No Color'})
-                                      </option>
-                                    ))}
-                                  </select>
-                                  {availableDevices.length === 0 && (
-                                    <p className="text-xs text-red-600 mt-1">
-                                      No available {comp.label.toLowerCase()} in warehouse
-                                    </p>
-                                  )}
-                                  {selectedComponents[comp.key] && (
-                                    <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
-                                      <Check className="w-3 h-3" />
-                                      Selected: {availableDevices.find(d => d.id.toString() === selectedComponents[comp.key])?.code}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-
-                      <div>
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                          Step 3: Name Your Set
-                        </h3>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Set Name *
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="e.g., A-Stand Set #1, Store Display Unit"
-                            value={setName}
-                            onChange={(e) => setSetName(e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                        <h4 className="font-medium text-gray-900 mb-2">Summary</h4>
-                        <ul className="text-sm text-gray-700 space-y-1">
-                          <li>• Set Type: {SET_TYPES[selectedSetType].label}</li>
-                          <li>• Components: {SET_TYPES[selectedSetType].components.length}</li>
-                          <li>• Completed: {Object.keys(selectedComponents).length}/{SET_TYPES[selectedSetType].components.length}</li>
-                        </ul>
-                      </div>
-
-                      <div className="flex gap-3 pt-4 border-t border-gray-200">
-                        <button
-                          onClick={handleCloseMakeSetModal}
-                          className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium transition-colors"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={handleCreateSet}
-                          disabled={!canCreateSet()}
-                          className="flex-1 px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 font-medium transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
-                        >
-                          Create Set
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </>
-      )}
+      </>
 
       {/* Add New Product Type Modal */}
       {showAddTypeModal && (

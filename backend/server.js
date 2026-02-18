@@ -8,6 +8,8 @@ import authMiddleware from "./middleware/auth.js";
 
 // Import routes
 import deviceRoutes from "./routes/devices.js";
+import setsRouter from './routes/sets.js';
+import migrateTypesRouter from './routes/migrateTypes.js';
 
 dotenv.config();
 
@@ -88,6 +90,12 @@ app.post("/login", async (req, res) => {
 
 // Device routes
 app.use("/api/devices", deviceRoutes);
+
+// Sets routes
+app.use('/api/sets', setsRouter);
+
+// Device type migration routes
+app.use('/api/migrate-types', migrateTypesRouter);
 
 // ==========================================
 // ERROR HANDLING

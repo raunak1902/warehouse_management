@@ -2,7 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-
 import { useState, useEffect } from 'react'
 import { InventoryProvider } from './context/InventoryContext'
 import Login from './pages/Login'
-import Dashboard, { Client, Devices, Location, Assigning, Delivery, GroundTeam, Installation, Return } from './pages/dashboard'
+import Dashboard, { Client, Devices, Location, Assigning, Delivery, GroundTeam,Makesets, Installation, Return } from './pages/dashboard'
 import SuperAdmin from './pages/superadmin/SuperAdmin'
 import Layout from './components/Layout'
 
@@ -83,6 +83,7 @@ useEffect(() => {
           <Route path="dashboard" element={<Dashboard userRole={user?.role} />} />
           <Route path="dashboard/client" element={<Client />} />
           <Route path="dashboard/devices" element={<Devices />} />
+          <Route path="dashboard/makesets" element={<Makesets />} />
           <Route path="dashboard/location" element={<Location />} />
           <Route path="dashboard/assigning" element={<Assigning />} />
           <Route path="dashboard/ground-team" element={<GroundTeam />} />

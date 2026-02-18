@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library'
 import { deviceApi } from '../api/deviceApi'
+import { setApi } from '../api/setApi'
 import {
   ScanBarcode,
   X,
@@ -162,32 +163,62 @@ const BarcodeScanner = ({ onClose, onDeviceFound }) => {
     setLastScannedCode('')
   }
 
-  // Fetch device by barcode from backend
+  // Fetch device OR set by barcode — checks devices first, then sets
   const fetchDeviceByBarcode = async (barcode) => {
     setLoading(true)
     setError(null)
     
     try {
-      console.log('Fetching device with barcode:', barcode)
-      const device = await deviceApi.getByBarcode(barcode)
+      console.log('Fetching barcode:', barcode)
       
-      console.log('Device found:', device)
-      setScannedDevice(device)
+      // Try individual device first
+      let result = null
+      let isSet = false
+      
+      try {
+        result = await deviceApi.getByBarcode(barcode)
+      } catch {
+        // Not a device — try as a set
+        try {
+          result = await setApi.getByBarcode(barcode)
+          isSet = true
+        } catch {
+          result = null
+        }
+      }
+      
+      if (!result) throw new Error('Not found')
+      
+      // Normalise set to look like a device for display purposes
+      if (isSet) {
+        result = {
+          ...result,
+          _isSet: true,
+          // Map set fields to device-like fields for the result card
+          type: result.setTypeName || result.setType,
+          lifecycleStatus: result.lifecycleStatus,
+          location: result.location,
+        }
+      }
+      
+      console.log(isSet ? 'Set found:' : 'Device found:', result)
+      setScannedDevice(result)
       setScannedBarcode(barcode)
       
       setScanHistory(prev => [{
         barcode,
-        deviceCode: device.code,
+        deviceCode: result.code,
         timestamp: new Date().toISOString(),
-        found: true
+        found: true,
+        isSet,
       }, ...prev.slice(0, 9)])
       
       if (onDeviceFound) {
-        onDeviceFound(device)
+        onDeviceFound(result)
       }
     } catch (err) {
-      console.error('Device lookup error:', err)
-      setError(`Device not found with barcode: ${barcode}`)
+      console.error('Barcode lookup error:', err)
+      setError(`Not found with barcode: ${barcode}`)
       
       setScanHistory(prev => [{
         barcode,

@@ -1,27 +1,67 @@
 /**
- * Device module config: product types, brands, sizes (synced by product), colors.
- * Used by Devices page and Add Device form; can be shared with other modules later.
+ * ╔═══════════════════════════════════════════════════════════╗
+ * ║  deviceConfig.js — updated to use deviceTypeRegistry     ║
+ * ║  All type identity logic now lives in deviceTypeRegistry  ║
+ * ║  This file keeps sizes, brands, colors, code validators  ║
+ * ╚═══════════════════════════════════════════════════════════╝
  */
 
-// Product types: TV, Tablet, Touch TV, A stand, I stand, Tablet stand
-export const PRODUCT_TYPES = {
-  tv: 'TV',
-  tablet: 'Tablet',
-  'touch-tv': 'Touch TV',
-  'a-stand': 'A stand',
-  'i-stand': 'I stand',
-  'tablet-stand': 'Tablet stand',
+// ─── Re-export everything from the registry ──────────────────────────────────
+export {
+  getAllTypes,
+  getTypeById,
+  resolveTypeId,
+  getTypeLabel,
+  getCodePrefixForType,
+  deviceMatchesSlot,
+  buildMigrationMap,
+  loadCustomTypes,
+  saveCustomTypes,
+  addCustomType,
+  deleteCustomType,
+  BUILTIN_DEVICE_TYPES,
+  TYPE_COLOR_CLASSES,
+  getColorClasses,
+} from './deviceTypeRegistry.js'
+
+import {
+  getAllTypes as _getAllTypes,
+  resolveTypeId as _resolveTypeId,
+  getCodePrefixForType as _getCodePrefixForType,
+  BUILTIN_DEVICE_TYPES as _BUILTIN,
+} from './deviceTypeRegistry.js'
+
+// ─── Legacy shims — keep old imports working ─────────────────────────────────
+
+/** @deprecated  Use resolveTypeId() */
+export function normalizeDeviceType(type) {
+  return _resolveTypeId(type) || type
 }
 
-// Legacy type keys (existing data) map to display labels
-export const LEGACY_DEVICE_TYPES = {
-  stand: 'A stand',
-  istand: 'I stand',
-  tablet: 'Tablet',
+/** @deprecated  Use getCodePrefixForType() */
+export function getCodePrefix(productType) {
+  return _getCodePrefixForType(productType)
 }
 
-// All types for dropdown: new + legacy for backward compatibility
-export const ALL_PRODUCT_TYPES = { ...LEGACY_DEVICE_TYPES, ...PRODUCT_TYPES }
+/** @deprecated  Use getAllTypes() */
+export const ALL_PRODUCT_TYPES = Object.fromEntries(
+  _getAllTypes().map(t => [t.id, t.label])
+)
+
+/** @deprecated  Use BUILTIN_DEVICE_TYPES */
+export const PRODUCT_TYPES = Object.fromEntries(
+  _BUILTIN.map(t => [t.id, t.label])
+)
+
+/** @deprecated  Alias for backward compat */
+export const LEGACY_DEVICE_TYPES = { stand: 'A stand', istand: 'I stand', tablet: 'Tablet' }
+
+/** @deprecated  Alias for backward compat */
+export const CANONICAL_TYPES = {
+  TV: 'TV', TABLET: 'TAB', TOUCH_TV: 'TTV',
+  A_STAND: 'AST', I_STAND: 'IST', TABLET_STAND: 'TST',
+  MEDIA_BOX: 'MB', BATTERY: 'BAT',
+}
 
 // Which product types use TV sizes vs tablet sizes vs stand sizes
 const SIZE_CATEGORY = {
@@ -84,20 +124,8 @@ export const DEVICE_HEALTH_STATUS = [
 ]
 
 // Code prefix for new product types (for suggested code)
-export const DEVICE_CODE_PREFIX_MAP = {
-  tv: 'TV',
-  tablet: 'TAB',
-  'touch-tv': 'TTV',
-  'a-stand': 'ATV',
-  'i-stand': 'ITV',
-  'tablet-stand': 'TST',
-  stand: 'ATV',
-  istand: 'ITV',
-}
-
-export function getCodePrefix(productType) {
-  return DEVICE_CODE_PREFIX_MAP[productType] || 'DEV'
-}
+// DEVICE_CODE_PREFIX_MAP and getCodePrefix moved to deviceTypeRegistry.js
+// The shim at the top of this file re-exports getCodePrefix for backward compat
 
 /**
  * Normalize a device code to a canonical form for uniqueness comparison.

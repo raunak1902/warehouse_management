@@ -1,5 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react'
 import { deviceApi } from '../api/deviceApi'
+import { setApi } from '../api/setApi'
+import { normalizeDeviceType } from '../config/deviceConfig'
 
 // Product types we rent
 export const DEVICE_TYPES = {
@@ -127,19 +129,9 @@ export const InventoryProvider = ({ children }) => {
   const [clients, setClients] = useState(defaultClients)
   const [reminders, setReminders] = useState([])
   const [deviceSets, setDeviceSets] = useState([])
+  const [setsLoading, setSetsLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-
-  // Component inventory (static for now - can be moved to backend later)
-  const [componentInventory] = useState({
-    tvs: 50,
-    mediaBoxes: 50,
-    aFrameStands: 25,
-    iFrameStands: 25,
-    tablets: 30,
-    batteries: 30,
-    fabricationTablet: 30,
-  })
 
   // ==========================================
   // LOAD DEVICES FROM BACKEND ON MOUNT
@@ -162,6 +154,52 @@ export const InventoryProvider = ({ children }) => {
     loadDevices()
   }, [])
 
+  // Refresh devices from backend (call after set creation/disassembly to sync inventory)
+  const refreshDevices = useCallback(async () => {
+    try {
+      const fetchedDevices = await deviceApi.getAll()
+      setDevices(fetchedDevices)
+    } catch (err) {
+      console.error('Error refreshing devices:', err)
+    }
+  }, [])
+
+  // Load sets from backend
+  const loadSets = useCallback(async () => {
+    try {
+      setSetsLoading(true)
+      const fetchedSets = await setApi.getAll()
+      setDeviceSets(fetchedSets)
+    } catch (err) {
+      console.error('Error loading sets:', err)
+    } finally {
+      setSetsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadSets()
+  }, [loadSets])
+
+  // Computed: available component inventory from devices in warehouse not in a set
+  const componentInventory = useMemo(() => {
+    const wh = devices.filter(d => d.lifecycleStatus === 'warehouse' && !d.setId)
+    // Use normalizeDeviceType to match any variation (e.g., "Media Box", "mediaBox", "MB" all match)
+    const count = (canonicalType) => wh.filter(d => 
+      normalizeDeviceType(d.type) === canonicalType || 
+      normalizeDeviceType(d.productType) === canonicalType
+    ).length
+    return {
+      tvs:              count('tv'),
+      tablets:          count('tablet'),
+      aFrameStands:     count('stand'),        // Matches 'stand', 'a-stand', 'A stand', etc.
+      iFrameStands:     count('istand'),       // Matches 'istand', 'i-stand', 'I stand', etc.
+      mediaBoxes:       count('mediaBox'),     // Matches 'mediaBox', 'Media Box', 'MB', etc.
+      batteries:        count('battery'),      // Matches 'battery', 'Battery Pack', etc.
+      fabricationTablet: count('fabrication'), // Matches 'fabrication', 'Tablet Stand', etc.
+    }
+  }, [devices])
+
   // ==========================================
   // DEVICE CRUD OPERATIONS
   // ==========================================
@@ -177,7 +215,8 @@ export const InventoryProvider = ({ children }) => {
         model: deviceData.model || null,
         color: deviceData.color || null,
         gpsId: deviceData.gpsId || null,
-        mfgDate: deviceData.mfgDate || null,
+        inDate: deviceData.inDate || null,
+        healthStatus: deviceData.healthStatus || 'ok',
         lifecycleStatus: deviceData.lifecycleStatus || 'warehouse',
         location: deviceData.location || null,
         state: deviceData.state || null,
@@ -348,28 +387,144 @@ export const InventoryProvider = ({ children }) => {
   // DEVICE SETS (Local for now)
   // ==========================================
 
-  const createDeviceSet = useCallback((setType, selectedComponents, name) => {
-    const newSet = {
-      id: deviceSets.length > 0 ? Math.max(...deviceSets.map(s => s.id)) + 1 : 1,
-      type: setType,
-      name: name || `${setType} Set ${deviceSets.length + 1}`,
-      components: selectedComponents,
-      createdAt: new Date().toISOString(),
+  const createDeviceSet = useCallback(async (setData) => {
+    try {
+      const newSet = await setApi.create(setData)
+      setDeviceSets(prev => [newSet, ...prev])
+      // Refresh devices so setId is reflected on components
+      const refreshed = await deviceApi.getAll()
+      setDevices(refreshed)
+      return newSet
+    } catch (err) {
+      console.error('Error creating set:', err)
+      throw new Error(err.response?.data?.error || 'Failed to create set')
     }
-    setDeviceSets(prev => [...prev, newSet])
-    return newSet
-  }, [deviceSets])
+  }, [])
 
-  const deleteDeviceSet = useCallback((setId) => {
-    setDeviceSets(prev => prev.filter(s => s.id !== setId))
+  const updateDeviceSet = useCallback(async (setId, updates) => {
+    try {
+      const updated = await setApi.update(setId, updates)
+      setDeviceSets(prev => prev.map(s => s.id === setId ? updated : s))
+      // Refresh devices if component health was updated
+      if (updates.componentHealthUpdates?.length) {
+        const refreshed = await deviceApi.getAll()
+        setDevices(refreshed)
+      }
+      return updated
+    } catch (err) {
+      console.error('Error updating set:', err)
+      throw new Error(err.response?.data?.error || 'Failed to update set')
+    }
+  }, [])
+
+  const disassembleSet = useCallback(async (setId, componentUpdates) => {
+    try {
+      await setApi.disassemble(setId, componentUpdates)
+      setDeviceSets(prev => prev.filter(s => s.id !== setId))
+      // Refresh devices so returned components show in warehouse
+      const refreshed = await deviceApi.getAll()
+      setDevices(refreshed)
+    } catch (err) {
+      console.error('Error disassembling set:', err)
+      throw new Error(err.response?.data?.error || 'Failed to disassemble set')
+    }
+  }, [])
+
+  const deleteDeviceSet = useCallback(async (setId) => {
+    try {
+      await setApi.delete(setId)
+      setDeviceSets(prev => prev.filter(s => s.id !== setId))
+      const refreshed = await deviceApi.getAll()
+      setDevices(refreshed)
+    } catch (err) {
+      console.error('Error deleting set:', err)
+      throw new Error(err.response?.data?.error || 'Failed to delete set')
+    }
   }, [])
 
   const getAvailableDevicesForComponent = useCallback((deviceType) => {
-    return devices.filter(d => 
-      d.type === deviceType && 
+    // Only warehouse devices not already in a set
+    // Use normalizeDeviceType to match any variation
+    return devices.filter(d =>
+      (normalizeDeviceType(d.type) === deviceType || normalizeDeviceType(d.productType) === deviceType) &&
       getDeviceLifecycleStatus(d) === 'warehouse' &&
+      !d.setId &&
       !d.clientId
     )
+  }, [devices])
+
+  const getSetByBarcode = useCallback(async (barcode) => {
+    try {
+      return await setApi.getByBarcode(barcode)
+    } catch (err) {
+      return null
+    }
+  }, [])
+
+  // ==========================================
+  // LOCATION FUNCTIONS
+  // ==========================================
+
+  const getLocationHierarchy = useCallback(() => {
+    const hierarchy = {}
+    devices.forEach(d => {
+      const lifecycle = getDeviceLifecycleStatus(d)
+      if (lifecycle === 'warehouse') {
+        const warehouseKey = 'Warehouse'
+        if (!hierarchy[warehouseKey]) hierarchy[warehouseKey] = {}
+        const district = ''
+        if (!hierarchy[warehouseKey][district]) hierarchy[warehouseKey][district] = {}
+        const loc = d.location || 'Warehouse A'
+        if (!hierarchy[warehouseKey][district][loc]) hierarchy[warehouseKey][district][loc] = []
+        hierarchy[warehouseKey][district][loc].push(d)
+      } else if (d.state) {
+        if (!hierarchy[d.state]) hierarchy[d.state] = {}
+        const district = d.district || ''
+        if (!hierarchy[d.state][district]) hierarchy[d.state][district] = {}
+        const loc = d.location || ''
+        if (!hierarchy[d.state][district][loc]) hierarchy[d.state][district][loc] = []
+        hierarchy[d.state][district][loc].push(d)
+      }
+    })
+    return hierarchy
+  }, [devices])
+
+  const getLocationSummary = useCallback(() => {
+    const rows = {}
+    devices.forEach(d => {
+      let state, district, location
+      const lifecycle = getDeviceLifecycleStatus(d)
+      if (lifecycle === 'warehouse') {
+        state = 'Warehouse'
+        district = '—'
+        location = d.location || 'Warehouse A'
+      } else {
+        state = d.state || '—'
+        district = d.district || '—'
+        location = d.location || '—'
+      }
+      const key = `${state}|${district}|${location}`
+      if (!rows[key]) {
+        rows[key] = { state, district, location, total: 0, inStock: 0, deployed: 0 }
+      }
+      rows[key].total++
+      if (lifecycle === 'warehouse') rows[key].inStock++
+      else if (lifecycle === 'deployed') rows[key].deployed++
+    })
+    return Object.values(rows)
+  }, [devices])
+
+  const getDevicesByLocation = useCallback((state, district, location) => {
+    return devices.filter(d => {
+      const lifecycle = getDeviceLifecycleStatus(d)
+      if (state === 'Warehouse') {
+        return lifecycle === 'warehouse' &&
+          (d.location || 'Warehouse A') === location
+      }
+      return d.state === state &&
+        (district ? d.district === district : true) &&
+        (location ? d.location === location : true)
+    })
   }, [devices])
 
   // ==========================================
@@ -455,8 +610,6 @@ export const InventoryProvider = ({ children }) => {
     devices,
     clients,
     reminders,
-    deviceSets,
-    componentInventory,
     loading,
     error,
 
@@ -482,9 +635,22 @@ export const InventoryProvider = ({ children }) => {
     getUniqueDeviceFilterOptions,
 
     // Device sets
+    deviceSets,
+    componentInventory,
+    setsLoading,
     createDeviceSet,
+    updateDeviceSet,
+    disassembleSet,
     deleteDeviceSet,
     getAvailableDevicesForComponent,
+    getSetByBarcode,
+    loadSets,
+    refreshDevices,
+
+    // Location
+    getLocationHierarchy,
+    getLocationSummary,
+    getDevicesByLocation,
 
     // Reminders
     dismissReminder,

@@ -13,7 +13,8 @@ import {
   UsersRound,
   Wrench,
   RotateCcw,
-  Truck
+  Truck,
+  Layers
 } from 'lucide-react'
 
 const Layout = ({ userRole, onLogout }) => {
@@ -27,6 +28,7 @@ const Layout = ({ userRole, onLogout }) => {
     ] : []),
     { path: '/dashboard/client', icon: Users, label: 'Client' },
     { path: '/dashboard/devices', icon: Smartphone, label: 'Devices' },
+    { path: '/dashboard/makesets', icon: Layers, label: 'Make Sets' },
     { path: '/dashboard/location', icon: MapPin, label: 'Location' },
     { path: '/dashboard/assigning', icon: Link2, label: 'Assigning' },
     { path: '/dashboard/delivery', icon: Truck, label: 'Delivery' },

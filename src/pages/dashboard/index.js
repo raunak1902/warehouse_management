@@ -1,6 +1,7 @@
 export { default } from './Dashboard'
 export { default as Client } from './Client'
 export { default as Devices } from './Devices'
+export { default as Makesets } from './Makesets'
 export { default as Location } from './Location'
 export { default as Assigning } from './Assigning'
 export { default as GroundTeam } from './GroundTeam'

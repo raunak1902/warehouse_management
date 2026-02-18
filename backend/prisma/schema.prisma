@@ -83,7 +83,8 @@ model Client {
   subscriptionEnd   DateTime
   createdAt         DateTime @default(now())
 
-  devices Device[]
+  devices    Device[]
+  deviceSets DeviceSet[]
 
   @@index([subscriptionEnd])
 }
@@ -115,9 +116,44 @@ model Device {
   clientId        Int?
   client          Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
+  // Optional: device can belong to a set
+  setId           Int?
+  deviceSet       DeviceSet? @relation(fields: [setId], references: [id], onDelete: SetNull)
+
   @@index([type])
   @@index([lifecycleStatus])
   @@index([clientId])
   @@index([code])
+  @@index([barcode])
+  @@index([setId])
+}
+
+// =======================
+// DEVICE SETS
+// =======================
+model DeviceSet {
+  id              Int      @id @default(autoincrement())
+  code            String   @unique  // e.g. ASET-001, ISET-002, TSET-003
+  barcode         String   @unique
+  setType         String   // 'aStand', 'iStand', 'tabletCombo', or custom key
+  setTypeName     String   // human readable e.g. 'A-Frame Standee', 'Tent Card Set'
+  name            String?  // optional custom name
+  lifecycleStatus String   @default("warehouse") // 'warehouse', 'in_transit', 'deployed'
+  healthStatus    String   @default("ok")         // 'ok', 'repair', 'damage'
+  location        String?
+  state           String?
+  district        String?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  clientId        Int?
+  client          Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  components      Device[]
+
+  @@index([setType])
+  @@index([lifecycleStatus])
+  @@index([clientId])
   @@index([barcode])
 }

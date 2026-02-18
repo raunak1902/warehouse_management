@@ -19,12 +19,16 @@ const generateBarcode = (deviceType) => {
 
 const getTypeCode = (type) => {
   const typeCodes = {
+    // Canonical IDs (new system)
+    TV: 'TV', TAB: 'TAB', TTV: 'TTV', AST: 'AST', IST: 'IST',
+    TST: 'TST', MB: 'MB', BAT: 'BAT', MSE: 'MSE', W: 'W',
+    // Legacy strings (backward compat)
     tv: 'TV', tablet: 'TAB', 'touch-tv': 'TTV',
-    'a-stand': 'ATV', 'i-stand': 'ITV', 'tablet-stand': 'TST',
-    stand: 'ATV', istand: 'ITV', mediaBox: 'MBX', battery: 'BAT', fabrication: 'FAB',
+    'a-stand': 'AST', 'i-stand': 'IST', 'tablet-stand': 'TST',
+    stand: 'AST', istand: 'IST', mediaBox: 'MB', battery: 'BAT', fabrication: 'TST',
   }
   if (type && type.startsWith('custom-')) return type.replace('custom-', '').toUpperCase()
-  return typeCodes[type] || 'DEV'
+  return typeCodes[type] || type.toUpperCase() || 'DEV'
 }
 
 const normalizeCode = (code) => {
@@ -39,14 +43,22 @@ const normalizeCode = (code) => {
 }
 
 const CODE_PREFIX_MAP = {
+  // Canonical IDs → code prefix
+  TV: 'TV', TAB: 'TAB', TTV: 'TTV', AST: 'ATV', IST: 'ITV',
+  TST: 'TST', MB: 'MB', BAT: 'BAT', MSE: 'MSE', W: 'W',
+  // Legacy strings → code prefix (backward compat)
   tv: 'TV', tablet: 'TAB', 'touch-tv': 'TTV',
   'a-stand': 'ATV', 'i-stand': 'ITV', 'tablet-stand': 'TST',
-  stand: 'ATV', istand: 'ITV',
+  stand: 'ATV', istand: 'ITV', mediaBox: 'MB', battery: 'BAT', fabrication: 'TST',
 }
 
 const getExpectedPrefix = (type) => {
-  if (type && type.startsWith('custom-')) return type.replace('custom-', '').toUpperCase()
-  return CODE_PREFIX_MAP[type] || null
+  if (!type) return null
+  if (CODE_PREFIX_MAP[type]) return CODE_PREFIX_MAP[type]
+  if (type.startsWith('custom-')) return type.replace('custom-', '').toUpperCase()
+  // For any unknown canonical ID, use the type itself as prefix (e.g. "W" → "W")
+  if (/^[A-Z0-9]+$/.test(type)) return type
+  return null
 }
 
 const validateCode = async (code, type, excludeId = null) => {
