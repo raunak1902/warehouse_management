@@ -1,676 +1,230 @@
-import { useState, useEffect, useRef } from 'react'
-import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library'
-import { deviceApi } from '../api/deviceApi'
-import { setApi } from '../api/setApi'
-import {
-  ScanBarcode,
-  X,
-  Check,
-  AlertCircle,
-  Package,
-  Smartphone,
-  Monitor,
-  LayoutGrid,
-  Loader2,
-  Camera,
-  Zap,
-} from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { Camera, X, Search, Loader2, AlertCircle } from 'lucide-react'
+import { useInventory } from '../context/InventoryContext'
+import BarcodeResultCard from './BarcodeResultCard'
 
 /**
- * BarcodeScanner with JSON QR code support
- * Handles both plain barcodes and JSON-encoded QR codes
+ * BarcodeScanner
+ * ─────────────────────────────────────────────────────────────
+ * Two modes:
+ *  1. Camera mode — uses device camera via jsQR to scan QR codes
+ *  2. Manual mode — type/paste barcode or device code directly
+ *
+ * On every scan, device data is fetched LIVE from the API
+ * (never from local context cache) so status is always current.
  */
-const BarcodeScanner = ({ onClose, onDeviceFound }) => {
-  const [scannerActive, setScannerActive] = useState(false)
-  const [scannedBarcode, setScannedBarcode] = useState('')
-  const [manualBarcode, setManualBarcode] = useState('')
-  const [scannedDevice, setScannedDevice] = useState(null)
+const BarcodeScanner = ({ onClose }) => {
+  const { scanDevice } = useInventory()
+
+  const [mode, setMode]       = useState('manual') // 'camera' | 'manual'
+  const [input, setInput]     = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [scanHistory, setScanHistory] = useState([])
-  const [isScanning, setIsScanning] = useState(false)
-  const [lastScannedCode, setLastScannedCode] = useState('')
+  const [error, setError]     = useState(null)
+  const [device, setDevice]   = useState(null)
 
-  const videoRef = useRef(null)
-  const codeReaderRef = useRef(null)
+  // Camera refs
+  const videoRef   = useRef(null)
+  const canvasRef  = useRef(null)
+  const streamRef  = useRef(null)
+  const rafRef     = useRef(null)
 
-  // Initialize ZXing code reader
+  // ── Camera lifecycle ──────────────────────────────────────
   useEffect(() => {
-    codeReaderRef.current = new BrowserMultiFormatReader()
-    console.log('ZXing BarcodeReader initialized')
-    
-    return () => {
-      stopCamera()
-    }
-  }, [])
+    if (mode === 'camera') startCamera()
+    return () => stopCamera()
+  }, [mode])
 
-  // Parse barcode - handle both JSON and plain text
-  const parseBarcodeData = (scannedText) => {
-    try {
-      // Try to parse as JSON
-      const parsed = JSON.parse(scannedText)
-      
-      // If it's JSON with barcode field, use that
-      if (parsed.barcode) {
-        console.log('Detected JSON QR code, extracting barcode:', parsed.barcode)
-        return {
-          barcode: parsed.barcode,
-          isJson: true,
-          fullData: parsed
-        }
-      }
-      
-      // If JSON but no barcode field, use the whole thing as string
-      return {
-        barcode: scannedText,
-        isJson: false,
-        fullData: null
-      }
-    } catch (e) {
-      // Not JSON, use as-is
-      console.log('Plain text barcode:', scannedText)
-      return {
-        barcode: scannedText,
-        isJson: false,
-        fullData: null
-      }
-    }
-  }
-
-  // Start camera and barcode scanning with ZXing
   const startCamera = async () => {
     try {
-      setError(null)
-      setIsScanning(true)
-
-      // Check if camera APIs are available (requires HTTPS)
-      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-        setError('HTTPS_REQUIRED')
-        setIsScanning(false)
-        return
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+      })
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.play()
+        rafRef.current = requestAnimationFrame(scanFrame)
       }
-
-      console.log('Starting ZXing barcode scanner...')
-      
-      // Get available video devices
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const videoDevices = devices.filter(device => device.kind === 'videoinput')
-      
-      console.log('Available cameras:', videoDevices.length)
-      
-      if (videoDevices.length === 0) {
-        setError('No camera found on this device')
-        setIsScanning(false)
-        return
-      }
-
-      // Select camera (prefer back camera on mobile)
-      const selectedDevice = videoDevices.find(device => 
-        device.label.toLowerCase().includes('back') || 
-        device.label.toLowerCase().includes('environment')
-      ) || videoDevices[0]
-
-      console.log('Selected camera:', selectedDevice.label || 'Default camera')
-
-      // Start continuous decoding from video device
-      await codeReaderRef.current.decodeFromVideoDevice(
-        selectedDevice.deviceId,
-        videoRef.current,
-        (result, error) => {
-          if (result) {
-            const scannedText = result.getText()
-            
-            // Prevent duplicate scans
-            if (scannedText !== lastScannedCode) {
-              console.log('✅ QR/Barcode detected:', scannedText)
-              setLastScannedCode(scannedText)
-              
-              // Parse the barcode (handle JSON)
-              const { barcode, isJson, fullData } = parseBarcodeData(scannedText)
-              
-              console.log('Parsed barcode:', barcode)
-              if (isJson) {
-                console.log('Full QR data:', fullData)
-              }
-              
-              // Stop scanning and fetch device
-              stopCamera()
-              fetchDeviceByBarcode(barcode)
-            }
-          }
-          
-          // Ignore NotFoundException - just means no barcode in frame
-          if (error && !(error instanceof NotFoundException)) {
-            console.error('Scan error:', error)
-          }
-        }
-      )
-
-      setScannerActive(true)
-      console.log('Scanner active - point camera at barcode/QR code')
-      
-    } catch (err) {
-      console.error('Camera start error:', err)
-      setError(`Failed to start camera: ${err.message}`)
-      setIsScanning(false)
-      setScannerActive(false)
+    } catch (e) {
+      setError('Camera access denied. Please allow camera access or use manual entry.')
+      setMode('manual')
     }
   }
 
-  // Stop camera and scanner
   const stopCamera = () => {
-    console.log('Stopping scanner...')
-    
-    if (codeReaderRef.current) {
-      codeReaderRef.current.reset()
-    }
-    
-    setScannerActive(false)
-    setIsScanning(false)
-    setLastScannedCode('')
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop())
   }
 
-  // Fetch device OR set by barcode — checks devices first, then sets
-  const fetchDeviceByBarcode = async (barcode) => {
+  const scanFrame = async () => {
+    if (!videoRef.current || !canvasRef.current) return
+    const video  = videoRef.current
+    const canvas = canvasRef.current
+    if (video.readyState !== video.HAVE_ENOUGH_DATA) {
+      rafRef.current = requestAnimationFrame(scanFrame)
+      return
+    }
+    const ctx = canvas.getContext('2d')
+    canvas.width  = video.videoWidth
+    canvas.height = video.videoHeight
+    ctx.drawImage(video, 0, 0)
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+
+    // Dynamically import jsQR only when camera is used
+    try {
+      const jsQR = (await import('jsqr')).default
+      const code = jsQR(imageData.data, imageData.width, imageData.height)
+      if (code) {
+        stopCamera()
+        await handleBarcodeDetected(code.data)
+        return
+      }
+    } catch (e) {
+      // jsQR not available — fall back to manual
+      setError('QR scanning library not loaded. Please use manual entry.')
+      setMode('manual')
+      return
+    }
+    rafRef.current = requestAnimationFrame(scanFrame)
+  }
+
+  // ── Lookup ────────────────────────────────────────────────
+  const handleBarcodeDetected = async (raw) => {
     setLoading(true)
     setError(null)
-    
     try {
-      console.log('Fetching barcode:', barcode)
-      
-      // Try individual device first
-      let result = null
-      let isSet = false
-      
+      // QR data might be a JSON payload {barcode, deviceCode, ...}
+      let barcode = raw
       try {
-        result = await deviceApi.getByBarcode(barcode)
-      } catch {
-        // Not a device — try as a set
-        try {
-          result = await setApi.getByBarcode(barcode)
-          isSet = true
-        } catch {
-          result = null
-        }
-      }
-      
-      if (!result) throw new Error('Not found')
-      
-      // Normalise set to look like a device for display purposes
-      if (isSet) {
-        result = {
-          ...result,
-          _isSet: true,
-          // Map set fields to device-like fields for the result card
-          type: result.setTypeName || result.setType,
-          lifecycleStatus: result.lifecycleStatus,
-          location: result.location,
-        }
-      }
-      
-      console.log(isSet ? 'Set found:' : 'Device found:', result)
-      setScannedDevice(result)
-      setScannedBarcode(barcode)
-      
-      setScanHistory(prev => [{
-        barcode,
-        deviceCode: result.code,
-        timestamp: new Date().toISOString(),
-        found: true,
-        isSet,
-      }, ...prev.slice(0, 9)])
-      
-      if (onDeviceFound) {
-        onDeviceFound(result)
-      }
-    } catch (err) {
-      console.error('Barcode lookup error:', err)
-      setError(`Not found with barcode: ${barcode}`)
-      
-      setScanHistory(prev => [{
-        barcode,
-        timestamp: new Date().toISOString(),
-        found: false
-      }, ...prev.slice(0, 9)])
+        const parsed = JSON.parse(raw)
+        barcode = parsed.barcode || parsed.deviceCode || raw
+      } catch {}
+
+      // ALWAYS fetch live from API — never read from context cache
+      const result = await scanDevice(barcode)
+      setDevice(result)
+    } catch (e) {
+      setError(e.message || 'Device not found')
+      setDevice(null)
     } finally {
       setLoading(false)
     }
   }
 
-  const handleManualEntry = () => {
-    if (manualBarcode.trim()) {
-      const { barcode } = parseBarcodeData(manualBarcode.trim())
-      fetchDeviceByBarcode(barcode.toUpperCase())
-      setManualBarcode('')
-    }
+  const handleManualSearch = (e) => {
+    e.preventDefault()
+    if (!input.trim()) return
+    handleBarcodeDetected(input.trim())
   }
 
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter') {
-      handleManualEntry()
-    }
+  const handleDeviceUpdated = (updatedDevice) => {
+    // When an action is taken inside BarcodeResultCard, update local state
+    setDevice(updatedDevice)
   }
 
-  const handleImageCapture = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    setLoading(true)
-    setError(null)
-
-    try {
-      // Draw image to canvas and decode with ZXing
-      const img = new Image()
-      const url = URL.createObjectURL(file)
-      img.src = url
-
-      await new Promise((resolve, reject) => {
-        img.onload = resolve
-        img.onerror = reject
-      })
-
-      const canvas = document.createElement('canvas')
-      canvas.width = img.width
-      canvas.height = img.height
-      const ctx = canvas.getContext('2d')
-      ctx.drawImage(img, 0, 0)
-
-      URL.revokeObjectURL(url)
-
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-      const result = await codeReaderRef.current.decodeFromImageElement(img)
-
-      if (result) {
-        const scannedText = result.getText()
-        const { barcode } = parseBarcodeData(scannedText)
-        fetchDeviceByBarcode(barcode)
-      } else {
-        setError('No barcode found in image. Try again with better lighting.')
-        setLoading(false)
-      }
-    } catch (err) {
-      setError('Could not read barcode from image. Make sure the barcode is clear and well-lit.')
-      setLoading(false)
-    }
-
-    // Reset input so same file can be selected again
-    e.target.value = ''
-  }
-
-  const resetScanner = () => {
-    setScannedDevice(null)
-    setScannedBarcode('')
-    setManualBarcode('')
-    setError(null)
-    setLastScannedCode('')
-  }
-
-  const getDeviceIcon = (type) => {
-    const icons = {
-      tv: Monitor,
-      tablet: Smartphone,
-      stand: LayoutGrid,
-      istand: Monitor,
-    }
-    return icons[type] || Package
+  // ── Render ────────────────────────────────────────────────
+  if (device) {
+    return (
+      <BarcodeResultCard
+        device={device}
+        onClose={onClose}
+        onDeviceUpdated={handleDeviceUpdated}
+      />
+    )
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+
         {/* Header */}
-        <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-blue-700 text-white p-6 rounded-t-2xl z-10">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <ScanBarcode className="w-7 h-7" />
-              <div>
-                <h2 className="text-2xl font-bold">Barcode Scanner</h2>
-                <p className="text-blue-100 text-sm">
-                  {isScanning ? 'Scanning for barcode...' : 'Scan or enter device barcode'}
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-            >
-              <X className="w-6 h-6" />
-            </button>
-          </div>
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+            <Camera className="w-5 h-5 text-primary-600" />
+            Scan Device
+          </h3>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg">
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        <div className="p-6 space-y-6">
-          {/* Camera Scanner */}
-          {!scannedDevice && (
-            <div className="space-y-4">
-              {/* Camera View */}
-              <div className="relative border-4 border-blue-500 rounded-xl overflow-hidden bg-black">
-                <video
-                  ref={videoRef}
-                  className="w-full h-auto"
-                  style={{
-                    minHeight: '300px',
-                    maxHeight: '500px',
-                    backgroundColor: '#000',
-                    display: 'block',
-                    objectFit: 'contain'
-                  }}
-                />
-                
-                {/* Scanning overlay */}
-                {scannerActive && (
-                  <>
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <div className="relative">
-                        {/* Target box */}
-                        <div className="w-64 h-64 border-4 border-green-500 rounded-lg shadow-lg">
-                          {/* Corner markers */}
-                          <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-green-400"></div>
-                          <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-green-400"></div>
-                          <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-green-400"></div>
-                          <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-green-400"></div>
-                        </div>
-                        
-                        {/* Scanning line */}
-                        <div className="absolute top-0 left-0 right-0 h-1 bg-green-400 animate-scan shadow-lg"></div>
-                      </div>
-                    </div>
-                    
-                    {/* Status badge */}
-                    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-green-600 text-white px-4 py-2 rounded-full text-sm font-medium flex items-center gap-2 shadow-lg">
-                      <Zap className="w-4 h-4 animate-pulse" />
-                      Scanning...
-                    </div>
-                  </>
-                )}
-                
-                {!scannerActive && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-center p-8">
-                      <ScanBarcode className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                      <p className="text-gray-400 font-medium">Camera not active</p>
-                      <p className="text-gray-500 text-sm mt-2">Click "Start Scanner" below</p>
-                    </div>
-                  </div>
-                )}
+        {/* Mode toggle */}
+        <div className="flex gap-1 p-3 border-b border-gray-100">
+          {[
+            { id: 'camera', label: '📷 Camera' },
+            { id: 'manual', label: '⌨️ Manual' },
+          ].map(m => (
+            <button
+              key={m.id}
+              onClick={() => { setMode(m.id); setError(null) }}
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${
+                mode === m.id ? 'bg-primary-600 text-white' : 'text-gray-500 hover:bg-gray-100'
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Camera view */}
+          {mode === 'camera' && (
+            <div className="relative">
+              <video ref={videoRef} className="w-full rounded-xl bg-black" playsInline muted />
+              <canvas ref={canvasRef} className="hidden" />
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="w-48 h-48 border-2 border-white/60 rounded-xl" />
               </div>
+              <p className="text-center text-xs text-gray-500 mt-2">Point camera at QR code</p>
+            </div>
+          )}
 
-              {/* Camera Controls */}
-              <div className="flex gap-3">
-                {!scannerActive ? (
-                  <button
-                    onClick={startCamera}
-                    disabled={loading}
-                    className="flex-1 px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 font-medium transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg"
-                  >
-                    <Camera className="w-5 h-5" />
-                    Start Scanner
-                  </button>
-                ) : (
-                  <button
-                    onClick={stopCamera}
-                    className="flex-1 px-6 py-3 bg-gradient-to-r from-red-600 to-red-700 text-white rounded-lg hover:from-red-700 hover:to-red-800 font-medium transition-all shadow-lg"
-                  >
-                    <X className="w-5 h-5 inline mr-2" />
-                    Stop Scanner
-                  </button>
-                )}
-              </div>
-
-              {/* Instructions */}
-              {scannerActive && (
-                <div className="p-4 bg-gradient-to-r from-green-50 to-blue-50 border-2 border-green-200 rounded-xl">
-                  <p className="text-sm text-gray-900 font-medium mb-2">
-                    📸 How to scan:
-                  </p>
-                  <ul className="text-sm text-gray-700 space-y-1 list-disc list-inside">
-                    <li>Point camera at QR code or barcode</li>
-                    <li>Keep barcode inside the green box</li>
-                    <li>Hold steady - detection is automatic</li>
-                    <li>Make sure barcode is well-lit and in focus</li>
-                  </ul>
-                </div>
-              )}
-
-              {/* Manual Entry */}
-              <div className="p-4 bg-gray-50 rounded-xl border-2 border-gray-200">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Or enter barcode manually:
+          {/* Manual input */}
+          {mode === 'manual' && (
+            <form onSubmit={handleManualSearch} className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Barcode or Device Code
                 </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={manualBarcode}
-                    onChange={(e) => setManualBarcode(e.target.value.toUpperCase())}
-                    onKeyPress={handleKeyPress}
-                    placeholder="EDSG-TV-12345678-A1B2"
-                    disabled={loading}
-                    className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono disabled:opacity-50"
-                  />
-                  <button
-                    onClick={handleManualEntry}
-                    disabled={!manualBarcode.trim() || loading}
-                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                  >
-                    {loading ? (
-                      <>
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        Searching...
-                      </>
-                    ) : (
-                      <>
-                        <Check className="w-5 h-5" />
-                        Search
-                      </>
-                    )}
-                  </button>
-                </div>
+                <input
+                  type="text"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  placeholder="e.g. EDSG-TV-12345678-ABCD or TV-001"
+                  autoFocus
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+                />
               </div>
+              <button
+                type="submit"
+                disabled={loading || !input.trim()}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-primary-600 text-white rounded-xl font-semibold text-sm hover:bg-primary-700 disabled:opacity-50 transition-colors"
+              >
+                {loading
+                  ? <><Loader2 className="w-4 h-4 animate-spin" />Looking up…</>
+                  : <><Search className="w-4 h-4" />Find Device</>
+                }
+              </button>
+            </form>
+          )}
 
-              {/* Error Message */}
-              {error && error !== 'HTTPS_REQUIRED' && (
-                <div className="p-4 bg-red-50 border-2 border-red-200 rounded-lg flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="font-medium text-red-900">Error</p>
-                    <p className="text-sm text-red-700">{error}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* HTTPS Required Error - with native camera fallback */}
-              {error === 'HTTPS_REQUIRED' && (
-                <div className="space-y-4">
-                  <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-xl">
-                    <div className="flex items-start gap-3">
-                      <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-semibold text-amber-900 mb-1">Camera requires HTTPS</p>
-                        <p className="text-sm text-amber-800">
-                          Chrome blocks camera access on <code className="bg-amber-100 px-1 rounded">http://</code> connections.
-                          Your app needs to be served over <code className="bg-amber-100 px-1 rounded">https://</code>.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Native camera fallback — works on HTTP */}
-                  <div className="p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
-                    <p className="font-semibold text-blue-900 mb-1 flex items-center gap-2">
-                      <Camera className="w-4 h-4" />
-                      Use phone camera directly
-                    </p>
-                    <p className="text-sm text-blue-700 mb-3">
-                      Tap below to open your camera and photograph the barcode. We'll read the code from the image.
-                    </p>
-                    <label className="block w-full">
-                      <span className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-blue-600 text-white rounded-lg font-medium cursor-pointer hover:bg-blue-700 active:bg-blue-800 transition-colors">
-                        <Camera className="w-5 h-5" />
-                        Open Camera
-                      </span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        className="hidden"
-                        onChange={handleImageCapture}
-                      />
-                    </label>
-                    <p className="text-xs text-blue-600 mt-2 text-center">
-                      Take a photo of the barcode — it will be scanned automatically
-                    </p>
-                  </div>
-
-                  <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
-                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Fix HTTPS (permanent solution)</p>
-                    <p className="text-xs text-gray-600">Run in terminal:</p>
-                    <code className="block bg-gray-900 text-green-400 text-xs p-3 rounded-lg mt-1 font-mono">
-                      ngrok http 5173
-                    </code>
-                    <p className="text-xs text-gray-500 mt-2">Then open the <code>https://xxxx.ngrok-free.app</code> URL on your phone.</p>
-                  </div>
-                </div>
-              )}
+          {/* Loading (camera mode) */}
+          {loading && mode === 'camera' && (
+            <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Looking up device…
             </div>
           )}
 
-          {/* Device Found - BEAUTIFUL UI */}
-          {scannedDevice && (
-            <div className="space-y-6 animate-fadeIn">
-              {/* Success Banner with Animation */}
-              <div className="p-6 bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-2xl flex items-center gap-4 shadow-lg">
-                <div className="w-16 h-16 bg-green-600 rounded-full flex items-center justify-center animate-bounce">
-                  <Check className="w-10 h-10 text-white" strokeWidth={3} />
-                </div>
-                <div className="flex-1">
-                  <p className="text-2xl font-bold text-green-900 mb-1">Device Found!</p>
-                  <p className="text-sm text-green-700 font-mono bg-white/50 px-3 py-1 rounded inline-block">
-                    {scannedBarcode}
-                  </p>
-                </div>
-              </div>
-
-              {/* Device Information Card */}
-              <div className="bg-gradient-to-br from-blue-50 via-white to-purple-50 rounded-2xl border-2 border-blue-200 p-6 shadow-xl">
-                <div className="flex items-start gap-4 mb-6">
-                  {(() => {
-                    const Icon = getDeviceIcon(scannedDevice.type)
-                    return (
-                      <div className="w-16 h-16 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg">
-                        <Icon className="w-10 h-10 text-white" />
-                      </div>
-                    )
-                  })()}
-                  <div className="flex-1">
-                    <h3 className="text-3xl font-bold text-gray-900 mb-1">{scannedDevice.code}</h3>
-                    <p className="text-lg text-gray-600 capitalize font-medium">{scannedDevice.type}</p>
-                  </div>
-                </div>
-
-                {/* Device Details Grid */}
-                <div className="grid grid-cols-2 gap-4">
-                  {scannedDevice.brand && (
-                    <div className="bg-white/80 p-4 rounded-xl border border-gray-200">
-                      <p className="text-xs text-gray-500 font-medium mb-1">Brand</p>
-                      <p className="font-bold text-gray-900 text-lg">{scannedDevice.brand}</p>
-                    </div>
-                  )}
-                  {scannedDevice.model && (
-                    <div className="bg-white/80 p-4 rounded-xl border border-gray-200">
-                      <p className="text-xs text-gray-500 font-medium mb-1">Model</p>
-                      <p className="font-bold text-gray-900 text-lg">{scannedDevice.model}</p>
-                    </div>
-                  )}
-                  {scannedDevice.size && (
-                    <div className="bg-white/80 p-4 rounded-xl border border-gray-200">
-                      <p className="text-xs text-gray-500 font-medium mb-1">Size</p>
-                      <p className="font-bold text-gray-900 text-lg">{scannedDevice.size}</p>
-                    </div>
-                  )}
-                  <div className="bg-white/80 p-4 rounded-xl border border-gray-200">
-                    <p className="text-xs text-gray-500 font-medium mb-1">Status</p>
-                    <p className="font-bold text-gray-900 text-lg capitalize">{scannedDevice.lifecycleStatus}</p>
-                  </div>
-                  {scannedDevice.location && (
-                    <div className="bg-white/80 p-4 rounded-xl border border-gray-200 col-span-2">
-                      <p className="text-xs text-gray-500 font-medium mb-1">Location</p>
-                      <p className="font-bold text-gray-900 text-lg">{scannedDevice.location}</p>
-                    </div>
-                  )}
-                  {scannedDevice.client && (
-                    <div className="bg-white/80 p-4 rounded-xl border border-gray-200 col-span-2">
-                      <p className="text-xs text-gray-500 font-medium mb-1">Assigned To</p>
-                      <p className="font-bold text-gray-900 text-lg">{scannedDevice.client.name}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-3">
-                <button
-                  onClick={resetScanner}
-                  className="flex-1 px-6 py-4 border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 font-semibold transition-all text-lg"
-                >
-                  Scan Another
-                </button>
-                <button
-                  onClick={onClose}
-                  className="flex-1 px-6 py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl hover:from-blue-700 hover:to-blue-800 font-semibold transition-all shadow-lg text-lg"
-                >
-                  Done
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Scan History */}
-          {scanHistory.length > 0 && !scannedDevice && (
-            <div className="border-t-2 border-gray-200 pt-6">
-              <h4 className="font-semibold text-gray-900 mb-3">Recent Scans</h4>
-              <div className="space-y-2 max-h-40 overflow-y-auto">
-                {scanHistory.map((scan, index) => (
-                  <div
-                    key={index}
-                    className={`p-3 rounded-lg border-2 ${
-                      scan.found
-                        ? 'bg-green-50 border-green-200'
-                        : 'bg-red-50 border-red-200'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-sm">
-                      <code className="font-mono text-xs">{scan.barcode}</code>
-                      <span className={`font-medium ${
-                        scan.found ? 'text-green-700' : 'text-red-700'
-                      }`}>
-                        {scan.found ? '✓ Found' : '✗ Not Found'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          {/* Error */}
+          {error && (
+            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-xl">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+              <p className="text-sm text-red-700">{error}</p>
             </div>
           )}
         </div>
       </div>
-      
-      {/* Animations CSS */}
-      <style>{`
-        @keyframes scan {
-          0% { transform: translateY(0); }
-          100% { transform: translateY(256px); }
-        }
-        .animate-scan {
-          animation: scan 2s ease-in-out infinite;
-        }
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-fadeIn {
-          animation: fadeIn 0.5s ease-out;
-        }
-      `}</style>
     </div>
   )
 }

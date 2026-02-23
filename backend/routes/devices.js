@@ -6,7 +6,20 @@ const router = express.Router();
 const prisma = new PrismaClient();
 
 // ==========================================
-// UTILITY FUNCTIONS
+// LIFECYCLE STATUS CONSTANTS
+// ==========================================
+export const LIFECYCLE = {
+  WAREHOUSE:        "warehouse",
+  ASSIGN_REQUESTED: "assign_requested",
+  ASSIGNED:         "assigned",
+  DEPLOY_REQUESTED: "deploy_requested",
+  DEPLOYED:         "deployed",
+  RETURN_REQUESTED: "return_requested",
+  RETURNED:         "returned",
+}
+
+// ==========================================
+// UTILITY FUNCTIONS  (unchanged from original)
 // ==========================================
 
 const generateBarcode = (deviceType) => {
@@ -19,10 +32,8 @@ const generateBarcode = (deviceType) => {
 
 const getTypeCode = (type) => {
   const typeCodes = {
-    // Canonical IDs (new system)
     TV: 'TV', TAB: 'TAB', TTV: 'TTV', AST: 'AST', IST: 'IST',
     TST: 'TST', MB: 'MB', BAT: 'BAT', MSE: 'MSE', W: 'W',
-    // Legacy strings (backward compat)
     tv: 'TV', tablet: 'TAB', 'touch-tv': 'TTV',
     'a-stand': 'AST', 'i-stand': 'IST', 'tablet-stand': 'TST',
     stand: 'AST', istand: 'IST', mediaBox: 'MB', battery: 'BAT', fabrication: 'TST',
@@ -43,10 +54,8 @@ const normalizeCode = (code) => {
 }
 
 const CODE_PREFIX_MAP = {
-  // Canonical IDs → code prefix
   TV: 'TV', TAB: 'TAB', TTV: 'TTV', AST: 'ATV', IST: 'ITV',
   TST: 'TST', MB: 'MB', BAT: 'BAT', MSE: 'MSE', W: 'W',
-  // Legacy strings → code prefix (backward compat)
   tv: 'TV', tablet: 'TAB', 'touch-tv': 'TTV',
   'a-stand': 'ATV', 'i-stand': 'ITV', 'tablet-stand': 'TST',
   stand: 'ATV', istand: 'ITV', mediaBox: 'MB', battery: 'BAT', fabrication: 'TST',
@@ -56,7 +65,6 @@ const getExpectedPrefix = (type) => {
   if (!type) return null
   if (CODE_PREFIX_MAP[type]) return CODE_PREFIX_MAP[type]
   if (type.startsWith('custom-')) return type.replace('custom-', '').toUpperCase()
-  // For any unknown canonical ID, use the type itself as prefix (e.g. "W" → "W")
   if (/^[A-Z0-9]+$/.test(type)) return type
   return null
 }
@@ -90,13 +98,32 @@ const validateCode = async (code, type, excludeId = null) => {
 }
 
 // ==========================================
-// IMPORTANT: Route order matters in Express.
-// Specific named paths MUST come before /:id
-// otherwise Express matches /:id first and crashes.
-// Order: named POSTs → named GETs → /* wildcards
+// NEW: DeviceHistory logger
+// ==========================================
+const logHistory = async (deviceId, fromStatus, toStatus, changedById = null, note = null) => {
+  try {
+    await prisma.deviceHistory.create({
+      data: { deviceId, fromStatus, toStatus, changedById, note },
+    })
+  } catch (e) {
+    console.error("Failed to write DeviceHistory:", e)
+  }
+}
+
+// Standard include for device queries — now also includes history
+const DEVICE_INCLUDE = {
+  client: true,
+  history: {
+    orderBy: { changedAt: "desc" },
+    take: 20,
+  },
+}
+
+// ==========================================
+// ROUTE ORDER: specific named POSTs/GETs MUST come before /:id
 // ==========================================
 
-// POST /bulk-add
+// ─── POST /bulk-add (unchanged) ───────────────────────────────────────────────
 router.post("/bulk-add", authMiddleware, async (req, res) => {
   try {
     const { type, brand, size, model, color, mfgDate, inDate, healthStatus, lifecycleStatus, location, quantity } = req.body
@@ -121,16 +148,15 @@ router.post("/bulk-add", authMiddleware, async (req, res) => {
       (await prisma.device.findMany({ select: { barcode: true } })).map((d) => d.barcode)
     )
 
-    // Find first available number from 1 upward (serial, fills gaps)
     let nextNum = 1
     while (occupiedForType.has(nextNum)) nextNum++
     const devicesToCreate = []
 
     for (let i = 0; i < qty; i++) {
       const code = `${expectedPrefix}-${String(nextNum).padStart(3, "0")}`
-      occupiedForType.add(nextNum) // mark as used within this batch
+      occupiedForType.add(nextNum)
       nextNum++
-      while (occupiedForType.has(nextNum)) nextNum++ // skip any further gaps
+      while (occupiedForType.has(nextNum)) nextNum++
       let barcode = generateBarcode(type)
       let attempts = 0
       while (existingBarcodes.has(barcode) && attempts < 10) {
@@ -153,6 +179,7 @@ router.post("/bulk-add", authMiddleware, async (req, res) => {
     const createdCodes = devicesToCreate.map((d) => d.code)
     const createdDevices = await prisma.device.findMany({
       where: { code: { in: createdCodes } },
+      include: DEVICE_INCLUDE,
       orderBy: { code: "asc" },
     })
 
@@ -163,7 +190,7 @@ router.post("/bulk-add", authMiddleware, async (req, res) => {
   }
 })
 
-// POST /bulk/assign
+// ─── POST /bulk/assign (unchanged) ───────────────────────────────────────────
 router.post("/bulk/assign", authMiddleware, async (req, res) => {
   try {
     const { deviceIds, clientId } = req.body
@@ -173,7 +200,7 @@ router.post("/bulk/assign", authMiddleware, async (req, res) => {
     if (!client) return res.status(400).json({ error: "Client not found" })
     const result = await prisma.device.updateMany({
       where: { id: { in: deviceIds.map(id => parseInt(id)) } },
-      data: { clientId: parseInt(clientId), lifecycleStatus: "assigning" },
+      data: { clientId: parseInt(clientId), lifecycleStatus: "assign_requested" },
     })
     res.json({ message: `${result.count} devices assigned to client`, count: result.count })
   } catch (error) {
@@ -182,7 +209,7 @@ router.post("/bulk/assign", authMiddleware, async (req, res) => {
   }
 })
 
-// POST /bulk/unassign
+// ─── POST /bulk/unassign (unchanged) ─────────────────────────────────────────
 router.post("/bulk/unassign", authMiddleware, async (req, res) => {
   try {
     const { deviceIds } = req.body
@@ -198,7 +225,7 @@ router.post("/bulk/unassign", authMiddleware, async (req, res) => {
   }
 })
 
-// POST /bulk/update-lifecycle
+// ─── POST /bulk/update-lifecycle (unchanged) ──────────────────────────────────
 router.post("/bulk/update-lifecycle", authMiddleware, async (req, res) => {
   try {
     const { deviceIds, lifecycleStatus, location, state, district, pinpoint } = req.body
@@ -220,7 +247,7 @@ router.post("/bulk/update-lifecycle", authMiddleware, async (req, res) => {
   }
 })
 
-// POST /search
+// ─── POST /search (unchanged) ────────────────────────────────────────────────
 router.post("/search", authMiddleware, async (req, res) => {
   try {
     const { type, lifecycleStatus, clientId, brand, size, state, district, searchCode } = req.body
@@ -233,7 +260,7 @@ router.post("/search", authMiddleware, async (req, res) => {
     if (state) where.state = state
     if (district) where.district = district
     if (searchCode) where.code = { contains: searchCode.toUpperCase(), mode: 'insensitive' }
-    const devices = await prisma.device.findMany({ where, include: { client: true }, orderBy: { createdAt: "desc" } })
+    const devices = await prisma.device.findMany({ where, include: DEVICE_INCLUDE, orderBy: { createdAt: "desc" } })
     res.json(devices)
   } catch (error) {
     console.error("Error searching devices:", error)
@@ -241,10 +268,10 @@ router.post("/search", authMiddleware, async (req, res) => {
   }
 })
 
-// GET /
+// ─── GET / (unchanged) ────────────────────────────────────────────────────────
 router.get("/", authMiddleware, async (req, res) => {
   try {
-    const devices = await prisma.device.findMany({ include: { client: true }, orderBy: { createdAt: "desc" } })
+    const devices = await prisma.device.findMany({ include: DEVICE_INCLUDE, orderBy: { createdAt: "desc" } })
     res.json(devices)
   } catch (error) {
     console.error("Error fetching devices:", error)
@@ -252,11 +279,30 @@ router.get("/", authMiddleware, async (req, res) => {
   }
 })
 
-// GET /barcode/:barcode  — must be before /:id
+// ─── NEW: GET /pending-approvals ──────────────────────────────────────────────
+router.get("/pending-approvals", authMiddleware, async (req, res) => {
+  try {
+    const devices = await prisma.device.findMany({
+      where: {
+        lifecycleStatus: {
+          in: [LIFECYCLE.ASSIGN_REQUESTED, LIFECYCLE.DEPLOY_REQUESTED, LIFECYCLE.RETURN_REQUESTED],
+        },
+      },
+      include: DEVICE_INCLUDE,
+      orderBy: { requestedAt: "asc" },
+    })
+    res.json(devices)
+  } catch (error) {
+    console.error("Error fetching pending approvals:", error)
+    res.status(500).json({ error: "Failed to fetch pending approvals" })
+  }
+})
+
+// ─── GET /barcode/:barcode (unchanged) ───────────────────────────────────────
 router.get("/barcode/:barcode", authMiddleware, async (req, res) => {
   try {
     const { barcode } = req.params
-    const device = await prisma.device.findUnique({ where: { barcode: barcode.toUpperCase() }, include: { client: true } })
+    const device = await prisma.device.findUnique({ where: { barcode: barcode.toUpperCase() }, include: DEVICE_INCLUDE })
     if (!device) return res.status(404).json({ error: "Device not found" })
     res.json(device)
   } catch (error) {
@@ -265,7 +311,7 @@ router.get("/barcode/:barcode", authMiddleware, async (req, res) => {
   }
 })
 
-// GET /next-code/:type  — must be before /:id
+// ─── GET /next-code/:type (unchanged) ────────────────────────────────────────
 router.get("/next-code/:type", authMiddleware, async (req, res) => {
   try {
     const { type } = req.params
@@ -288,11 +334,11 @@ router.get("/next-code/:type", authMiddleware, async (req, res) => {
   }
 })
 
-// GET /code/:code  — must be before /:id
+// ─── GET /code/:code (unchanged) ─────────────────────────────────────────────
 router.get("/code/:code", authMiddleware, async (req, res) => {
   try {
     const { code } = req.params
-    const device = await prisma.device.findUnique({ where: { code: code.toUpperCase() }, include: { client: true } })
+    const device = await prisma.device.findUnique({ where: { code: code.toUpperCase() }, include: DEVICE_INCLUDE })
     if (!device) return res.status(404).json({ error: "Device not found" })
     res.json(device)
   } catch (error) {
@@ -301,55 +347,64 @@ router.get("/code/:code", authMiddleware, async (req, res) => {
   }
 })
 
-// GET /filter/type/:type  — must be before /:id
+// ─── GET /filter/type/:type (unchanged) ──────────────────────────────────────
 router.get("/filter/type/:type", authMiddleware, async (req, res) => {
   try {
     const { type } = req.params
-    const devices = await prisma.device.findMany({ where: { type }, include: { client: true }, orderBy: { createdAt: "desc" } })
+    const devices = await prisma.device.findMany({ where: { type }, include: DEVICE_INCLUDE, orderBy: { createdAt: "desc" } })
     res.json(devices)
   } catch (error) {
-    console.error("Error filtering devices by type:", error)
     res.status(500).json({ error: "Failed to filter devices" })
   }
 })
 
-// GET /filter/lifecycle/:status  — must be before /:id
+// ─── GET /filter/lifecycle/:status (unchanged) ───────────────────────────────
 router.get("/filter/lifecycle/:status", authMiddleware, async (req, res) => {
   try {
     const { status } = req.params
-    const devices = await prisma.device.findMany({ where: { lifecycleStatus: status }, include: { client: true }, orderBy: { createdAt: "desc" } })
+    const devices = await prisma.device.findMany({ where: { lifecycleStatus: status }, include: DEVICE_INCLUDE, orderBy: { createdAt: "desc" } })
     res.json(devices)
   } catch (error) {
-    console.error("Error filtering devices by lifecycle:", error)
     res.status(500).json({ error: "Failed to filter devices" })
   }
 })
 
-// GET /filter/client/:clientId  — must be before /:id
+// ─── GET /filter/client/:clientId (unchanged) ────────────────────────────────
 router.get("/filter/client/:clientId", authMiddleware, async (req, res) => {
   try {
     const { clientId } = req.params
-    const devices = await prisma.device.findMany({ where: { clientId: parseInt(clientId) }, include: { client: true }, orderBy: { createdAt: "desc" } })
+    const devices = await prisma.device.findMany({ where: { clientId: parseInt(clientId) }, include: DEVICE_INCLUDE, orderBy: { createdAt: "desc" } })
     res.json(devices)
   } catch (error) {
-    console.error("Error filtering devices by client:", error)
     res.status(500).json({ error: "Failed to filter devices" })
   }
 })
 
-// GET /stats/summary  — must be before /:id
+// ─── GET /stats/summary (updated to count new statuses) ───────────────────────
 router.get("/stats/summary", authMiddleware, async (req, res) => {
   try {
-    const [totalDevices, warehouseDevices, assigningDevices, deployedDevices, devicesByType] = await Promise.all([
-      prisma.device.count(),
-      prisma.device.count({ where: { lifecycleStatus: "warehouse" } }),
-      prisma.device.count({ where: { lifecycleStatus: "assigning" } }),
-      prisma.device.count({ where: { lifecycleStatus: "deployed" } }),
-      prisma.device.groupBy({ by: ["type"], _count: true }),
-    ])
+    const [total, warehouse, assignRequested, assigned, deployRequested, deployed, returnRequested, returned, byType] =
+      await Promise.all([
+        prisma.device.count(),
+        prisma.device.count({ where: { lifecycleStatus: LIFECYCLE.WAREHOUSE } }),
+        prisma.device.count({ where: { lifecycleStatus: LIFECYCLE.ASSIGN_REQUESTED } }),
+        prisma.device.count({ where: { lifecycleStatus: LIFECYCLE.ASSIGNED } }),
+        prisma.device.count({ where: { lifecycleStatus: LIFECYCLE.DEPLOY_REQUESTED } }),
+        prisma.device.count({ where: { lifecycleStatus: LIFECYCLE.DEPLOYED } }),
+        prisma.device.count({ where: { lifecycleStatus: LIFECYCLE.RETURN_REQUESTED } }),
+        prisma.device.count({ where: { lifecycleStatus: LIFECYCLE.RETURNED } }),
+        prisma.device.groupBy({ by: ["type"], _count: true }),
+      ])
     res.json({
-      total: totalDevices, warehouse: warehouseDevices, assigning: assigningDevices, deployed: deployedDevices,
-      byType: devicesByType.map(item => ({ type: item.type, count: item._count })),
+      total,
+      warehouse,
+      // keep "assigning" key for backward compat — means any in-flight status
+      assigning: assignRequested + assigned + deployRequested + returnRequested,
+      deployed,
+      returned,
+      // detailed breakdown for new UI
+      breakdown: { assignRequested, assigned, deployRequested, deployed, returnRequested, returned },
+      byType: byType.map(item => ({ type: item.type, count: item._count })),
     })
   } catch (error) {
     console.error("Error fetching device statistics:", error)
@@ -357,11 +412,308 @@ router.get("/stats/summary", authMiddleware, async (req, res) => {
   }
 })
 
-// GET /:id  — wildcard, MUST be last among all GETs
+// ─── NEW: GET /:id/history ────────────────────────────────────────────────────
+router.get("/:id/history", authMiddleware, async (req, res) => {
+  try {
+    const history = await prisma.deviceHistory.findMany({
+      where: { deviceId: parseInt(req.params.id) },
+      orderBy: { changedAt: "desc" },
+    })
+    res.json(history)
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch device history" })
+  }
+})
+
+// ─── NEW: POST /:id/request-assign ───────────────────────────────────────────
+// Field user submits a request to assign this device to a client
+router.post("/:id/request-assign", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id)
+    const { clientId } = req.body
+    if (!clientId) return res.status(400).json({ error: "clientId is required" })
+
+    const device = await prisma.device.findUnique({ where: { id } })
+    if (!device) return res.status(404).json({ error: "Device not found" })
+    if (device.lifecycleStatus !== LIFECYCLE.WAREHOUSE)
+      return res.status(400).json({ error: `Device must be in 'warehouse' to request assignment. Current: ${device.lifecycleStatus}` })
+
+    const client = await prisma.client.findUnique({ where: { id: parseInt(clientId) } })
+    if (!client) return res.status(400).json({ error: "Client not found" })
+
+    const userId = req.user?.userId || null
+    const updated = await prisma.device.update({
+      where: { id },
+      data: {
+        lifecycleStatus: LIFECYCLE.ASSIGN_REQUESTED,
+        clientId: parseInt(clientId),
+        requestedById: userId,
+        requestedAt: new Date(),
+        rejectionNote: null,
+      },
+      include: DEVICE_INCLUDE,
+    })
+
+    await logHistory(id, device.lifecycleStatus, LIFECYCLE.ASSIGN_REQUESTED, userId, `Assignment requested for client: ${client.name}`)
+    res.json({ message: "Assignment request submitted. Awaiting admin approval.", device: updated })
+  } catch (error) {
+    console.error("Error requesting assignment:", error)
+    res.status(500).json({ error: "Failed to request assignment" })
+  }
+})
+
+// ─── NEW: POST /:id/approve-assign ───────────────────────────────────────────
+router.post("/:id/approve-assign", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id)
+    const device = await prisma.device.findUnique({ where: { id } })
+    if (!device) return res.status(404).json({ error: "Device not found" })
+    if (device.lifecycleStatus !== LIFECYCLE.ASSIGN_REQUESTED)
+      return res.status(400).json({ error: `Device is not awaiting assignment approval. Current: ${device.lifecycleStatus}` })
+
+    const userId = req.user?.userId || null
+    const updated = await prisma.device.update({
+      where: { id },
+      data: {
+        lifecycleStatus: LIFECYCLE.ASSIGNED,
+        approvedById: userId,
+        approvedAt: new Date(),
+        assignedAt: new Date(),
+        rejectionNote: null,
+      },
+      include: DEVICE_INCLUDE,
+    })
+
+    await logHistory(id, device.lifecycleStatus, LIFECYCLE.ASSIGNED, userId, "Assignment approved")
+    res.json({ message: "Assignment approved.", device: updated })
+  } catch (error) {
+    console.error("Error approving assignment:", error)
+    res.status(500).json({ error: "Failed to approve assignment" })
+  }
+})
+
+// ─── NEW: POST /:id/reject-assign ────────────────────────────────────────────
+router.post("/:id/reject-assign", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id)
+    const { note } = req.body
+    const device = await prisma.device.findUnique({ where: { id } })
+    if (!device) return res.status(404).json({ error: "Device not found" })
+    if (device.lifecycleStatus !== LIFECYCLE.ASSIGN_REQUESTED)
+      return res.status(400).json({ error: "Device is not awaiting assignment approval" })
+
+    const userId = req.user?.userId || null
+    const updated = await prisma.device.update({
+      where: { id },
+      data: {
+        lifecycleStatus: LIFECYCLE.WAREHOUSE,
+        clientId: null,
+        requestedById: null,
+        requestedAt: null,
+        rejectionNote: note || "Rejected by admin",
+      },
+      include: DEVICE_INCLUDE,
+    })
+
+    await logHistory(id, device.lifecycleStatus, LIFECYCLE.WAREHOUSE, userId, `Assignment rejected: ${note || "No reason given"}`)
+    res.json({ message: "Assignment request rejected.", device: updated })
+  } catch (error) {
+    console.error("Error rejecting assignment:", error)
+    res.status(500).json({ error: "Failed to reject assignment" })
+  }
+})
+
+// ─── NEW: POST /:id/request-deploy ───────────────────────────────────────────
+router.post("/:id/request-deploy", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id)
+    const { state, district, pinpoint, location } = req.body
+    const device = await prisma.device.findUnique({ where: { id } })
+    if (!device) return res.status(404).json({ error: "Device not found" })
+    if (device.lifecycleStatus !== LIFECYCLE.ASSIGNED)
+      return res.status(400).json({ error: `Device must be 'assigned' to request deployment. Current: ${device.lifecycleStatus}` })
+
+    const userId = req.user?.userId || null
+    const updated = await prisma.device.update({
+      where: { id },
+      data: {
+        lifecycleStatus: LIFECYCLE.DEPLOY_REQUESTED,
+        requestedById: userId,
+        requestedAt: new Date(),
+        state: state || device.state,
+        district: district || device.district,
+        pinpoint: pinpoint || device.pinpoint,
+        location: location || device.location,
+        rejectionNote: null,
+      },
+      include: DEVICE_INCLUDE,
+    })
+
+    await logHistory(id, device.lifecycleStatus, LIFECYCLE.DEPLOY_REQUESTED, userId, "Deployment requested")
+    res.json({ message: "Deployment request submitted. Awaiting admin approval.", device: updated })
+  } catch (error) {
+    console.error("Error requesting deployment:", error)
+    res.status(500).json({ error: "Failed to request deployment" })
+  }
+})
+
+// ─── NEW: POST /:id/approve-deploy ───────────────────────────────────────────
+router.post("/:id/approve-deploy", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id)
+    const device = await prisma.device.findUnique({ where: { id } })
+    if (!device) return res.status(404).json({ error: "Device not found" })
+    if (device.lifecycleStatus !== LIFECYCLE.DEPLOY_REQUESTED)
+      return res.status(400).json({ error: "Device is not awaiting deployment approval" })
+
+    const userId = req.user?.userId || null
+    const updated = await prisma.device.update({
+      where: { id },
+      data: {
+        lifecycleStatus: LIFECYCLE.DEPLOYED,
+        approvedById: userId,
+        approvedAt: new Date(),
+        deployedAt: new Date(),
+        rejectionNote: null,
+      },
+      include: DEVICE_INCLUDE,
+    })
+
+    await logHistory(id, device.lifecycleStatus, LIFECYCLE.DEPLOYED, userId, "Deployment approved")
+    res.json({ message: "Deployment approved.", device: updated })
+  } catch (error) {
+    console.error("Error approving deployment:", error)
+    res.status(500).json({ error: "Failed to approve deployment" })
+  }
+})
+
+// ─── NEW: POST /:id/reject-deploy ────────────────────────────────────────────
+router.post("/:id/reject-deploy", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id)
+    const { note } = req.body
+    const device = await prisma.device.findUnique({ where: { id } })
+    if (!device) return res.status(404).json({ error: "Device not found" })
+    if (device.lifecycleStatus !== LIFECYCLE.DEPLOY_REQUESTED)
+      return res.status(400).json({ error: "Device is not awaiting deployment approval" })
+
+    const userId = req.user?.userId || null
+    const updated = await prisma.device.update({
+      where: { id },
+      data: {
+        lifecycleStatus: LIFECYCLE.ASSIGNED,
+        requestedById: null,
+        requestedAt: null,
+        rejectionNote: note || "Rejected by admin",
+      },
+      include: DEVICE_INCLUDE,
+    })
+
+    await logHistory(id, device.lifecycleStatus, LIFECYCLE.ASSIGNED, userId, `Deployment rejected: ${note || "No reason given"}`)
+    res.json({ message: "Deployment request rejected.", device: updated })
+  } catch (error) {
+    console.error("Error rejecting deployment:", error)
+    res.status(500).json({ error: "Failed to reject deployment" })
+  }
+})
+
+// ─── NEW: POST /:id/request-return ───────────────────────────────────────────
+router.post("/:id/request-return", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id)
+    const { note } = req.body
+    const device = await prisma.device.findUnique({ where: { id } })
+    if (!device) return res.status(404).json({ error: "Device not found" })
+    if (device.lifecycleStatus !== LIFECYCLE.DEPLOYED)
+      return res.status(400).json({ error: `Device must be 'deployed' to request return. Current: ${device.lifecycleStatus}` })
+
+    const userId = req.user?.userId || null
+    const updated = await prisma.device.update({
+      where: { id },
+      data: {
+        lifecycleStatus: LIFECYCLE.RETURN_REQUESTED,
+        requestedById: userId,
+        requestedAt: new Date(),
+        rejectionNote: null,
+      },
+      include: DEVICE_INCLUDE,
+    })
+
+    await logHistory(id, device.lifecycleStatus, LIFECYCLE.RETURN_REQUESTED, userId, note || "Return requested")
+    res.json({ message: "Return request submitted. Awaiting admin approval.", device: updated })
+  } catch (error) {
+    console.error("Error requesting return:", error)
+    res.status(500).json({ error: "Failed to request return" })
+  }
+})
+
+// ─── NEW: POST /:id/approve-return ───────────────────────────────────────────
+router.post("/:id/approve-return", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id)
+    const device = await prisma.device.findUnique({ where: { id } })
+    if (!device) return res.status(404).json({ error: "Device not found" })
+    if (device.lifecycleStatus !== LIFECYCLE.RETURN_REQUESTED)
+      return res.status(400).json({ error: "Device is not awaiting return approval" })
+
+    const userId = req.user?.userId || null
+    const updated = await prisma.device.update({
+      where: { id },
+      data: {
+        lifecycleStatus: LIFECYCLE.WAREHOUSE,
+        clientId: null,
+        state: null, district: null, pinpoint: null,
+        location: "Warehouse A",
+        requestedById: null, requestedAt: null,
+        approvedById: userId, approvedAt: new Date(),
+        assignedAt: null, deployedAt: null,
+        rejectionNote: null,
+      },
+      include: DEVICE_INCLUDE,
+    })
+
+    await logHistory(id, device.lifecycleStatus, LIFECYCLE.WAREHOUSE, userId, "Return approved — device back in warehouse")
+    res.json({ message: "Return approved. Device is back in warehouse.", device: updated })
+  } catch (error) {
+    console.error("Error approving return:", error)
+    res.status(500).json({ error: "Failed to approve return" })
+  }
+})
+
+// ─── NEW: POST /:id/reject-return ────────────────────────────────────────────
+router.post("/:id/reject-return", authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id)
+    const { note } = req.body
+    const device = await prisma.device.findUnique({ where: { id } })
+    if (!device) return res.status(404).json({ error: "Device not found" })
+    if (device.lifecycleStatus !== LIFECYCLE.RETURN_REQUESTED)
+      return res.status(400).json({ error: "Device is not awaiting return approval" })
+
+    const userId = req.user?.userId || null
+    const updated = await prisma.device.update({
+      where: { id },
+      data: {
+        lifecycleStatus: LIFECYCLE.DEPLOYED,
+        requestedById: null, requestedAt: null,
+        rejectionNote: note || "Rejected by admin",
+      },
+      include: DEVICE_INCLUDE,
+    })
+
+    await logHistory(id, device.lifecycleStatus, LIFECYCLE.DEPLOYED, userId, `Return rejected: ${note || "No reason given"}`)
+    res.json({ message: "Return request rejected.", device: updated })
+  } catch (error) {
+    console.error("Error rejecting return:", error)
+    res.status(500).json({ error: "Failed to reject return" })
+  }
+})
+
+// ─── GET /:id (unchanged, MUST be last) ──────────────────────────────────────
 router.get("/:id", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params
-    const device = await prisma.device.findUnique({ where: { id: parseInt(id) }, include: { client: true } })
+    const device = await prisma.device.findUnique({ where: { id: parseInt(id) }, include: DEVICE_INCLUDE })
     if (!device) return res.status(404).json({ error: "Device not found" })
     res.json(device)
   } catch (error) {
@@ -370,7 +722,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
   }
 })
 
-// POST /  — create single device
+// ─── POST / (unchanged) ───────────────────────────────────────────────────────
 router.post("/", authMiddleware, async (req, res) => {
   try {
     const { code, type, brand, size, model, color, gpsId, mfgDate, inDate,
@@ -408,9 +760,10 @@ router.post("/", authMiddleware, async (req, res) => {
         district: district || null, pinpoint: pinpoint || null,
         clientId: clientId ? parseInt(clientId) : null,
       },
-      include: { client: true },
+      include: DEVICE_INCLUDE,
     })
 
+    await logHistory(device.id, "created", device.lifecycleStatus, null, "Device added to inventory")
     res.status(201).json(device)
   } catch (error) {
     console.error("Error creating device:", error)
@@ -418,7 +771,7 @@ router.post("/", authMiddleware, async (req, res) => {
   }
 })
 
-// PUT /:id
+// ─── PUT /:id (unchanged) ─────────────────────────────────────────────────────
 router.put("/:id", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params
@@ -432,17 +785,16 @@ router.put("/:id", authMiddleware, async (req, res) => {
       const codeCheck = await validateCode(code, type || existingDevice.type, id)
       if (!codeCheck.valid) return res.status(400).json({ error: codeCheck.error })
     }
-
     if (barcode && barcode.toUpperCase() !== existingDevice.barcode) {
       const barcodeExists = await prisma.device.findUnique({ where: { barcode: barcode.toUpperCase() } })
       if (barcodeExists) return res.status(400).json({ error: "Barcode already exists" })
     }
-
     if (clientId) {
       const client = await prisma.client.findUnique({ where: { id: parseInt(clientId) } })
       if (!client) return res.status(400).json({ error: "Client not found" })
     }
 
+    const prevStatus = existingDevice.lifecycleStatus
     const updatedDevice = await prisma.device.update({
       where: { id: parseInt(id) },
       data: {
@@ -463,8 +815,13 @@ router.put("/:id", authMiddleware, async (req, res) => {
         pinpoint: pinpoint !== undefined ? pinpoint : existingDevice.pinpoint,
         clientId: clientId !== undefined ? (clientId ? parseInt(clientId) : null) : existingDevice.clientId,
       },
-      include: { client: true },
+      include: DEVICE_INCLUDE,
     })
+
+    // Log if lifecycle changed via PUT (manual admin override)
+    if (lifecycleStatus && lifecycleStatus !== prevStatus) {
+      await logHistory(parseInt(id), prevStatus, lifecycleStatus, req.user?.userId || null, "Manual update via admin")
+    }
 
     res.json(updatedDevice)
   } catch (error) {
@@ -473,7 +830,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
   }
 })
 
-// DELETE /:id
+// ─── DELETE /:id (unchanged) ──────────────────────────────────────────────────
 router.delete("/:id", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params

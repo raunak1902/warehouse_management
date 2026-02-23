@@ -9,7 +9,13 @@ export default defineConfig({
     port: 5174,
     strictPort: false,
     open: true,
-    hmr: { overlay: false },
+    // Fix WebSocket HMR connection when using basicSsl (https)
+    hmr: {
+      protocol: 'wss',
+      host: 'localhost',
+      port: 5174,
+      overlay: false,
+    },
     watch: {
       ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**']
     },
@@ -18,6 +24,7 @@ export default defineConfig({
         target: 'http://localhost:5000',
         changeOrigin: true,
         secure: false,
+        ws: false,
       },
       '/login': {
         target: 'http://localhost:5000',

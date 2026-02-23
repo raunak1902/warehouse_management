@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,22 +7,15 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// =======================
-// ROLES
-// =======================
 model Role {
-  id          Int              @id @default(autoincrement())
-  name        String           @unique
-  description String?
-  createdAt   DateTime         @default(now())
-
-  users           User[]
+  id              Int              @id @default(autoincrement())
+  name            String           @unique
+  description     String?
+  createdAt       DateTime         @default(now())
   rolePermissions RolePermission[]
+  users           User[]
 }
 
-// =======================
-// USERS
-// =======================
 model User {
   id        Int      @id @default(autoincrement())
   name      String
@@ -33,92 +23,76 @@ model User {
   password  String
   status    String   @default("ACTIVE")
   createdAt DateTime @default(now())
-
-  roleId Int
-  role   Role @relation(fields: [roleId], references: [id])
+  roleId    Int
+  role      Role     @relation(fields: [roleId], references: [id])
 
   @@index([roleId])
 }
 
-// =======================
-// PERMISSIONS
-// =======================
 model Permission {
-  id          Int              @id @default(autoincrement())
-  module      String
-  operation   String
-  description String?
-  createdAt   DateTime         @default(now())
-
+  id              Int              @id @default(autoincrement())
+  module          String
+  operation       String
+  description     String?
+  createdAt       DateTime         @default(now())
   rolePermissions RolePermission[]
 
   @@unique([module, operation])
 }
 
-// =======================
-// ROLE - PERMISSION (JOIN TABLE)
-// =======================
 model RolePermission {
   roleId       Int
   permissionId Int
-
-  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@id([roleId, permissionId])
 }
 
-// =======================
-// CLIENTS
-// =======================
 model Client {
-  id                Int      @id @default(autoincrement())
-  name              String
-  phone             String
-  email             String
-  company           String?
-  address           String?
-  notes             String?
-  subscriptionStart DateTime
-  subscriptionEnd   DateTime
-  createdAt         DateTime @default(now())
-
+  id         Int         @id @default(autoincrement())
+  name       String
+  phone      String
+  email      String
+  company    String?
+  address    String?
+  notes      String?
+  createdAt  DateTime    @default(now())
   devices    Device[]
   deviceSets DeviceSet[]
-
-  @@index([subscriptionEnd])
 }
 
-// =======================
-// DEVICES
-// =======================
 model Device {
-  id              Int      @id @default(autoincrement())
-  code            String   @unique // e.g., ATV-001, ITV-005, TAB-012
-  barcode         String   @unique
-  type            String   // 'tv', 'tablet', 'stand', 'istand', 'mediaBox', 'battery', 'fabrication'
+  id              Int             @id @default(autoincrement())
+  code            String          @unique
+  type            String
   brand           String?
   size            String?
   model           String?
   color           String?
   gpsId           String?
   mfgDate         DateTime?
-  healthStatus    String   @default("ok")
-  lifecycleStatus String   @default("warehouse") // 'warehouse', 'assigning', 'deployed'
-  location        String?  // For warehouse: "Warehouse A", For deployed: will be linked to deployment location
-  state           String?  // For deployed devices
-  district        String?  // For deployed devices
-  pinpoint        String?  // Specific location name
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  // Foreign key to client (nullable because device may not be assigned)
+  lifecycleStatus String          @default("warehouse")
+  location        String?
+  state           String?
+  district        String?
+  pinpoint        String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
   clientId        Int?
-  client          Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
-
-  // Optional: device can belong to a set
+  healthStatus    String          @default("ok")
   setId           Int?
-  deviceSet       DeviceSet? @relation(fields: [setId], references: [id], onDelete: SetNull)
+  approvedAt      DateTime?
+  approvedById    Int?
+  assignedAt      DateTime?
+  barcode         String          @unique
+  deployedAt      DateTime?
+  rejectionNote   String?
+  requestedAt     DateTime?
+  requestedById   Int?
+  client          Client?         @relation(fields: [clientId], references: [id])
+  deviceSet       DeviceSet?      @relation(fields: [setId], references: [id])
+  history         DeviceHistory[]
 
   @@index([type])
   @@index([lifecycleStatus])
@@ -128,32 +102,106 @@ model Device {
   @@index([setId])
 }
 
-// =======================
-// DEVICE SETS
-// =======================
 model DeviceSet {
-  id              Int      @id @default(autoincrement())
-  code            String   @unique  // e.g. ASET-001, ISET-002, TSET-003
-  barcode         String   @unique
-  setType         String   // 'aStand', 'iStand', 'tabletCombo', or custom key
-  setTypeName     String   // human readable e.g. 'A-Frame Standee', 'Tent Card Set'
-  name            String?  // optional custom name
-  lifecycleStatus String   @default("warehouse") // 'warehouse', 'in_transit', 'deployed'
-  healthStatus    String   @default("ok")         // 'ok', 'repair', 'damage'
+  id              Int       @id @default(autoincrement())
+  code            String    @unique
+  barcode         String    @unique
+  setType         String
+  setTypeName     String
+  name            String?
+  lifecycleStatus String    @default("warehouse")
+  healthStatus    String    @default("ok")
   location        String?
   state           String?
   district        String?
   notes           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
   clientId        Int?
-  client          Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
-
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  approvedAt      DateTime?
+  approvedById    Int?
+  rejectionNote   String?
+  requestedAt     DateTime?
+  requestedById   Int?
   components      Device[]
+  client          Client?   @relation(fields: [clientId], references: [id])
 
   @@index([setType])
   @@index([lifecycleStatus])
   @@index([clientId])
   @@index([barcode])
+}
+
+model AssignmentRequest {
+  id                 Int       @id @default(autoincrement())
+  requestType        String
+  deviceId           Int?
+  setId              Int?
+  clientId           Int
+  healthStatus       String    @default("ok")
+  healthComment      String?
+  returnType         String
+  returnDays         Int?
+  returnMonths       Int?
+  returnDate         DateTime?
+  computedReturnDate DateTime?
+  status             String    @default("pending")
+  requestedBy        Int?
+  approvedBy         Int?
+  approvedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([status])
+  @@index([clientId])
+  @@index([deviceId])
+  @@index([setId])
+}
+
+model DeviceHistory {
+  id          Int      @id @default(autoincrement())
+  deviceId    Int
+  fromStatus  String
+  toStatus    String
+  changedById Int?
+  changedAt   DateTime @default(now())
+  note        String?
+  device      Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId])
+}
+
+model TeamRequest {
+  id            Int                  @id @default(autoincrement())
+  requestedById Int
+  deviceId      Int?
+  setId         Int?
+  requestType   String
+  changes       Json
+  status        String               @default("pending")
+  note          String?
+  adminNote     String?
+  approvedById  Int?
+  approvedAt    DateTime?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  comments      TeamRequestComment[]
+
+  @@index([status])
+  @@index([requestedById])
+  @@index([deviceId])
+  @@index([setId])
+}
+
+model TeamRequestComment {
+  id            Int         @id @default(autoincrement())
+  teamRequestId Int
+  authorId      Int
+  authorRole    String
+  message       String
+  createdAt     DateTime    @default(now())
+  authorName    String
+  teamRequest   TeamRequest @relation(fields: [teamRequestId], references: [id], onDelete: Cascade)
+
+  @@index([teamRequestId])
 }

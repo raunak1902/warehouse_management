@@ -100,6 +100,24 @@ export const BUILTIN_DEVICE_TYPES = [
     aliases: ['battery', 'BAT', 'Battery Pack', 'batterypack', 'batt', 'Battery'],
     isBuiltin: true,
   },
+  {
+    id: 'MSE',
+    label: 'Mouse',
+    codePrefix: 'MSE',
+    icon: 'Mouse',
+    color: 'gray',
+    aliases: ['MSE', 'mse', 'mouse', 'Mouse', 'custom-MSE'],
+    isBuiltin: true,
+  },
+  {
+    id: 'W',
+    label: 'Wires',
+    codePrefix: 'W',
+    icon: 'Zap',
+    color: 'yellow',
+    aliases: ['W', 'w', 'wire', 'wires', 'Wires', 'Wire', 'custom-W'],
+    isBuiltin: true,
+  },
 ]
 
 // ─── CUSTOM TYPE STORAGE ─────────────────────────────────────────────────────
@@ -284,6 +302,7 @@ export const TYPE_COLOR_CLASSES = {
   violet:  { bg: 'bg-violet-100',  text: 'text-violet-600',  border: 'border-violet-200',  badge: 'bg-violet-50 text-violet-700 border-violet-200' },
   green:   { bg: 'bg-green-100',   text: 'text-green-600',   border: 'border-green-200',   badge: 'bg-green-50 text-green-700 border-green-200' },
   gray:    { bg: 'bg-gray-100',    text: 'text-gray-600',    border: 'border-gray-200',    badge: 'bg-gray-50 text-gray-600 border-gray-200' },
+  yellow:  { bg: 'bg-yellow-100',  text: 'text-yellow-600',  border: 'border-yellow-200',  badge: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
 }
 
 export function getColorClasses(colorKey) {

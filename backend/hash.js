@@ -8,3 +8,4 @@ bcrypt.hash("User@1", 10)
   .catch(err => {
     console.error("Error:", err);
   });
+  
