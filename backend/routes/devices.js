@@ -1,6 +1,8 @@
 import express from "express";
 import { PrismaClient } from "@prisma/client";
 import authMiddleware from "../middleware/auth.js";
+import { requirePermission, requireAnyPermission } from "../middleware/Permissions.js";
+
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -18,7 +20,7 @@ export const LIFECYCLE = {
   RETURNED:         "returned",
 }
 
-// ==========================================
+// =========================================
 // UTILITY FUNCTIONS  (unchanged from original)
 // ==========================================
 
@@ -124,7 +126,7 @@ const DEVICE_INCLUDE = {
 // ==========================================
 
 // ─── POST /bulk-add (unchanged) ───────────────────────────────────────────────
-router.post("/bulk-add", authMiddleware, async (req, res) => {
+router.post("/bulk-add", authMiddleware, requirePermission("Devices", "bulk_add"), async (req, res) => {
   try {
     const { type, brand, size, model, color, mfgDate, inDate, healthStatus, lifecycleStatus, location, quantity } = req.body
 
@@ -191,7 +193,7 @@ router.post("/bulk-add", authMiddleware, async (req, res) => {
 })
 
 // ─── POST /bulk/assign (unchanged) ───────────────────────────────────────────
-router.post("/bulk/assign", authMiddleware, async (req, res) => {
+router.post("/bulk/assign", authMiddleware, requirePermission("Devices", "assign"), async (req, res) => {
   try {
     const { deviceIds, clientId } = req.body
     if (!Array.isArray(deviceIds) || deviceIds.length === 0) return res.status(400).json({ error: "deviceIds must be a non-empty array" })
@@ -210,7 +212,7 @@ router.post("/bulk/assign", authMiddleware, async (req, res) => {
 })
 
 // ─── POST /bulk/unassign (unchanged) ─────────────────────────────────────────
-router.post("/bulk/unassign", authMiddleware, async (req, res) => {
+router.post("/bulk/unassign", authMiddleware, requirePermission("Devices", "assign"), async (req, res) => {
   try {
     const { deviceIds } = req.body
     if (!Array.isArray(deviceIds) || deviceIds.length === 0) return res.status(400).json({ error: "deviceIds must be a non-empty array" })
@@ -226,7 +228,7 @@ router.post("/bulk/unassign", authMiddleware, async (req, res) => {
 })
 
 // ─── POST /bulk/update-lifecycle (unchanged) ──────────────────────────────────
-router.post("/bulk/update-lifecycle", authMiddleware, async (req, res) => {
+router.post("/bulk/update-lifecycle", authMiddleware, requirePermission("Devices", "update"), async (req, res) => {
   try {
     const { deviceIds, lifecycleStatus, location, state, district, pinpoint } = req.body
     if (!Array.isArray(deviceIds) || deviceIds.length === 0) return res.status(400).json({ error: "deviceIds must be a non-empty array" })
@@ -248,7 +250,7 @@ router.post("/bulk/update-lifecycle", authMiddleware, async (req, res) => {
 })
 
 // ─── POST /search (unchanged) ────────────────────────────────────────────────
-router.post("/search", authMiddleware, async (req, res) => {
+router.post("/search", authMiddleware, requirePermission("Devices", "read"), async (req, res) => {
   try {
     const { type, lifecycleStatus, clientId, brand, size, state, district, searchCode } = req.body
     const where = {}
@@ -269,7 +271,7 @@ router.post("/search", authMiddleware, async (req, res) => {
 })
 
 // ─── GET / (unchanged) ────────────────────────────────────────────────────────
-router.get("/", authMiddleware, async (req, res) => {
+router.get("/", authMiddleware, requirePermission("Devices", "read"), async (req, res) => {
   try {
     const devices = await prisma.device.findMany({ include: DEVICE_INCLUDE, orderBy: { createdAt: "desc" } })
     res.json(devices)
@@ -280,7 +282,7 @@ router.get("/", authMiddleware, async (req, res) => {
 })
 
 // ─── NEW: GET /pending-approvals ──────────────────────────────────────────────
-router.get("/pending-approvals", authMiddleware, async (req, res) => {
+router.get("/pending-approvals", authMiddleware, requirePermission("Devices", "read"), async (req, res) => {
   try {
     const devices = await prisma.device.findMany({
       where: {
@@ -299,7 +301,7 @@ router.get("/pending-approvals", authMiddleware, async (req, res) => {
 })
 
 // ─── GET /barcode/:barcode (unchanged) ───────────────────────────────────────
-router.get("/barcode/:barcode", authMiddleware, async (req, res) => {
+router.get("/barcode/:barcode", authMiddleware, requireAnyPermission(["Devices", "read"], ["Barcode", "scan"]), async (req, res) => {
   try {
     const { barcode } = req.params
     const device = await prisma.device.findUnique({ where: { barcode: barcode.toUpperCase() }, include: DEVICE_INCLUDE })
@@ -312,7 +314,7 @@ router.get("/barcode/:barcode", authMiddleware, async (req, res) => {
 })
 
 // ─── GET /next-code/:type (unchanged) ────────────────────────────────────────
-router.get("/next-code/:type", authMiddleware, async (req, res) => {
+router.get("/next-code/:type", authMiddleware, requirePermission("Devices", "read"), async (req, res) => {
   try {
     const { type } = req.params
     const prefix = getExpectedPrefix(type)
@@ -335,7 +337,7 @@ router.get("/next-code/:type", authMiddleware, async (req, res) => {
 })
 
 // ─── GET /code/:code (unchanged) ─────────────────────────────────────────────
-router.get("/code/:code", authMiddleware, async (req, res) => {
+router.get("/code/:code", authMiddleware, requirePermission("Devices", "read"), async (req, res) => {
   try {
     const { code } = req.params
     const device = await prisma.device.findUnique({ where: { code: code.toUpperCase() }, include: DEVICE_INCLUDE })
@@ -348,7 +350,7 @@ router.get("/code/:code", authMiddleware, async (req, res) => {
 })
 
 // ─── GET /filter/type/:type (unchanged) ──────────────────────────────────────
-router.get("/filter/type/:type", authMiddleware, async (req, res) => {
+router.get("/filter/type/:type", authMiddleware, requirePermission("Devices", "read"), async (req, res) => {
   try {
     const { type } = req.params
     const devices = await prisma.device.findMany({ where: { type }, include: DEVICE_INCLUDE, orderBy: { createdAt: "desc" } })
@@ -359,7 +361,7 @@ router.get("/filter/type/:type", authMiddleware, async (req, res) => {
 })
 
 // ─── GET /filter/lifecycle/:status (unchanged) ───────────────────────────────
-router.get("/filter/lifecycle/:status", authMiddleware, async (req, res) => {
+router.get("/filter/lifecycle/:status", authMiddleware, requirePermission("Devices", "read"), async (req, res) => {
   try {
     const { status } = req.params
     const devices = await prisma.device.findMany({ where: { lifecycleStatus: status }, include: DEVICE_INCLUDE, orderBy: { createdAt: "desc" } })
@@ -370,7 +372,7 @@ router.get("/filter/lifecycle/:status", authMiddleware, async (req, res) => {
 })
 
 // ─── GET /filter/client/:clientId (unchanged) ────────────────────────────────
-router.get("/filter/client/:clientId", authMiddleware, async (req, res) => {
+router.get("/filter/client/:clientId", authMiddleware, requirePermission("Devices", "read"), async (req, res) => {
   try {
     const { clientId } = req.params
     const devices = await prisma.device.findMany({ where: { clientId: parseInt(clientId) }, include: DEVICE_INCLUDE, orderBy: { createdAt: "desc" } })
@@ -381,7 +383,7 @@ router.get("/filter/client/:clientId", authMiddleware, async (req, res) => {
 })
 
 // ─── GET /stats/summary (updated to count new statuses) ───────────────────────
-router.get("/stats/summary", authMiddleware, async (req, res) => {
+router.get("/stats/summary", authMiddleware, requirePermission("Reports", "read"), async (req, res) => {
   try {
     const [total, warehouse, assignRequested, assigned, deployRequested, deployed, returnRequested, returned, byType] =
       await Promise.all([
@@ -413,7 +415,7 @@ router.get("/stats/summary", authMiddleware, async (req, res) => {
 })
 
 // ─── NEW: GET /:id/history ────────────────────────────────────────────────────
-router.get("/:id/history", authMiddleware, async (req, res) => {
+router.get("/:id/history", authMiddleware, requirePermission("Devices", "view_history"), async (req, res) => {
   try {
     const history = await prisma.deviceHistory.findMany({
       where: { deviceId: parseInt(req.params.id) },
@@ -427,7 +429,7 @@ router.get("/:id/history", authMiddleware, async (req, res) => {
 
 // ─── NEW: POST /:id/request-assign ───────────────────────────────────────────
 // Field user submits a request to assign this device to a client
-router.post("/:id/request-assign", authMiddleware, async (req, res) => {
+router.post("/:id/request-assign", authMiddleware, requirePermission("Devices", "request_assign"), async (req, res) => {
   try {
     const id = parseInt(req.params.id)
     const { clientId } = req.body
@@ -463,7 +465,7 @@ router.post("/:id/request-assign", authMiddleware, async (req, res) => {
 })
 
 // ─── NEW: POST /:id/approve-assign ───────────────────────────────────────────
-router.post("/:id/approve-assign", authMiddleware, async (req, res) => {
+router.post("/:id/approve-assign", authMiddleware, requirePermission("Devices", "approve_assign"), async (req, res) => {
   try {
     const id = parseInt(req.params.id)
     const device = await prisma.device.findUnique({ where: { id } })
@@ -493,7 +495,7 @@ router.post("/:id/approve-assign", authMiddleware, async (req, res) => {
 })
 
 // ─── NEW: POST /:id/reject-assign ────────────────────────────────────────────
-router.post("/:id/reject-assign", authMiddleware, async (req, res) => {
+router.post("/:id/reject-assign", authMiddleware, requirePermission("Devices", "approve_assign"), async (req, res) => {
   try {
     const id = parseInt(req.params.id)
     const { note } = req.body
@@ -524,7 +526,7 @@ router.post("/:id/reject-assign", authMiddleware, async (req, res) => {
 })
 
 // ─── NEW: POST /:id/request-deploy ───────────────────────────────────────────
-router.post("/:id/request-deploy", authMiddleware, async (req, res) => {
+router.post("/:id/request-deploy", authMiddleware, requirePermission("Devices", "request_deploy"), async (req, res) => {
   try {
     const id = parseInt(req.params.id)
     const { state, district, pinpoint, location } = req.body
@@ -558,7 +560,7 @@ router.post("/:id/request-deploy", authMiddleware, async (req, res) => {
 })
 
 // ─── NEW: POST /:id/approve-deploy ───────────────────────────────────────────
-router.post("/:id/approve-deploy", authMiddleware, async (req, res) => {
+router.post("/:id/approve-deploy", authMiddleware, requirePermission("Devices", "approve_deploy"), async (req, res) => {
   try {
     const id = parseInt(req.params.id)
     const device = await prisma.device.findUnique({ where: { id } })
@@ -588,7 +590,7 @@ router.post("/:id/approve-deploy", authMiddleware, async (req, res) => {
 })
 
 // ─── NEW: POST /:id/reject-deploy ────────────────────────────────────────────
-router.post("/:id/reject-deploy", authMiddleware, async (req, res) => {
+router.post("/:id/reject-deploy", authMiddleware, requirePermission("Devices", "approve_deploy"), async (req, res) => {
   try {
     const id = parseInt(req.params.id)
     const { note } = req.body
@@ -618,7 +620,7 @@ router.post("/:id/reject-deploy", authMiddleware, async (req, res) => {
 })
 
 // ─── NEW: POST /:id/request-return ───────────────────────────────────────────
-router.post("/:id/request-return", authMiddleware, async (req, res) => {
+router.post("/:id/request-return", authMiddleware, requirePermission("Devices", "request_return"), async (req, res) => {
   try {
     const id = parseInt(req.params.id)
     const { note } = req.body
@@ -648,7 +650,7 @@ router.post("/:id/request-return", authMiddleware, async (req, res) => {
 })
 
 // ─── NEW: POST /:id/approve-return ───────────────────────────────────────────
-router.post("/:id/approve-return", authMiddleware, async (req, res) => {
+router.post("/:id/approve-return", authMiddleware, requirePermission("Devices", "approve_return"), async (req, res) => {
   try {
     const id = parseInt(req.params.id)
     const device = await prisma.device.findUnique({ where: { id } })
@@ -681,7 +683,7 @@ router.post("/:id/approve-return", authMiddleware, async (req, res) => {
 })
 
 // ─── NEW: POST /:id/reject-return ────────────────────────────────────────────
-router.post("/:id/reject-return", authMiddleware, async (req, res) => {
+router.post("/:id/reject-return", authMiddleware, requirePermission("Devices", "approve_return"), async (req, res) => {
   try {
     const id = parseInt(req.params.id)
     const { note } = req.body
@@ -710,7 +712,7 @@ router.post("/:id/reject-return", authMiddleware, async (req, res) => {
 })
 
 // ─── GET /:id (unchanged, MUST be last) ──────────────────────────────────────
-router.get("/:id", authMiddleware, async (req, res) => {
+router.get("/:id", authMiddleware, requirePermission("Devices", "read"), async (req, res) => {
   try {
     const { id } = req.params
     const device = await prisma.device.findUnique({ where: { id: parseInt(id) }, include: DEVICE_INCLUDE })
@@ -723,7 +725,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
 })
 
 // ─── POST / (unchanged) ───────────────────────────────────────────────────────
-router.post("/", authMiddleware, async (req, res) => {
+router.post("/", authMiddleware, requirePermission("Devices", "create"), async (req, res) => {
   try {
     const { code, type, brand, size, model, color, gpsId, mfgDate, inDate,
             lifecycleStatus, location, state, district, pinpoint, clientId, barcode, healthStatus } = req.body
@@ -772,7 +774,7 @@ router.post("/", authMiddleware, async (req, res) => {
 })
 
 // ─── PUT /:id (unchanged) ─────────────────────────────────────────────────────
-router.put("/:id", authMiddleware, async (req, res) => {
+router.put("/:id", authMiddleware, requirePermission("Devices", "update"), async (req, res) => {
   try {
     const { id } = req.params
     const { code, barcode, type, brand, size, model, color, gpsId, mfgDate, inDate,
@@ -831,7 +833,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
 })
 
 // ─── DELETE /:id (unchanged) ──────────────────────────────────────────────────
-router.delete("/:id", authMiddleware, async (req, res) => {
+router.delete("/:id", authMiddleware, requirePermission("Devices", "delete"), async (req, res) => {
   try {
     const { id } = req.params
     const device = await prisma.device.findUnique({ where: { id: parseInt(id) } })

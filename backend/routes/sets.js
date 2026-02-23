@@ -1,11 +1,10 @@
 import express from "express"
 import { PrismaClient } from "@prisma/client"
 import authMiddleware from "../middleware/auth.js"
+import { requirePermission } from "../middleware/Permissions.js"
 
 const router = express.Router()
 const prisma = new PrismaClient()
-
-// ─── UTILITIES ────────────────────────────────────────────────────────────────
 
 const generateSetBarcode = (setType) => {
   const prefix = 'EDSG'
@@ -15,7 +14,6 @@ const generateSetBarcode = (setType) => {
   return `${prefix}-${typeCode}-${timestamp}-${random}`
 }
 
-// Auto-assign next code for a set type prefix
 const getNextSetCode = async (prefix) => {
   const sets = await prisma.deviceSet.findMany({ select: { code: true } })
   const occupied = new Set()
@@ -31,162 +29,88 @@ const getNextSetCode = async (prefix) => {
   return `${prefix}-${String(next).padStart(3, '0')}`
 }
 
-// Code prefix per set type
-const SET_CODE_PREFIX = {
-  aStand:      'ASET',
-  iStand:      'ISET',
-  tabletCombo: 'TSET',
-}
-
+const SET_CODE_PREFIX = { aStand: 'ASET', iStand: 'ISET', tabletCombo: 'TSET' }
 const getSetCodePrefix = (setType) => {
   if (SET_CODE_PREFIX[setType]) return SET_CODE_PREFIX[setType]
-  // Custom set types: use first 4 chars of key uppercased
   return (setType || 'SET').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) + 'S'
 }
 
-const INCLUDE_SET = {
-  components: { include: { client: true } },
-  client: true,
-}
+const INCLUDE_SET = { components: { include: { client: true } }, client: true }
 
-// ─── GET all sets ─────────────────────────────────────────────────────────────
-router.get('/', authMiddleware, async (req, res) => {
+router.get('/', authMiddleware, requirePermission('Sets', 'read'), async (req, res) => {
   try {
-    const sets = await prisma.deviceSet.findMany({
-      include: INCLUDE_SET,
-      orderBy: { createdAt: 'desc' },
-    })
+    const sets = await prisma.deviceSet.findMany({ include: INCLUDE_SET, orderBy: { createdAt: 'desc' } })
     res.json(sets)
   } catch (err) {
-    console.error('Error fetching sets:', err)
     res.status(500).json({ error: 'Failed to fetch sets' })
   }
 })
 
-// ─── GET set by barcode ────────────────────────────────────────────────────────
-router.get('/barcode/:barcode', authMiddleware, async (req, res) => {
+router.get('/barcode/:barcode', authMiddleware, requirePermission('Sets', 'read'), async (req, res) => {
   try {
-    const set = await prisma.deviceSet.findUnique({
-      where: { barcode: req.params.barcode.toUpperCase() },
-      include: INCLUDE_SET,
-    })
+    const set = await prisma.deviceSet.findUnique({ where: { barcode: req.params.barcode.toUpperCase() }, include: INCLUDE_SET })
     if (!set) return res.status(404).json({ error: 'Set not found' })
     res.json(set)
   } catch (err) {
-    console.error('Error fetching set by barcode:', err)
     res.status(500).json({ error: 'Failed to fetch set' })
   }
 })
 
-// ─── GET set by id ─────────────────────────────────────────────────────────────
-router.get('/:id', authMiddleware, async (req, res) => {
+router.get('/:id', authMiddleware, requirePermission('Sets', 'read'), async (req, res) => {
   try {
-    const set = await prisma.deviceSet.findUnique({
-      where: { id: parseInt(req.params.id) },
-      include: INCLUDE_SET,
-    })
+    const set = await prisma.deviceSet.findUnique({ where: { id: parseInt(req.params.id) }, include: INCLUDE_SET })
     if (!set) return res.status(404).json({ error: 'Set not found' })
     res.json(set)
   } catch (err) {
-    console.error('Error fetching set:', err)
     res.status(500).json({ error: 'Failed to fetch set' })
   }
 })
 
-// ─── POST create set ───────────────────────────────────────────────────────────
-router.post('/', authMiddleware, async (req, res) => {
+router.post('/', authMiddleware, requirePermission('Sets', 'create'), async (req, res) => {
   try {
     const { setType, setTypeName, name, componentDeviceIds, location, clientId } = req.body
-
     if (!setType || !setTypeName) return res.status(400).json({ error: 'setType and setTypeName are required' })
-    if (!componentDeviceIds || !Array.isArray(componentDeviceIds) || componentDeviceIds.length === 0) {
+    if (!componentDeviceIds || !Array.isArray(componentDeviceIds) || componentDeviceIds.length === 0)
       return res.status(400).json({ error: 'componentDeviceIds must be a non-empty array' })
-    }
 
-    // Verify all devices exist, are in warehouse, and are not already in a set
     const deviceIds = componentDeviceIds.map(id => parseInt(id))
-    const devices = await prisma.device.findMany({
-      where: { id: { in: deviceIds } },
-    })
-
-    if (devices.length !== deviceIds.length) {
-      return res.status(400).json({ error: 'One or more devices not found' })
-    }
-
+    const devices = await prisma.device.findMany({ where: { id: { in: deviceIds } } })
+    if (devices.length !== deviceIds.length) return res.status(400).json({ error: 'One or more devices not found' })
     const notInWarehouse = devices.filter(d => d.lifecycleStatus !== 'warehouse')
-    if (notInWarehouse.length > 0) {
-      return res.status(400).json({
-        error: `Devices not in warehouse: ${notInWarehouse.map(d => d.code).join(', ')}`,
-      })
-    }
-
+    if (notInWarehouse.length > 0) return res.status(400).json({ error: `Devices not in warehouse: ${notInWarehouse.map(d => d.code).join(', ')}` })
     const alreadyInSet = devices.filter(d => d.setId)
-    if (alreadyInSet.length > 0) {
-      return res.status(400).json({
-        error: `Devices already in a set: ${alreadyInSet.map(d => d.code).join(', ')}`,
-      })
-    }
+    if (alreadyInSet.length > 0) return res.status(400).json({ error: `Devices already in a set: ${alreadyInSet.map(d => d.code).join(', ')}` })
 
-    // Generate code and barcode
     const prefix = getSetCodePrefix(setType)
     const code = await getNextSetCode(prefix)
     let barcode = generateSetBarcode(setType)
-
-    // Ensure barcode is unique
     let attempts = 0
     while (await prisma.deviceSet.findUnique({ where: { barcode } }) && attempts < 10) {
       barcode = generateSetBarcode(setType) + '-' + Math.random().toString(36).substring(2, 4).toUpperCase()
       attempts++
     }
 
-    // Create set and link devices in a transaction
     const newSet = await prisma.$transaction(async (tx) => {
       const set = await tx.deviceSet.create({
-        data: {
-          code,
-          barcode,
-          setType,
-          setTypeName,
-          name: name || null,
-          lifecycleStatus: 'warehouse',
-          healthStatus: 'ok',
-          location: location || 'Warehouse A',
-          clientId: clientId ? parseInt(clientId) : null,
-        },
+        data: { code, barcode, setType, setTypeName, name: name || null, lifecycleStatus: 'warehouse', healthStatus: 'ok', location: location || 'Warehouse A', clientId: clientId ? parseInt(clientId) : null },
       })
-
-      // Link devices to set (mark them as in_set by setting setId)
-      await tx.device.updateMany({
-        where: { id: { in: deviceIds } },
-        data: { setId: set.id },
-      })
-
-      return await tx.deviceSet.findUnique({
-        where: { id: set.id },
-        include: INCLUDE_SET,
-      })
+      await tx.device.updateMany({ where: { id: { in: deviceIds } }, data: { setId: set.id } })
+      return await tx.deviceSet.findUnique({ where: { id: set.id }, include: INCLUDE_SET })
     })
 
     res.status(201).json(newSet)
   } catch (err) {
-    console.error('Error creating set:', err)
     res.status(500).json({ error: 'Failed to create set' })
   }
 })
 
-// ─── PUT update set lifecycle / health / location ─────────────────────────────
-router.put('/:id', authMiddleware, async (req, res) => {
+router.put('/:id', authMiddleware, requirePermission('Sets', 'update'), async (req, res) => {
   try {
     const { id } = req.params
-    const { lifecycleStatus, healthStatus, location, state, district, clientId, notes,
-            componentHealthUpdates } = req.body
-    // componentHealthUpdates: [{ deviceId, healthStatus }]
-
+    const { lifecycleStatus, healthStatus, location, state, district, clientId, notes, componentHealthUpdates } = req.body
     const existing = await prisma.deviceSet.findUnique({ where: { id: parseInt(id) } })
     if (!existing) return res.status(404).json({ error: 'Set not found' })
-
     const updated = await prisma.$transaction(async (tx) => {
-      // Update set itself
       const set = await tx.deviceSet.update({
         where: { id: parseInt(id) },
         data: {
@@ -200,101 +124,58 @@ router.put('/:id', authMiddleware, async (req, res) => {
         },
         include: INCLUDE_SET,
       })
-
-      // Update individual component health if provided
       if (componentHealthUpdates && Array.isArray(componentHealthUpdates)) {
         for (const { deviceId, healthStatus: dHealth } of componentHealthUpdates) {
-          await tx.device.update({
-            where: { id: parseInt(deviceId) },
-            data: { healthStatus: dHealth },
-          })
+          await tx.device.update({ where: { id: parseInt(deviceId) }, data: { healthStatus: dHealth } })
         }
       }
-
       return set
     })
-
     res.json(updated)
   } catch (err) {
-    console.error('Error updating set:', err)
     res.status(500).json({ error: 'Failed to update set' })
   }
 })
 
-// ─── POST disassemble set ──────────────────────────────────────────────────────
-router.post('/:id/disassemble', authMiddleware, async (req, res) => {
+router.post('/:id/disassemble', authMiddleware, requirePermission('Sets', 'disassemble'), async (req, res) => {
   try {
     const { id } = req.params
     const { componentUpdates } = req.body
-    // componentUpdates: [{ deviceId, healthStatus, action }]
-    // action: 'return' (goes back to warehouse) | 'lost' (delete from inventory)
-
-    const set = await prisma.deviceSet.findUnique({
-      where: { id: parseInt(id) },
-      include: { components: true },
-    })
+    const set = await prisma.deviceSet.findUnique({ where: { id: parseInt(id) }, include: { components: true } })
     if (!set) return res.status(404).json({ error: 'Set not found' })
-
     await prisma.$transaction(async (tx) => {
       const updates = componentUpdates || []
-
       for (const device of set.components) {
         const update = updates.find(u => parseInt(u.deviceId) === device.id)
         const action = update?.action || 'return'
         const dHealth = update?.healthStatus || device.healthStatus
-
         if (action === 'lost') {
-          // Remove from inventory entirely
           await tx.device.delete({ where: { id: device.id } })
         } else {
-          // Return to individual items (warehouse)
-          await tx.device.update({
-            where: { id: device.id },
-            data: {
-              setId: null,
-              lifecycleStatus: 'warehouse',
-              location: 'Warehouse A',
-              healthStatus: dHealth,
-            },
-          })
+          await tx.device.update({ where: { id: device.id }, data: { setId: null, lifecycleStatus: 'warehouse', location: 'Warehouse A', healthStatus: dHealth } })
         }
       }
-
-      // Delete the set
       await tx.deviceSet.delete({ where: { id: parseInt(id) } })
     })
-
     res.json({ message: 'Set disassembled successfully' })
   } catch (err) {
-    console.error('Error disassembling set:', err)
     res.status(500).json({ error: 'Failed to disassemble set' })
   }
 })
 
-// ─── DELETE set (hard delete, returns all components) ─────────────────────────
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', authMiddleware, requirePermission('Sets', 'delete'), async (req, res) => {
   try {
     const { id } = req.params
-    const set = await prisma.deviceSet.findUnique({
-      where: { id: parseInt(id) },
-      include: { components: true },
-    })
+    const set = await prisma.deviceSet.findUnique({ where: { id: parseInt(id) }, include: { components: true } })
     if (!set) return res.status(404).json({ error: 'Set not found' })
-
     await prisma.$transaction(async (tx) => {
-      // Return all components to warehouse
       if (set.components.length > 0) {
-        await tx.device.updateMany({
-          where: { setId: parseInt(id) },
-          data: { setId: null, lifecycleStatus: 'warehouse', location: 'Warehouse A' },
-        })
+        await tx.device.updateMany({ where: { setId: parseInt(id) }, data: { setId: null, lifecycleStatus: 'warehouse', location: 'Warehouse A' } })
       }
       await tx.deviceSet.delete({ where: { id: parseInt(id) } })
     })
-
     res.json({ message: 'Set deleted successfully' })
   } catch (err) {
-    console.error('Error deleting set:', err)
     res.status(500).json({ error: 'Failed to delete set' })
   }
 })

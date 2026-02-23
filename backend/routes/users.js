@@ -126,9 +126,15 @@ router.delete("/:id", async (req, res) => {
     });
     if (!user) return res.status(404).json({ message: "User not found" });
 
+    // Block deleting SuperAdmin accounts
     const normRole = user.role.name.toLowerCase().replace(/[\s_-]/g, "");
     if (normRole === "superadmin") {
       return res.status(400).json({ message: "Cannot delete a SuperAdmin account" });
+    }
+
+    // Block deleting yourself
+    if (id === req.user?.userId) {
+      return res.status(400).json({ message: "You cannot delete your own account" });
     }
 
     await prisma.user.delete({ where: { id } });

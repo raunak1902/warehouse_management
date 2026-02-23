@@ -1,11 +1,217 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useLocation, Outlet, useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard, Settings, LogOut, Menu, X, Users, Smartphone,
+  LayoutDashboard, LogOut, Menu, X, Users, Smartphone,
   MapPin, Link2, UsersRound, Wrench, RotateCcw, Truck, Layers, ChevronRight,
-  ClipboardList, Shield,
+  ClipboardList, Shield, Bell, Clock, CheckCircle2, XCircle, ChevronRight as Arrow,
 } from 'lucide-react'
 import { normaliseRole, ROLES } from '../App'
+
+// ── Notification Bell ─────────────────────────────────────────────────────────
+const API = '/api/ground-requests'
+const authHeaders = () => ({
+  'Content-Type': 'application/json',
+  Authorization: `Bearer ${localStorage.getItem('token')}`,
+})
+
+const NotificationBell = ({ userRole }) => {
+  const role = normaliseRole(userRole)
+  const canManage = role === ROLES.SUPERADMIN || role === ROLES.MANAGER
+  const navigate = useNavigate()
+
+  const [requests, setRequests]     = useState([])
+  const [open, setOpen]             = useState(false)
+  const [loading, setLoading]       = useState(false)
+  const [animating, setAnimating]   = useState(false)
+  const [prevCount, setPrevCount]   = useState(0)
+  const dropdownRef                 = useRef(null)
+  const bellRef                     = useRef(null)
+
+  const pendingRequests = requests.filter(r => r.status === 'pending')
+  const pendingCount    = pendingRequests.length
+
+  const fetchRequests = useCallback(async () => {
+    if (!canManage) return
+    try {
+      setLoading(true)
+      const res = await fetch(API, { headers: authHeaders() })
+      if (!res.ok) return
+      const data = await res.json()
+      setRequests(data)
+      // Animate bell if new requests came in
+      const newCount = data.filter(r => r.status === 'pending').length
+      if (newCount > prevCount && prevCount !== 0) {
+        setAnimating(true)
+        setTimeout(() => setAnimating(false), 600)
+      }
+      setPrevCount(newCount)
+    } catch (_) {}
+    finally { setLoading(false) }
+  }, [canManage, prevCount])
+
+  // Poll every 30s
+  useEffect(() => {
+    if (!canManage) return
+    fetchRequests()
+    const id = setInterval(fetchRequests, 30000)
+    return () => clearInterval(id)
+  }, [canManage, fetchRequests])
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target) &&
+          bellRef.current && !bellRef.current.contains(e.target)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  if (!canManage) return null
+
+  const timeAgo = (dateStr) => {
+    const diff = Math.floor((Date.now() - new Date(dateStr)) / 1000)
+    if (diff < 60)   return `${diff}s ago`
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+    return `${Math.floor(diff / 86400)}d ago`
+  }
+
+  const TYPE_LABELS = {
+    assignment:     'Assignment',
+    health_change:  'Health Update',
+    location_change:'Location Change',
+    inventory_add:  'Inventory Add',
+    set_change:     'Set Change',
+    other:          'Other',
+  }
+
+  const TYPE_COLORS = {
+    assignment:     'bg-blue-100 text-blue-700',
+    health_change:  'bg-amber-100 text-amber-700',
+    location_change:'bg-purple-100 text-purple-700',
+    inventory_add:  'bg-green-100 text-green-700',
+    set_change:     'bg-indigo-100 text-indigo-700',
+    other:          'bg-gray-100 text-gray-600',
+  }
+
+  return (
+    <div className="relative">
+      {/* Bell button */}
+      <button
+        ref={bellRef}
+        onClick={() => { setOpen(o => !o); if (!open) fetchRequests() }}
+        className={`relative w-10 h-10 flex items-center justify-center rounded-xl transition-all
+          ${open ? 'bg-primary-100 text-primary-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}
+          ${animating ? 'animate-bounce' : ''}`}
+        title="Pending Requests"
+      >
+        <Bell size={20} className={pendingCount > 0 ? 'text-primary-600' : ''} />
+
+        {/* Badge */}
+        {pendingCount > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-500 text-white
+            text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow-sm
+            ring-2 ring-white animate-pulse">
+            {pendingCount > 99 ? '99+' : pendingCount}
+          </span>
+        )}
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div
+          ref={dropdownRef}
+          className="absolute right-0 top-12 w-80 bg-white rounded-2xl shadow-2xl border border-gray-100 z-50 overflow-hidden"
+          style={{ maxHeight: '480px' }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
+            <div className="flex items-center gap-2">
+              <Bell size={15} className="text-primary-600" />
+              <span className="font-semibold text-sm text-gray-800">Pending Requests</span>
+              {pendingCount > 0 && (
+                <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">
+                  {pendingCount}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => { setOpen(false); navigate('/requests') }}
+              className="text-xs text-primary-600 font-medium hover:underline flex items-center gap-1"
+            >
+              View all <Arrow size={12} />
+            </button>
+          </div>
+
+          {/* Request list */}
+          <div className="overflow-y-auto" style={{ maxHeight: '380px' }}>
+            {loading && pendingRequests.length === 0 ? (
+              <div className="flex items-center justify-center py-10">
+                <div className="w-5 h-5 border-2 border-primary-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : pendingRequests.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 text-gray-400">
+                <CheckCircle2 size={32} className="mb-2 text-green-400" />
+                <p className="text-sm font-medium">All caught up!</p>
+                <p className="text-xs mt-0.5">No pending requests</p>
+              </div>
+            ) : (
+              pendingRequests.map((req, i) => (
+                <button
+                  key={req.id}
+                  onClick={() => { setOpen(false); navigate('/requests') }}
+                  className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0"
+                >
+                  <div className="flex items-start gap-3">
+                    {/* Dot */}
+                    <div className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0 mt-1.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${TYPE_COLORS[req.requestType] || TYPE_COLORS.other}`}>
+                          {TYPE_LABELS[req.requestType] || req.requestType}
+                        </span>
+                        {(req.deviceId || req.setId) && (
+                          <span className="text-[10px] text-gray-400 font-mono">
+                            #{req.deviceId || req.setId}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-600 truncate">
+                        {req.notes || `Request by ${req.requestedByName || 'Ground Team'}`}
+                      </p>
+                      <div className="flex items-center gap-1 mt-1">
+                        <Clock size={10} className="text-gray-300" />
+                        <span className="text-[10px] text-gray-400">{timeAgo(req.createdAt)}</span>
+                        {req.requestedByName && (
+                          <span className="text-[10px] text-gray-400">· {req.requestedByName}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+
+          {/* Footer */}
+          {pendingCount > 0 && (
+            <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50">
+              <button
+                onClick={() => { setOpen(false); navigate('/requests') }}
+                className="w-full py-2 bg-primary-600 text-white text-xs font-semibold rounded-lg hover:bg-primary-700 transition-colors"
+              >
+                Review {pendingCount} pending request{pendingCount !== 1 ? 's' : ''}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // Role badge colours
 const ROLE_STYLES = {
@@ -191,13 +397,21 @@ const Layout = ({ userRole, onLogout }) => {
 
       {/* ── Main content ──────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Desktop top bar */}
+        <header className="hidden md:flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 shadow-sm flex-shrink-0 z-30">
+          <div className="text-sm text-gray-500 font-medium">
+            Welcome back, <span className="text-gray-800 font-semibold">{userRole}</span>
+          </div>
+          <NotificationBell userRole={userRole} />
+        </header>
+
         {/* Mobile top bar */}
         <header className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 shadow-sm flex-shrink-0 z-30">
           <button onClick={() => setSidebarOpen(true)} className="p-2 rounded-lg text-gray-700 hover:bg-gray-100">
             <Menu size={22} />
           </button>
           <h1 className="font-bold text-lg text-primary-600">EDSignage</h1>
-          <div className="w-9" />
+          <NotificationBell userRole={userRole} />
         </header>
 
         <main className="flex-1 overflow-auto">
