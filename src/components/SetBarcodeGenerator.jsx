@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { Download, Printer, Copy, Check, X, Layers, Package, UserPlus } from 'lucide-react'
+import { Download, Printer, Copy, Check, X, Layers, Package, UserPlus, Clock, CheckCircle } from 'lucide-react'
 import AssignToClientModal from './AssignToClientModal'
 
-const SetBarcodeGenerator = ({ set, onClose }) => {
+const SetBarcodeGenerator = ({ set: initialSet, onClose }) => {
+  const [set, setSet] = useState(initialSet)
   const [copied, setCopied] = useState(false)
   const [showAssignModal, setShowAssignModal] = useState(false)
 
@@ -138,24 +139,50 @@ const SetBarcodeGenerator = ({ set, onClose }) => {
                 <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
                   <Package className="w-3.5 h-3.5" /> Components
                 </p>
-                <div className="space-y-1">
-                  {set.components.map(c => (
-                    <p key={c.id} className="text-xs font-mono text-gray-700">
-                      {c.code} <span className="text-gray-400">· {c.brand} {c.model} {c.size}</span>
-                    </p>
-                  ))}
+                <div className="space-y-1.5">
+                  {set.components.map(c => {
+                    const h = c.healthStatus || 'ok'
+                    const healthMap = {
+                      ok:     { label: '✓ OK',       cls: 'bg-emerald-100 text-emerald-700' },
+                      repair: { label: '🔧 Repair',   cls: 'bg-amber-100   text-amber-700'   },
+                      damage: { label: '⚠ Damaged',   cls: 'bg-red-100     text-red-700'     },
+                    }
+                    const badge = healthMap[h] || healthMap.ok
+                    return (
+                      <div key={c.id} className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-mono text-gray-700 truncate">
+                          {c.code} <span className="text-gray-400">· {c.brand} {c.model} {c.size}</span>
+                        </p>
+                        <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${badge.cls}`}>
+                          {badge.label}
+                        </span>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             )}
 
-            {/* Assign to Client */}
-            <button
-              onClick={() => setShowAssignModal(true)}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium transition-colors"
-            >
-              <UserPlus className="w-5 h-5" />
-              Assign to Client
-            </button>
+            {/* Assign to Client — status aware */}
+            {set.lifecycleStatus === 'warehouse' ? (
+              <button
+                onClick={() => setShowAssignModal(true)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium transition-colors"
+              >
+                <UserPlus className="w-5 h-5" />
+                Assign to Client
+              </button>
+            ) : set.lifecycleStatus === 'assign_requested' ? (
+              <div className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg font-medium cursor-not-allowed">
+                <Clock className="w-5 h-5" />
+                Assignment Request Sent
+              </div>
+            ) : (
+              <div className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg font-medium cursor-not-allowed">
+                <CheckCircle className="w-5 h-5" />
+                Assignment Approved
+              </div>
+            )}
 
             {/* Actions */}
             <div className="flex gap-3">
@@ -201,7 +228,8 @@ const SetBarcodeGenerator = ({ set, onClose }) => {
           onClose={() => setShowAssignModal(false)}
           onSuccess={() => {
             setShowAssignModal(false)
-            onClose()
+            // Update local lifecycleStatus so button reflects the new state immediately
+            setSet(s => ({ ...s, lifecycleStatus: 'assign_requested' }))
           }}
         />
       )}

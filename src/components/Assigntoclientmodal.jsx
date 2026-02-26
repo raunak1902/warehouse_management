@@ -8,7 +8,7 @@ import {
 import { useInventory } from '../context/InventoryContext'
 import { normaliseRole, ROLES } from '../App'
 
-const API = '/api/ground-requests'
+const API = '/api/lifecycle-requests'
 const authHeaders = () => ({
   'Content-Type': 'application/json',
   Authorization: `Bearer ${localStorage.getItem('token')}`,
@@ -82,8 +82,14 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
   })
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
+  const [autoApproved, setAutoApproved] = useState(false)
   const [error, setError] = useState(null)
   const [animate, setAnimate] = useState(true)
+
+  // Detect if current user is a Manager (reads from localStorage — no prop drilling needed)
+  const isManager = normaliseRole(
+    (() => { try { return JSON.parse(localStorage.getItem('user'))?.role ?? '' } catch { return '' } })()
+  ) === 'manager'
 
   const isSet = !!device?._isSet
   const DeviceIcon = isSet ? Layers : deviceIcon(device?.type)
@@ -128,24 +134,23 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
     try {
       const selectedClientObj = clients.find(c => c.id === form.clientId)
 
-      // Build changes array for the TeamRequest
-      const changes = [
-        { field: 'clientId',     to: String(form.clientId) },
-        { field: 'healthStatus', to: form.healthStatus },
-        ...(form.healthComment.trim() ? [{ field: 'healthComment', to: form.healthComment.trim() }] : []),
-        { field: 'returnType',   to: form.returnType },
-        ...(form.returnType === 'days'   && form.returnDays   ? [{ field: 'returnDays',   to: form.returnDays   }] : []),
-        ...(form.returnType === 'months' && form.returnMonths ? [{ field: 'returnMonths', to: form.returnMonths }] : []),
-        ...(form.returnType === 'date'   && form.returnDate   ? [{ field: 'returnDate',   to: form.returnDate   }] : []),
-      ]
+      // Build note embedding clientId and return info for the lifecycle request
+      const note = JSON.stringify({
+        clientId:     form.clientId,
+        returnType:   form.returnType,
+        returnDays:   form.returnDays   || null,
+        returnMonths: form.returnMonths || null,
+        returnDate:   form.returnDate   || null,
+        label: `Assign ${device.code} → client "${selectedClientObj?.name}"`,
+      })
 
       const body = {
-        requestType: 'assignment',
-        changes,
-        note: `Assign ${device.code} → client "${selectedClientObj?.name}" | Health: ${form.healthStatus}${form.healthComment ? ` (${form.healthComment})` : ''}`,
+        toStep:       'assigning',
+        healthStatus: form.healthStatus,
+        healthNote:   form.healthComment?.trim() || undefined,
+        note,
+        ...(isSet ? { setId: device.id } : { deviceId: device.id }),
       }
-      if (isSet) body.setId = device.id
-      else body.deviceId = device.id
 
       const res = await fetch(API, {
         method: 'POST',
@@ -154,6 +159,7 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.message || data.error || `Error ${res.status}`)
+      if (data.autoApproved) setAutoApproved(true)
       setSubmitted(true)
     } catch (err) {
       setError(err.message || 'Failed to submit. Please try again.')
@@ -168,24 +174,41 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
       <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
         <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full p-8 text-center">
           <div className="relative w-20 h-20 mx-auto mb-5">
-            <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center">
-              <Send className="w-9 h-9 text-emerald-600" />
+            <div className={`w-20 h-20 ${autoApproved ? 'bg-emerald-100' : 'bg-blue-100'} rounded-full flex items-center justify-center`}>
+              {autoApproved
+                ? <CheckCircle2 className="w-9 h-9 text-emerald-600" />
+                : <Send className="w-9 h-9 text-blue-600" />
+              }
             </div>
-            <div className="absolute -top-1 -right-1 w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center">
+            <div className={`absolute -top-1 -right-1 w-6 h-6 ${autoApproved ? 'bg-emerald-500' : 'bg-blue-500'} rounded-full flex items-center justify-center`}>
               <CheckCircle2 className="w-4 h-4 text-white" />
             </div>
           </div>
 
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Request Sent!</h2>
-          <p className="text-gray-500 text-sm mb-6 leading-relaxed">
-            Assignment request for <span className="font-semibold text-gray-700">{device.code}</span> has been sent to the admin.
-          </p>
-
-          {/* Status badge */}
-          <div className="inline-flex items-center gap-2 px-4 py-2 bg-amber-100 text-amber-800 rounded-full text-sm font-semibold mb-6">
-            <Clock className="w-4 h-4" />
-            Awaiting Admin Approval
-          </div>
+          {autoApproved ? (
+            <>
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">Device Assigned!</h2>
+              <p className="text-gray-500 text-sm mb-6 leading-relaxed">
+                <span className="font-semibold text-gray-700">{device.code}</span> has been assigned to{' '}
+                <span className="font-semibold text-gray-700">{selectedClient?.name}</span> and is now active.
+              </p>
+              <div className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-100 text-emerald-800 rounded-full text-sm font-semibold mb-6">
+                <CheckCircle2 className="w-4 h-4" />
+                Assigned — Status Updated
+              </div>
+            </>
+          ) : (
+            <>
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">Request Sent!</h2>
+              <p className="text-gray-500 text-sm mb-6 leading-relaxed">
+                Assignment request for <span className="font-semibold text-gray-700">{device.code}</span> has been sent to the admin.
+              </p>
+              <div className="inline-flex items-center gap-2 px-4 py-2 bg-amber-100 text-amber-800 rounded-full text-sm font-semibold mb-6">
+                <Clock className="w-4 h-4" />
+                Awaiting Admin Approval
+              </div>
+            </>
+          )}
 
           {/* Mini summary */}
           <div className="bg-gray-50 rounded-2xl p-4 text-left space-y-3 mb-6">
@@ -202,7 +225,7 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
             ))}
           </div>
 
-          <button onClick={onClose}
+          <button onClick={() => { onSuccess && onSuccess(); onClose(); }}
             className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors">
             Done
           </button>
@@ -541,14 +564,30 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
               <div className="flex items-start gap-2.5 p-3.5 bg-amber-50 border border-amber-100 rounded-xl">
                 <Info className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
                 <p className="text-xs text-amber-700 leading-relaxed">
-                  This sends an assignment request to the admin. The device will move to <strong>Assigning</strong> status and count will update once approved.
+                  {isManager
+                    ? <>This will <strong>immediately assign</strong> the device. Status will update to <strong>Assigning</strong> right away — no approval needed.</>
+                    : <>This sends an assignment request to the admin. The device will move to <strong>Assigning</strong> status and count will update once approved.</>
+                  }
                 </p>
               </div>
 
               {error && (
-                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl">
-                  <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
-                  <p className="text-sm text-red-700">{error}</p>
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 pointer-events-none">
+                  <div className="pointer-events-auto bg-white border border-red-200 rounded-2xl shadow-2xl p-5 max-w-sm w-full flex flex-col items-center gap-3 animate-bounce-in">
+                    <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                      <AlertTriangle className="w-6 h-6 text-red-500" />
+                    </div>
+                    <div className="text-center">
+                      <p className="font-semibold text-gray-900 text-sm">Request Already Pending</p>
+                      <p className="text-sm text-red-600 mt-1">{error}</p>
+                    </div>
+                    <button
+                      onClick={() => setError(null)}
+                      className="w-full py-2.5 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 transition-colors"
+                    >
+                      OK
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -578,8 +617,10 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
             <button onClick={handleSubmit} disabled={submitting}
               className="flex-1 flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:opacity-40 shadow-lg text-sm">
               {submitting
-                ? <><Loader2 className="w-4 h-4 animate-spin" />Sending...</>
-                : <><Send className="w-4 h-4" />Send Request</>
+                ? <><Loader2 className="w-4 h-4 animate-spin" />{isManager ? 'Assigning...' : 'Sending...'}</>
+                : isManager
+                  ? <><CheckCircle2 className="w-4 h-4" />Assign Now</>
+                  : <><Send className="w-4 h-4" />Send Request</>
               }
             </button>
           )}

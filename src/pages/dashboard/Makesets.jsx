@@ -66,6 +66,13 @@ const HEALTH_STYLES = {
   repair: 'bg-amber-100 text-amber-700 border-amber-200',
   damage: 'bg-red-100 text-red-700 border-red-200',
 }
+// Normalize legacy health values written by old ground team requests
+const normalizeHealth = (v) => {
+  const map = { damaged: 'damage', needs_repair: 'repair', critical: 'damage' }
+  return map[v] ?? v ?? 'ok'
+}
+const getHealthStyle = (raw) => HEALTH_STYLES[normalizeHealth(raw)] ?? HEALTH_STYLES.ok
+const getHealthLabel = (raw) => ({ ok: '✓ OK', repair: '🔧 Repair', damage: '⚠ Damage' }[normalizeHealth(raw)] ?? '✓ OK')
 
 const LIFECYCLE_STYLES = {
   warehouse: 'bg-slate-100 text-slate-700 border-slate-200',
@@ -153,7 +160,7 @@ const Makesets = () => {
 
   // ── Warehouse devices
   const warehouseDevices = useMemo(
-    () => (devices || []).filter(d => d.lifecycleStatus === 'warehouse' && !d.setId),
+    () => (devices || []).filter(d => (d.lifecycleStatus === 'available' || d.lifecycleStatus === 'warehouse') && !d.setId),
     [devices]
   )
   const getAvailableByType = useCallback(
@@ -189,8 +196,8 @@ const Makesets = () => {
 
   const stats = useMemo(() => ({
     total: sets.length,
-    warehouse: sets.filter(s => s.lifecycleStatus === 'warehouse').length,
-    deployed: sets.filter(s => s.lifecycleStatus === 'deployed').length,
+    warehouse: sets.filter(s => s.lifecycleStatus === 'available' || s.lifecycleStatus === 'warehouse').length,
+    deployed: sets.filter(s => s.lifecycleStatus === 'active' || s.lifecycleStatus === 'deployed').length,
     damaged: sets.filter(s => s.healthStatus !== 'ok').length,
   }), [sets])
 
@@ -432,8 +439,8 @@ const Makesets = () => {
                 </div>
                 {set.name && <p className="text-sm text-gray-700 font-medium mb-2">{set.name}</p>}
                 <div className="flex flex-wrap gap-1.5 mb-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${HEALTH_STYLES[set.healthStatus] || HEALTH_STYLES.ok}`}>
-                    {set.healthStatus === 'ok' ? '✓ OK' : set.healthStatus === 'repair' ? '🔧 Repair' : '⚠ Damage'}
+                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${getHealthStyle(set.healthStatus)}`}>
+                    {getHealthLabel(set.healthStatus)}
                   </span>
                   <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${LIFECYCLE_STYLES[set.lifecycleStatus] || LIFECYCLE_STYLES.warehouse}`}>
                     {set.lifecycleStatus}
@@ -706,7 +713,7 @@ const Makesets = () => {
                         <p className="text-sm font-medium text-gray-800">{comp.code}</p>
                         <p className="text-xs text-gray-500">{comp.brand} {comp.model} · {comp.size || 'N/A'}</p>
                       </div>
-                      <span className={`text-xs px-2 py-0.5 rounded-full border ${HEALTH_STYLES[comp.healthStatus] || HEALTH_STYLES.ok}`}>{comp.healthStatus}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full border ${getHealthStyle(comp.healthStatus)}`}>{getHealthLabel(comp.healthStatus)}</span>
                     </div>
                   ))}
                 </div>
@@ -714,7 +721,10 @@ const Makesets = () => {
             </div>
             <div className="flex gap-2 p-5 border-t border-gray-100">
               <button onClick={() => { setShowSetBarcode(showDetail); setShowDetail(null) }} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 rounded-lg text-sm font-medium"><QrCode className="w-4 h-4" /> Barcode</button>
-              <button onClick={() => { setShowDisassemble(showDetail); setShowDetail(null) }} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg text-sm font-medium"><Wrench className="w-4 h-4" /> Disassemble</button>
+              {['available', 'warehouse', 'returned'].includes(showDetail?.lifecycleStatus)
+                ? <button onClick={() => { setShowDisassemble(showDetail); setShowDetail(null) }} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg text-sm font-medium"><Wrench className="w-4 h-4" /> Disassemble</button>
+                : <div className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-gray-200 text-gray-400 bg-gray-50 rounded-lg text-sm font-medium cursor-not-allowed" title="Cannot disassemble — set is not in warehouse"><Wrench className="w-4 h-4" /> Disassemble</div>
+              }
               <button onClick={() => handleDelete(showDetail)} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 rounded-lg text-sm font-medium"><Trash2 className="w-4 h-4" /> Delete</button>
               <button onClick={() => setShowDetail(null)} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-gray-200 text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg text-sm font-medium">Close</button>
             </div>

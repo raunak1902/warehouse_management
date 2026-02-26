@@ -6,9 +6,10 @@ import {
   ClipboardList, Shield, Bell, Clock, CheckCircle2, XCircle, ChevronRight as Arrow,
 } from 'lucide-react'
 import { normaliseRole, ROLES } from '../App'
+import { STEP_META } from '../api/lifecycleRequestApi'
 
 // ── Notification Bell ─────────────────────────────────────────────────────────
-const API = '/api/ground-requests'
+const API = '/api/lifecycle-requests'
 const authHeaders = () => ({
   'Content-Type': 'application/json',
   Authorization: `Bearer ${localStorage.getItem('token')}`,
@@ -79,22 +80,18 @@ const NotificationBell = ({ userRole }) => {
     return `${Math.floor(diff / 86400)}d ago`
   }
 
-  const TYPE_LABELS = {
-    assignment:     'Assignment',
-    health_change:  'Health Update',
-    location_change:'Location Change',
-    inventory_add:  'Inventory Add',
-    set_change:     'Set Change',
-    other:          'Other',
-  }
-
-  const TYPE_COLORS = {
-    assignment:     'bg-blue-100 text-blue-700',
-    health_change:  'bg-amber-100 text-amber-700',
-    location_change:'bg-purple-100 text-purple-700',
-    inventory_add:  'bg-green-100 text-green-700',
-    set_change:     'bg-indigo-100 text-indigo-700',
-    other:          'bg-gray-100 text-gray-600',
+  // Step label/color resolved from STEP_META (lifecycle system)
+  const getStepLabel = (step) => STEP_META[step]?.label ?? step ?? 'Request'
+  const getStepEmoji = (step) => STEP_META[step]?.emoji ?? '📋'
+  const getStepColor = (step) => {
+    const colorMap = {
+      blue: 'bg-blue-100 text-blue-700', teal: 'bg-teal-100 text-teal-700',
+      amber: 'bg-amber-100 text-amber-700', purple: 'bg-purple-100 text-purple-700',
+      indigo: 'bg-indigo-100 text-indigo-700', green: 'bg-green-100 text-green-700',
+      orange: 'bg-orange-100 text-orange-700', rose: 'bg-rose-100 text-rose-700',
+      slate: 'bg-slate-100 text-slate-700', red: 'bg-red-100 text-red-700',
+    }
+    return colorMap[STEP_META[step]?.color] ?? 'bg-gray-100 text-gray-600'
   }
 
   return (
@@ -170,8 +167,8 @@ const NotificationBell = ({ userRole }) => {
                     <div className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0 mt-1.5" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${TYPE_COLORS[req.requestType] || TYPE_COLORS.other}`}>
-                          {TYPE_LABELS[req.requestType] || req.requestType}
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getStepColor(req.toStep)}`}>
+                          {getStepEmoji(req.toStep)} {getStepLabel(req.toStep)}
                         </span>
                         {(req.deviceId || req.setId) && (
                           <span className="text-[10px] text-gray-400 font-mono">
@@ -180,7 +177,11 @@ const NotificationBell = ({ userRole }) => {
                         )}
                       </div>
                       <p className="text-xs text-gray-600 truncate">
-                        {req.notes || `Request by ${req.requestedByName || 'Ground Team'}`}
+                        {req.deviceCode
+                          ? `${req.deviceCode} · by ${req.requestedByName || 'Ground Team'}`
+                          : req.setCode
+                          ? `${req.setCode} · by ${req.requestedByName || 'Ground Team'}`
+                          : `Request by ${req.requestedByName || 'Ground Team'}`}
                       </p>
                       <div className="flex items-center gap-1 mt-1">
                         <Clock size={10} className="text-gray-300" />

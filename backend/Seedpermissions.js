@@ -64,17 +64,27 @@ const ALL_PERMISSIONS = [
   { module: "Clients", operation: "update",  description: "Edit client information" },
   { module: "Clients", operation: "delete",  description: "Delete clients" },
 
-  // ── Assignment Requests (the Assigning tab) ────────────────────────────────
+  // ── Assignment Requests (legacy — kept for backward compat) ──────────────────
   { module: "AssignmentRequests", operation: "create",  description: "Create assignment requests" },
   { module: "AssignmentRequests", operation: "read",    description: "View assignment requests" },
   { module: "AssignmentRequests", operation: "approve", description: "Approve assignment requests" },
   { module: "AssignmentRequests", operation: "reject",  description: "Reject assignment requests" },
 
-  // ── Ground Requests (team request workflow) ────────────────────────────────
+  // ── Ground Requests (legacy — kept for backward compat) ───────────────────
   { module: "GroundRequests", operation: "create",  description: "Submit ground team change requests" },
   { module: "GroundRequests", operation: "read",    description: "View ground team requests" },
   { module: "GroundRequests", operation: "approve", description: "Approve ground team requests" },
   { module: "GroundRequests", operation: "reject",  description: "Reject ground team requests" },
+
+  // ── Lifecycle Requests (unified workflow — replaces the two above) ─────────
+  { module: "LifecycleRequests", operation: "create",  description: "Submit lifecycle step requests (all roles)" },
+  { module: "LifecycleRequests", operation: "read",    description: "View lifecycle requests" },
+  { module: "LifecycleRequests", operation: "approve", description: "Approve lifecycle requests (Manager/SuperAdmin)" },
+  { module: "LifecycleRequests", operation: "reject",  description: "Reject lifecycle requests (Manager/SuperAdmin)" },
+
+  // ── Notifications ──────────────────────────────────────────────────────────
+  { module: "Notifications", operation: "read",     description: "View own notifications" },
+  { module: "Notifications", operation: "dismiss",  description: "Mark notifications as read" },
 
   // ── Reports / Dashboard ────────────────────────────────────────────────────
   { module: "Reports", operation: "read", description: "View dashboard statistics and reports" },
@@ -92,25 +102,33 @@ const ALL_PERMISSIONS = [
 const SUPERADMIN_PERMISSIONS = ALL_PERMISSIONS.map(p => `${p.module}.${p.operation}`);
 
 // Manager: full CRUD on everything EXCEPT SuperAdmin panel (users/roles/permissions mgmt)
-// Can approve/reject all requests
+// Can approve/reject all requests AND submit requests (acts as ground team if needed)
 const MANAGER_PERMISSIONS = [
-  // Devices — full CRUD + all approvals
+  // Devices — full CRUD + all approvals + all ground team request operations
   "Devices.create", "Devices.read", "Devices.update", "Devices.delete",
   "Devices.bulk_add", "Devices.assign",
-  "Devices.approve_assign", "Devices.approve_deploy", "Devices.approve_return",
+  "Devices.request_assign", "Devices.approve_assign",   // ground team + manager
+  "Devices.request_deploy", "Devices.approve_deploy",   // ground team + manager
+  "Devices.request_return", "Devices.approve_return",   // ground team + manager
   "Devices.view_history",
-  // Sets
+  // Sets — full CRUD
   "Sets.create", "Sets.read", "Sets.update", "Sets.delete", "Sets.disassemble",
-  // Clients
+  // Clients — full CRUD
   "Clients.create", "Clients.read", "Clients.update", "Clients.delete",
-  // Assignment Requests
+  // Assignment Requests — full (create + approve/reject)
   "AssignmentRequests.create", "AssignmentRequests.read",
   "AssignmentRequests.approve", "AssignmentRequests.reject",
-  // Ground Requests — can view and approve/reject
-  "GroundRequests.read", "GroundRequests.approve", "GroundRequests.reject",
+  // Ground Requests — full (legacy compat)
+  "GroundRequests.create", "GroundRequests.read",
+  "GroundRequests.approve", "GroundRequests.reject",
+  // Lifecycle Requests — full (create + approve/reject; auto-approves own submissions)
+  "LifecycleRequests.create", "LifecycleRequests.read",
+  "LifecycleRequests.approve", "LifecycleRequests.reject",
+  // Notifications
+  "Notifications.read", "Notifications.dismiss",
   // Reports
   "Reports.read",
-  // Barcode
+  // Barcode — full (scan + generate)
   "Barcode.scan", "Barcode.generate",
 ];
 
@@ -125,8 +143,12 @@ const GROUNDTEAM_PERMISSIONS = [
   "Clients.read",
   // Assignment Requests — can create and view own
   "AssignmentRequests.create", "AssignmentRequests.read",
-  // Ground Requests — can submit and view own
+  // Ground Requests — can submit and view own (legacy compat)
   "GroundRequests.create", "GroundRequests.read",
+  // Lifecycle Requests — can submit and view own
+  "LifecycleRequests.create", "LifecycleRequests.read",
+  // Notifications
+  "Notifications.read", "Notifications.dismiss",
   // Reports
   "Reports.read",
   // Barcode

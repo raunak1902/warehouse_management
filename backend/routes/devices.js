@@ -11,13 +11,14 @@ const prisma = new PrismaClient();
 // LIFECYCLE STATUS CONSTANTS
 // ==========================================
 export const LIFECYCLE = {
-  WAREHOUSE:        "warehouse",
-  ASSIGN_REQUESTED: "assign_requested",
-  ASSIGNED:         "assigned",
-  DEPLOY_REQUESTED: "deploy_requested",
-  DEPLOYED:         "deployed",
-  RETURN_REQUESTED: "return_requested",
-  RETURNED:         "returned",
+  // ── Current status names (unified lifecycle system) ────────────────────────
+  WAREHOUSE:        "available",        // was "warehouse"    → now "available"
+  ASSIGN_REQUESTED: "assigning",        // was "assign_requested" → now "assigning"
+  ASSIGNED:         "assigning",        // was "assigned"     → now "assigning"
+  DEPLOY_REQUESTED: "ready_to_deploy",  // was "deploy_requested" → now "ready_to_deploy"
+  DEPLOYED:         "active",           // was "deployed"     → now "active"
+  RETURN_REQUESTED: "return_initiated", // was "return_requested" → now "return_initiated"
+  RETURNED:         "returned",         // unchanged
 }
 
 // =========================================

@@ -1,0 +1,1 @@
+-- Baseline migration - database already contains LifecycleRequest and Notification tables

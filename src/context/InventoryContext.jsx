@@ -9,33 +9,72 @@ import { normalizeDeviceType } from '../config/deviceConfig'
 // LIFECYCLE CONSTANTS
 // ─────────────────────────────────────────────────────────────
 export const LIFECYCLE = {
-  WAREHOUSE:        'warehouse',
-  ASSIGN_REQUESTED: 'assign_requested',
-  ASSIGNED:         'assigned',
-  DEPLOY_REQUESTED: 'deploy_requested',
-  DEPLOYED:         'deployed',
-  RETURN_REQUESTED: 'return_requested',
-  RETURNED:         'returned',
+  // New unified lifecycle statuses
+  AVAILABLE:         'available',
+  WAREHOUSE:         'available',          // legacy alias
+  ASSIGNING:         'assigning',
+  ASSIGN_REQUESTED:  'assigning',          // legacy alias
+  ASSIGNED:          'assigning',          // legacy alias
+  READY_TO_DEPLOY:   'ready_to_deploy',
+  DEPLOY_REQUESTED:  'ready_to_deploy',    // legacy alias
+  IN_TRANSIT:        'in_transit',
+  RECEIVED:          'received',
+  INSTALLED:         'installed',
+  ACTIVE:            'active',
+  DEPLOYED:          'active',             // legacy alias
+  UNDER_MAINTENANCE: 'under_maintenance',
+  RETURN_INITIATED:  'return_initiated',
+  RETURN_REQUESTED:  'return_initiated',   // legacy alias
+  RETURN_TRANSIT:    'return_transit',
+  RETURNED:          'returned',
+  HEALTH_UPDATE:     'health_update',
+  LOST:              'lost',
 }
 
 export const LIFECYCLE_LABELS = {
-  warehouse:        'In Warehouse',
-  assign_requested: 'Assignment Requested',
-  assigned:         'Assigned to Client',
-  deploy_requested: 'Deployment Requested',
-  deployed:         'Deployed',
-  return_requested: 'Return Requested',
-  returned:         'Returned',
+  available:         'In Warehouse',
+  assigning:         'Assigning to Client',
+  ready_to_deploy:   'Ready to Deploy',
+  in_transit:        'In Transit',
+  received:          'Received at Site',
+  installed:         'Installed',
+  active:            'Active / Live',
+  under_maintenance: 'Under Maintenance',
+  return_initiated:  'Return Initiated',
+  return_transit:    'Return In Transit',
+  returned:          'Returned',
+  lost:              'Lost',
+  health_update:     'Health Update',
+  // legacy fallbacks
+  warehouse:         'In Warehouse',
+  assign_requested:  'Assigning to Client',
+  assigned:          'Assigning to Client',
+  deploy_requested:  'Ready to Deploy',
+  deployed:          'Active / Live',
+  return_requested:  'Return Initiated',
 }
 
 export const LIFECYCLE_COLORS = {
-  warehouse:        { bg: 'bg-gray-100',   text: 'text-gray-700',   dot: 'bg-gray-400'   },
-  assign_requested: { bg: 'bg-amber-100',  text: 'text-amber-700',  dot: 'bg-amber-400'  },
-  assigned:         { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500'   },
-  deploy_requested: { bg: 'bg-amber-100',  text: 'text-amber-700',  dot: 'bg-amber-400'  },
-  deployed:         { bg: 'bg-green-100',  text: 'text-green-700',  dot: 'bg-green-500'  },
-  return_requested: { bg: 'bg-orange-100', text: 'text-orange-700', dot: 'bg-orange-400' },
-  returned:         { bg: 'bg-gray-100',   text: 'text-gray-500',   dot: 'bg-gray-400'   },
+  available:         { bg: 'bg-gray-100',   text: 'text-gray-700',   dot: 'bg-gray-400'   },
+  assigning:         { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500'   },
+  ready_to_deploy:   { bg: 'bg-teal-100',   text: 'text-teal-700',   dot: 'bg-teal-500'   },
+  in_transit:        { bg: 'bg-amber-100',  text: 'text-amber-700',  dot: 'bg-amber-400'  },
+  received:          { bg: 'bg-purple-100', text: 'text-purple-700', dot: 'bg-purple-500' },
+  installed:         { bg: 'bg-indigo-100', text: 'text-indigo-700', dot: 'bg-indigo-500' },
+  active:            { bg: 'bg-green-100',  text: 'text-green-700',  dot: 'bg-green-500'  },
+  under_maintenance: { bg: 'bg-orange-100', text: 'text-orange-700', dot: 'bg-orange-400' },
+  return_initiated:  { bg: 'bg-rose-100',   text: 'text-rose-700',   dot: 'bg-rose-400'   },
+  return_transit:    { bg: 'bg-pink-100',   text: 'text-pink-700',   dot: 'bg-pink-400'   },
+  returned:          { bg: 'bg-gray-100',   text: 'text-gray-500',   dot: 'bg-gray-400'   },
+  lost:              { bg: 'bg-red-100',    text: 'text-red-700',    dot: 'bg-red-500'    },
+  health_update:     { bg: 'bg-cyan-100',   text: 'text-cyan-700',   dot: 'bg-cyan-500'   },
+  // legacy fallbacks
+  warehouse:         { bg: 'bg-gray-100',   text: 'text-gray-700',   dot: 'bg-gray-400'   },
+  assign_requested:  { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500'   },
+  assigned:          { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500'   },
+  deploy_requested:  { bg: 'bg-teal-100',   text: 'text-teal-700',   dot: 'bg-teal-500'   },
+  deployed:          { bg: 'bg-green-100',  text: 'text-green-700',  dot: 'bg-green-500'  },
+  return_requested:  { bg: 'bg-rose-100',   text: 'text-rose-700',   dot: 'bg-rose-400'   },
 }
 
 export const HEALTH_COLORS = {
@@ -105,18 +144,78 @@ const getAuthHeaders = () => {
   return token ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } : { 'Content-Type': 'application/json' }
 }
 
+// ── Unified lifecycle API — all transitions go through POST /lifecycle-requests ──
 const lifecycleApi = {
-  requestAssign:  (id, clientId)   => fetch(`${API_BASE}/devices/${id}/request-assign`,  { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ clientId }) }).then(r => r.json()),
-  approveAssign:  (id)             => fetch(`${API_BASE}/devices/${id}/approve-assign`,  { method: 'POST', headers: getAuthHeaders() }).then(r => r.json()),
-  rejectAssign:   (id, note)       => fetch(`${API_BASE}/devices/${id}/reject-assign`,   { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ note }) }).then(r => r.json()),
-  requestDeploy:  (id, data)       => fetch(`${API_BASE}/devices/${id}/request-deploy`,  { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(data) }).then(r => r.json()),
-  approveDeploy:  (id)             => fetch(`${API_BASE}/devices/${id}/approve-deploy`,  { method: 'POST', headers: getAuthHeaders() }).then(r => r.json()),
-  rejectDeploy:   (id, note)       => fetch(`${API_BASE}/devices/${id}/reject-deploy`,   { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ note }) }).then(r => r.json()),
-  requestReturn:  (id, note)       => fetch(`${API_BASE}/devices/${id}/request-return`,  { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ note }) }).then(r => r.json()),
-  approveReturn:  (id)             => fetch(`${API_BASE}/devices/${id}/approve-return`,  { method: 'POST', headers: getAuthHeaders() }).then(r => r.json()),
-  rejectReturn:   (id, note)       => fetch(`${API_BASE}/devices/${id}/reject-return`,   { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ note }) }).then(r => r.json()),
-  getPending:     ()               => fetch(`${API_BASE}/devices/pending-approvals`,     { headers: getAuthHeaders() }).then(r => r.json()),
-  getHistory:     (id)             => fetch(`${API_BASE}/devices/${id}/history`,         { headers: getAuthHeaders() }).then(r => r.json()),
+  // Submit any step request (ground team = pending, manager = auto-approved)
+  submitStep: (deviceId, toStep, note = null, healthStatus = 'ok', healthNote = null) =>
+    fetch(`${API_BASE}/lifecycle-requests`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ deviceId, toStep, note, healthStatus, healthNote }),
+    }).then(async r => {
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.message || data.error || `Error ${r.status}`)
+      return data
+    }),
+
+  submitSetStep: (setId, toStep, note = null, healthStatus = 'ok', healthNote = null) =>
+    fetch(`${API_BASE}/lifecycle-requests`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ setId, toStep, note, healthStatus, healthNote }),
+    }).then(async r => {
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.message || data.error || `Error ${r.status}`)
+      return data
+    }),
+
+  approve: (requestId) =>
+    fetch(`${API_BASE}/lifecycle-requests/${requestId}/approve`, {
+      method: 'PATCH', headers: getAuthHeaders(),
+    }).then(async r => {
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.message || data.error || `Error ${r.status}`)
+      return data
+    }),
+
+  reject: (requestId, rejectionNote) =>
+    fetch(`${API_BASE}/lifecycle-requests/${requestId}/reject`, {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ rejectionNote }),
+    }).then(async r => {
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.message || data.error || `Error ${r.status}`)
+      return data
+    }),
+
+  // Get the active pending request for a specific device (null if none)
+  getDevicePending: (deviceId) =>
+    fetch(`${API_BASE}/lifecycle-requests/device/${deviceId}/pending`, { headers: getAuthHeaders() })
+      .then(r => r.json()),
+
+  // Get the active pending request for a specific set (null if none)
+  getSetPending: (setId) =>
+    fetch(`${API_BASE}/lifecycle-requests/set/${setId}/pending`, { headers: getAuthHeaders() })
+      .then(r => r.json()),
+
+  // Withdraw / cancel a pending request (rolls device back to fromStep)
+  withdraw: (requestId) =>
+    fetch(`${API_BASE}/lifecycle-requests/${requestId}`, {
+      method: 'DELETE', headers: getAuthHeaders(),
+    }).then(async r => {
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.message || data.error || `Error ${r.status}`)
+      return data
+    }),
+
+  getPending: () =>
+    fetch(`${API_BASE}/lifecycle-requests?status=pending`, { headers: getAuthHeaders() }).then(r => r.json()),
+
+  getHistory: (deviceId) =>
+    fetch(`${API_BASE}/lifecycle-requests/device/${deviceId}/history`, { headers: getAuthHeaders() }).then(r => r.json()),
+  getSetHistory: (setId) =>
+    fetch(`${API_BASE}/lifecycle-requests/set/${setId}/history`, { headers: getAuthHeaders() }).then(r => r.json()),
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -199,35 +298,37 @@ export const InventoryProvider = ({ children }) => {
     init()
   }, [fetchDevices, fetchClients, fetchSets])
 
-  // ── Derived: pending approvals ────────────────────────────
   const pendingApprovals = useMemo(() =>
     devices.filter(d => [
-      LIFECYCLE.ASSIGN_REQUESTED,
-      LIFECYCLE.DEPLOY_REQUESTED,
-      LIFECYCLE.RETURN_REQUESTED,
+      'assigning', 'ready_to_deploy', 'in_transit',
+      'received', 'installed', 'return_initiated',
     ].includes(d.lifecycleStatus))
   , [devices])
 
   // ── Derived: lifecycle counts ─────────────────────────────
   const lifecycleCounts = useMemo(() => ({
     total:           devices.length,
-    warehouse:       devices.filter(d => d.lifecycleStatus === LIFECYCLE.WAREHOUSE).length,
-    assignRequested: devices.filter(d => d.lifecycleStatus === LIFECYCLE.ASSIGN_REQUESTED).length,
-    assigned:        devices.filter(d => d.lifecycleStatus === LIFECYCLE.ASSIGNED).length,
-    deployRequested: devices.filter(d => d.lifecycleStatus === LIFECYCLE.DEPLOY_REQUESTED).length,
-    deployed:        devices.filter(d => d.lifecycleStatus === LIFECYCLE.DEPLOYED).length,
-    returnRequested: devices.filter(d => d.lifecycleStatus === LIFECYCLE.RETURN_REQUESTED).length,
-    returned:        devices.filter(d => d.lifecycleStatus === LIFECYCLE.RETURNED).length,
-    // "assigning" kept for legacy code = any non-warehouse non-deployed in-flight state
-    assigning: devices.filter(d =>
-      [LIFECYCLE.ASSIGN_REQUESTED, LIFECYCLE.ASSIGNED,
-       LIFECYCLE.DEPLOY_REQUESTED, LIFECYCLE.RETURN_REQUESTED].includes(d.lifecycleStatus)
-    ).length,
+    warehouse:       devices.filter(d => d.lifecycleStatus === 'available').length,
+    assigning:       devices.filter(d => d.lifecycleStatus === 'assigning').length,
+    readyToDeploy:   devices.filter(d => d.lifecycleStatus === 'ready_to_deploy').length,
+    inTransit:       devices.filter(d => d.lifecycleStatus === 'in_transit').length,
+    received:        devices.filter(d => d.lifecycleStatus === 'received').length,
+    installed:       devices.filter(d => d.lifecycleStatus === 'installed').length,
+    active:          devices.filter(d => d.lifecycleStatus === 'active').length,
+    underMaintenance:devices.filter(d => d.lifecycleStatus === 'under_maintenance').length,
+    returnInitiated: devices.filter(d => d.lifecycleStatus === 'return_initiated').length,
+    returned:        devices.filter(d => d.lifecycleStatus === 'returned').length,
+    lost:            devices.filter(d => d.lifecycleStatus === 'lost').length,
+    // legacy aliases for existing dashboard components
+    deployed:        devices.filter(d => d.lifecycleStatus === 'active').length,
+    assignRequested: devices.filter(d => d.lifecycleStatus === 'assigning').length,
+    deployRequested: devices.filter(d => d.lifecycleStatus === 'ready_to_deploy').length,
+    returnRequested: devices.filter(d => d.lifecycleStatus === 'return_initiated').length,
   }), [devices])
 
   // ── Component inventory (unchanged) ──────────────────────
   const componentInventory = useMemo(() => {
-    const wh = devices.filter(d => d.lifecycleStatus === 'warehouse' && !d.setId)
+    const wh = devices.filter(d => (d.lifecycleStatus === 'available' || d.lifecycleStatus === 'warehouse') && !d.setId)
     const count = (canonicalType) => wh.filter(d =>
       normalizeDeviceType(d.type) === canonicalType ||
       normalizeDeviceType(d.productType) === canonicalType
@@ -244,9 +345,40 @@ export const InventoryProvider = ({ children }) => {
   }, [devices])
 
   // ── SCAN DEVICE — always fetches live from API ────────────
-  // Fix for Bug 1 (stale scan result): never reads from local state
+  // Tries device barcode first; if 404, tries set barcode.
+  // Returns the result tagged with _isSet so callers can distinguish.
   const scanDevice = useCallback(async (barcode) => {
-    return await deviceApi.getByBarcode(barcode.toUpperCase())
+    const upper = barcode.toUpperCase()
+    try {
+      const device = await deviceApi.getByBarcode(upper)
+      return { ...device, _isSet: false }
+    } catch (err) {
+      // If device not found, try as a set barcode
+      if (err?.response?.status === 404 || err?.status === 404) {
+        try {
+          const set = await setApi.getByBarcode(upper)
+          if (!set) throw new Error('Barcode not found for any device or set.')
+          // Fetch set history in parallel
+          let history = []
+          try { history = await lifecycleApi.getSetHistory(set.id) } catch (_) {}
+          // Normalise set fields to match device shape for BarcodeResultCard
+          return {
+            ...set,
+            _isSet: true,
+            type: set.setTypeName || set.setType,
+            brand: null,
+            model: null,
+            color: null,
+            lifecycleStatus: set.lifecycleStatus || 'warehouse',
+            healthStatus: set.healthStatus || 'ok',
+            history,
+          }
+        } catch (setErr) {
+          throw new Error('Barcode not found for any device or set.')
+        }
+      }
+      throw err
+    }
   }, [])
 
   // ── DEVICE CRUD (refresh after every mutation) ────────────
@@ -314,69 +446,86 @@ export const InventoryProvider = ({ children }) => {
     await refresh()
   }, [refresh])
 
-  // ── LIFECYCLE WORKFLOW ACTIONS (new) ──────────────────────
+  // ── LIFECYCLE WORKFLOW ACTIONS ────────────────────────────
+  // Ground team: creates pending request. Manager/SuperAdmin: auto-approved.
+  const submitLifecycleStep = useCallback(async (deviceId, toStep, note = null, healthStatus = 'ok', healthNote = null) => {
+    const result = await lifecycleApi.submitStep(deviceId, toStep, note, healthStatus, healthNote)
+    await refresh()
+    return result
+  }, [refresh])
+
+  const submitSetLifecycleStep = useCallback(async (setId, toStep, note = null, healthStatus = 'ok', healthNote = null) => {
+    const result = await lifecycleApi.submitSetStep(setId, toStep, note, healthStatus, healthNote)
+    await refresh()
+    return result
+  }, [refresh])
+
+  // Get active pending request for a device/set (used by BarcodeResultCard)
+  const getPendingRequest = useCallback(async (deviceId) => {
+    return lifecycleApi.getDevicePending(deviceId)
+  }, [])
+
+  const getSetPendingRequest = useCallback(async (setId) => {
+    return lifecycleApi.getSetPending(setId)
+  }, [])
+
+  // Withdraw a pending request — rolls device back to previous step
+  const withdrawLifecycleRequest = useCallback(async (requestId) => {
+    const result = await lifecycleApi.withdraw(requestId)
+    await refresh()
+    return result
+  }, [refresh])
+
+  // Approve / reject — for managers acting from the barcode card
+  const approveLifecycleRequest = useCallback(async (requestId) => {
+    const result = await lifecycleApi.approve(requestId)
+    await refresh()
+    return result
+  }, [refresh])
+
+  const rejectLifecycleRequest = useCallback(async (requestId, rejectionNote) => {
+    const result = await lifecycleApi.reject(requestId, rejectionNote)
+    await refresh()
+    return result
+  }, [refresh])
+
+  // Legacy named helpers — kept so existing code that calls these still works
   const requestAssign = useCallback(async (deviceId, clientId) => {
-    const result = await lifecycleApi.requestAssign(deviceId, clientId)
-    if (result.error) throw new Error(result.error)
-    await refresh()
-    return result
-  }, [refresh])
+    const note = JSON.stringify({ clientId })
+    return submitLifecycleStep(deviceId, 'assigning', note)
+  }, [submitLifecycleStep])
 
-  const approveAssign = useCallback(async (deviceId) => {
-    const result = await lifecycleApi.approveAssign(deviceId)
-    if (result.error) throw new Error(result.error)
-    await refresh()
-    return result
-  }, [refresh])
+  const approveAssign = useCallback(async () => {
+    console.warn('approveAssign: approval now handled by manager role auto-approve or admin panel')
+  }, [])
 
-  const rejectAssign = useCallback(async (deviceId, note) => {
-    const result = await lifecycleApi.rejectAssign(deviceId, note)
-    if (result.error) throw new Error(result.error)
-    await refresh()
-    return result
-  }, [refresh])
+  const rejectAssign = useCallback(async () => {
+    console.warn('rejectAssign: rejection now handled via admin panel')
+  }, [])
 
   const requestDeploy = useCallback(async (deviceId, locationData = {}) => {
-    const result = await lifecycleApi.requestDeploy(deviceId, locationData)
-    if (result.error) throw new Error(result.error)
-    await refresh()
-    return result
-  }, [refresh])
+    return submitLifecycleStep(deviceId, 'ready_to_deploy', JSON.stringify(locationData))
+  }, [submitLifecycleStep])
 
-  const approveDeploy = useCallback(async (deviceId) => {
-    const result = await lifecycleApi.approveDeploy(deviceId)
-    if (result.error) throw new Error(result.error)
-    await refresh()
-    return result
-  }, [refresh])
+  const approveDeploy = useCallback(async () => {
+    console.warn('approveDeploy: approval now handled by manager role auto-approve or admin panel')
+  }, [])
 
-  const rejectDeploy = useCallback(async (deviceId, note) => {
-    const result = await lifecycleApi.rejectDeploy(deviceId, note)
-    if (result.error) throw new Error(result.error)
-    await refresh()
-    return result
-  }, [refresh])
+  const rejectDeploy = useCallback(async () => {
+    console.warn('rejectDeploy: rejection now handled via admin panel')
+  }, [])
 
   const requestReturn = useCallback(async (deviceId, note) => {
-    const result = await lifecycleApi.requestReturn(deviceId, note)
-    if (result.error) throw new Error(result.error)
-    await refresh()
-    return result
-  }, [refresh])
+    return submitLifecycleStep(deviceId, 'return_initiated', note)
+  }, [submitLifecycleStep])
 
-  const approveReturn = useCallback(async (deviceId) => {
-    const result = await lifecycleApi.approveReturn(deviceId)
-    if (result.error) throw new Error(result.error)
-    await refresh()
-    return result
-  }, [refresh])
+  const approveReturn = useCallback(async () => {
+    console.warn('approveReturn: approval now handled by manager role auto-approve or admin panel')
+  }, [])
 
-  const rejectReturn = useCallback(async (deviceId, note) => {
-    const result = await lifecycleApi.rejectReturn(deviceId, note)
-    if (result.error) throw new Error(result.error)
-    await refresh()
-    return result
-  }, [refresh])
+  const rejectReturn = useCallback(async () => {
+    console.warn('rejectReturn: rejection now handled via admin panel')
+  }, [])
 
   // ── CLIENT CRUD (refresh after every mutation) ────────────
   // CHANGED: subscription fields stripped before sending
@@ -566,7 +715,14 @@ export const InventoryProvider = ({ children }) => {
     unassignDevice,
     bulkAssignDevices,
 
-    // NEW: Lifecycle workflow
+    // Lifecycle workflow
+    submitLifecycleStep,
+    submitSetLifecycleStep,
+    getPendingRequest,
+    getSetPendingRequest,
+    withdrawLifecycleRequest,
+    approveLifecycleRequest,
+    rejectLifecycleRequest,
     requestAssign,
     approveAssign,
     rejectAssign,

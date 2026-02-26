@@ -10,12 +10,14 @@ import authMiddleware from "./middleware/auth.js";
 import deviceRoutes             from "./routes/devices.js";
 import setsRouter               from "./routes/sets.js";
 import migrateTypesRouter       from "./routes/migrateTypes.js";
-import assignmentRequestsRouter from "./routes/Assignmentrequests.js";
+
 import clientsRouter            from "./routes/clients.js";
 import usersRouter              from "./routes/users.js";
 import rolesRouter              from "./routes/roles.js";
 import permissionsRouter        from "./routes/Permissions.js";
-import groundRequestsRouter     from "./routes/groundRequests.js";
+
+import lifecycleRequestsRouter  from "./routes/lifecycleRequests.js";
+import notificationsRouter      from "./routes/notifications.js";
 
 dotenv.config();
 
@@ -79,12 +81,14 @@ app.post("/login", async (req, res) => {
 app.use("/api/devices",             deviceRoutes);
 app.use("/api/sets",                setsRouter);
 app.use("/api/migrate-types",       migrateTypesRouter);
-app.use("/api/assignment-requests", assignmentRequestsRouter);
+
 app.use("/api/clients",             clientsRouter);
 app.use("/api/users",               usersRouter);
 app.use("/api/roles",               rolesRouter);
 app.use("/api/permissions",         permissionsRouter);
-app.use("/api/ground-requests",     groundRequestsRouter);
+
+app.use("/api/lifecycle-requests",   lifecycleRequestsRouter);
+app.use("/api/notifications",        notificationsRouter);
 
 // ── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: "Route not found" }));

@@ -17,14 +17,17 @@ model Role {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  name      String
-  email     String   @unique
-  password  String
-  status    String   @default("ACTIVE")
-  createdAt DateTime @default(now())
-  roleId    Int
-  role      Role     @relation(fields: [roleId], references: [id])
+  id               Int                @id @default(autoincrement())
+  name             String
+  email            String             @unique
+  password         String
+  status           String             @default("ACTIVE")
+  createdAt        DateTime           @default(now())
+  roleId           Int
+  requestsApproved LifecycleRequest[] @relation("ApprovedBy")
+  requestsMade     LifecycleRequest[] @relation("RequestedBy")
+  notifications    Notification[]
+  role             Role               @relation(fields: [roleId], references: [id])
 
   @@index([roleId])
 }
@@ -50,49 +53,51 @@ model RolePermission {
 }
 
 model Client {
-  id         Int         @id @default(autoincrement())
-  name       String
-  phone      String
-  email      String
-  company    String?
-  address    String?
-  notes      String?
-  createdAt  DateTime    @default(now())
-  devices    Device[]
-  deviceSets DeviceSet[]
+  id                Int                @id @default(autoincrement())
+  name              String
+  phone             String
+  email             String
+  company           String?
+  address           String?
+  notes             String?
+  createdAt         DateTime           @default(now())
+  devices           Device[]
+  deviceSets        DeviceSet[]
+  lifecycleRequests LifecycleRequest[]
 }
 
 model Device {
-  id              Int             @id @default(autoincrement())
-  code            String          @unique
-  type            String
-  brand           String?
-  size            String?
-  model           String?
-  color           String?
-  gpsId           String?
-  mfgDate         DateTime?
-  lifecycleStatus String          @default("warehouse")
-  location        String?
-  state           String?
-  district        String?
-  pinpoint        String?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  clientId        Int?
-  healthStatus    String          @default("ok")
-  setId           Int?
-  approvedAt      DateTime?
-  approvedById    Int?
-  assignedAt      DateTime?
-  barcode         String          @unique
-  deployedAt      DateTime?
-  rejectionNote   String?
-  requestedAt     DateTime?
-  requestedById   Int?
-  client          Client?         @relation(fields: [clientId], references: [id])
-  deviceSet       DeviceSet?      @relation(fields: [setId], references: [id])
-  history         DeviceHistory[]
+  id                Int                @id @default(autoincrement())
+  code              String             @unique
+  type              String
+  brand             String?
+  size              String?
+  model             String?
+  color             String?
+  gpsId             String?
+  mfgDate           DateTime?
+  lifecycleStatus   String             @default("available")
+  location          String?
+  state             String?
+  district          String?
+  pinpoint          String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  clientId          Int?
+  healthStatus      String             @default("ok")
+  setId             Int?
+  approvedAt        DateTime?
+  approvedById      Int?
+  assignedAt        DateTime?
+  barcode           String             @unique
+  deployedAt        DateTime?
+  rejectionNote     String?
+  requestedAt       DateTime?
+  requestedById     Int?
+  client            Client?            @relation(fields: [clientId], references: [id])
+  deviceSet         DeviceSet?         @relation(fields: [setId], references: [id])
+  history           DeviceHistory[]
+  lifecycleRequests LifecycleRequest[] @relation("DeviceRequests")
 
   @@index([type])
   @@index([lifecycleStatus])
@@ -103,33 +108,94 @@ model Device {
 }
 
 model DeviceSet {
-  id              Int       @id @default(autoincrement())
-  code            String    @unique
-  barcode         String    @unique
-  setType         String
-  setTypeName     String
-  name            String?
-  lifecycleStatus String    @default("warehouse")
-  healthStatus    String    @default("ok")
-  location        String?
-  state           String?
-  district        String?
-  notes           String?
-  clientId        Int?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  approvedAt      DateTime?
-  approvedById    Int?
-  rejectionNote   String?
-  requestedAt     DateTime?
-  requestedById   Int?
-  components      Device[]
-  client          Client?   @relation(fields: [clientId], references: [id])
+  id                Int                @id @default(autoincrement())
+  code              String             @unique
+  barcode           String             @unique
+  setType           String
+  setTypeName       String
+  name              String?
+  lifecycleStatus   String             @default("available")
+  healthStatus      String             @default("ok")
+  location          String?
+  state             String?
+  district          String?
+  notes             String?
+  clientId          Int?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  approvedAt        DateTime?
+  approvedById      Int?
+  rejectionNote     String?
+  requestedAt       DateTime?
+  requestedById     Int?
+  components        Device[]
+  client            Client?            @relation(fields: [clientId], references: [id])
+  lifecycleRequests LifecycleRequest[] @relation("SetRequests")
 
   @@index([setType])
   @@index([lifecycleStatus])
   @@index([clientId])
   @@index([barcode])
+}
+
+model LifecycleRequest {
+  id            Int        @id @default(autoincrement())
+  deviceId      Int?
+  setId         Int?
+  clientId      Int?
+  fromStep      String
+  toStep        String
+  healthStatus  String     @default("ok")
+  healthNote    String?
+  note          String?
+  requestedById Int
+  createdAt     DateTime   @default(now())
+  approvedById  Int?
+  approvedAt    DateTime?
+  status        String     @default("pending")
+  rejectionNote String?
+  autoApproved  Boolean    @default(false)
+  approvedBy    User?      @relation("ApprovedBy", fields: [approvedById], references: [id])
+  client        Client?    @relation(fields: [clientId], references: [id])
+  device        Device?    @relation("DeviceRequests", fields: [deviceId], references: [id])
+  requestedBy   User       @relation("RequestedBy", fields: [requestedById], references: [id])
+  deviceSet     DeviceSet? @relation("SetRequests", fields: [setId], references: [id])
+
+  @@index([status])
+  @@index([deviceId])
+  @@index([setId])
+  @@index([clientId])
+  @@index([requestedById])
+  @@index([toStep])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  title     String
+  body      String
+  requestId Int?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, read])
+}
+
+model DeviceHistory {
+  id          Int      @id @default(autoincrement())
+  deviceId    Int
+  fromStatus  String
+  toStatus    String
+  changedById Int?
+  changedAt   DateTime @default(now())
+  note        String?
+  device      Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId])
+  @@index([deviceId, changedAt])
 }
 
 model AssignmentRequest {
@@ -156,19 +222,6 @@ model AssignmentRequest {
   @@index([clientId])
   @@index([deviceId])
   @@index([setId])
-}
-
-model DeviceHistory {
-  id          Int      @id @default(autoincrement())
-  deviceId    Int
-  fromStatus  String
-  toStatus    String
-  changedById Int?
-  changedAt   DateTime @default(now())
-  note        String?
-  device      Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
-
-  @@index([deviceId])
 }
 
 model TeamRequest {

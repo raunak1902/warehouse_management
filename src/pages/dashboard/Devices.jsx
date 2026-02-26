@@ -67,6 +67,23 @@ import {
 import BarcodeScanner from '../../components/BarcodeScanner'
 import BarcodeGenerator from '../../components/BarcodeGenerator'
 import BulkBarcodeGenerator from '../../components/BulkBarcodeGenerator'
+import DeviceTimeline from '../../components/DeviceTimeline'
+import LifecycleActionModal from '../../components/LifecycleActionModal'
+
+// Normalize legacy health status values to canonical ones used throughout the system.
+// Ground team requests may have written 'damaged', 'needs_repair', 'critical' into the DB.
+const normalizeHealth = (v) => {
+  if (!v) return 'ok'
+  const map = { damaged: 'damage', needs_repair: 'repair', critical: 'damage' }
+  return map[v] ?? v
+}
+
+const HEALTH_STYLE = {
+  ok:     { badge: 'bg-emerald-100 text-emerald-800 border-emerald-200', label: '✓ OK' },
+  repair: { badge: 'bg-amber-100   text-amber-800   border-amber-200',   label: '🔧 Repair' },
+  damage: { badge: 'bg-red-100     text-red-800     border-red-200',     label: '⚠ Damage' },
+}
+const getHealthStyle = (raw) => HEALTH_STYLE[normalizeHealth(raw)] ?? HEALTH_STYLE.ok
 
 const LIFECYCLE_OPTIONS = [
   { value: 'all', label: 'All Devices', icon: Layers, desc: 'View all devices in system' },
@@ -183,6 +200,11 @@ const Devices = () => {
   const [selectedComponents, setSelectedComponents] = useState({})
   const [setName, setSetName] = useState('')
   const [expandedSet, setExpandedSet] = useState(null)
+  
+  // Lifecycle timeline expand state: deviceId → true/false
+  const [expandedTimeline, setExpandedTimeline] = useState(null) // device.id or `set-${setId}`
+  // Lifecycle action modal
+  const [lifecycleActionDevice, setLifecycleActionDevice] = useState(null)
   
   // Barcode Scanner state
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
@@ -1065,6 +1087,7 @@ const Devices = () => {
                   }
                   const LifecycleIcon = lifecycle === 'deployed' ? Truck : lifecycle === 'assigning' ? Link2 : Package
                   return (
+                    <>
                     <tr key={device.id} className="hover:bg-gray-50">
                       <td className="py-3 px-4">
                         <span className="inline-flex items-center gap-1.5 font-mono font-medium text-gray-900">
@@ -1110,10 +1133,8 @@ const Devices = () => {
                       </td>
                       <td className="py-3 px-4">
                         {(() => {
-                          const h = device.healthStatus || 'ok'
-                          const s = { ok: 'bg-emerald-100 text-emerald-800 border-emerald-200', repair: 'bg-amber-100 text-amber-800 border-amber-200', damage: 'bg-red-100 text-red-800 border-red-200' }
-                          const l = { ok: '✓ OK', repair: '🔧 Repair', damage: '⚠ Damage' }
-                          return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s[h] || s.ok}`}>{l[h] || 'OK'}</span>
+                          const hs = getHealthStyle(device.healthStatus)
+                          return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${hs.badge}`}>{hs.label}</span>
                         })()}
                       </td>
                       <td className="py-3 px-4 text-right">
@@ -1123,10 +1144,38 @@ const Devices = () => {
                               <QrCode className="w-4 h-4" />
                             </button>
                           )}
+                          <button
+                            type="button"
+                            title="Lifecycle history"
+                            onClick={() => setExpandedTimeline(prev => prev === device.id ? null : device.id)}
+                            className={`p-1.5 rounded transition-colors ${expandedTimeline === device.id ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:bg-gray-100'}`}
+                          >
+                            <Clock className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            title="Request next lifecycle step"
+                            onClick={() => setLifecycleActionDevice(device)}
+                            className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
                           <button type="button" onClick={() => setDetailDevice(device)} className="text-primary-600 hover:text-primary-700 text-sm font-medium">View</button>
                         </div>
                       </td>
                     </tr>
+                    {expandedTimeline === device.id && (
+                      <tr key={`timeline-${device.id}`}>
+                        <td colSpan={12} className="p-0">
+                          <DeviceTimeline
+                            deviceId={device.id}
+                            deviceCode={device.code}
+                            onClose={() => setExpandedTimeline(null)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </>
                   )
                 })
               )}
@@ -1155,9 +1204,7 @@ const Devices = () => {
                 warehouse: 'bg-slate-100 text-slate-700',
               }
               const LifecycleIcon = lifecycle === 'deployed' ? Truck : lifecycle === 'assigning' ? Link2 : Package
-              const h = device.healthStatus || 'ok'
-              const healthStyle = { ok: 'bg-emerald-100 text-emerald-800', repair: 'bg-amber-100 text-amber-800', damage: 'bg-red-100 text-red-800' }
-              const healthLabel = { ok: '✓ OK', repair: '🔧 Repair', damage: '⚠ Damage' }
+              const hs = getHealthStyle(device.healthStatus)
               const set = device.setId ? deviceSets.find(s => s.id === device.setId || s.id === Number(device.setId)) : null
               return (
                 <div key={device.id} className="p-4 bg-white hover:bg-gray-50 active:bg-gray-100 transition-colors">
@@ -1170,7 +1217,7 @@ const Devices = () => {
                       <p className="text-sm text-gray-600 mt-0.5">{getDeviceTypeLabel(device.type)}{device.brand ? ` · ${device.brand}` : ''}{device.size ? ` · ${device.size}` : ''}</p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${healthStyle[h] || healthStyle.ok}`}>{healthLabel[h] || 'OK'}</span>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${hs.badge}`}>{hs.label}</span>
                     </div>
                   </div>
 
@@ -1204,11 +1251,34 @@ const Devices = () => {
                           <QrCode className="w-4 h-4" />
                         </button>
                       )}
+                      <button
+                        type="button"
+                        title="Lifecycle history"
+                        onClick={() => setExpandedTimeline(prev => prev === `mob-${device.id}` ? null : `mob-${device.id}`)}
+                        className={`p-2 rounded-lg transition-colors ${expandedTimeline === `mob-${device.id}` ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:bg-gray-100'}`}
+                      >
+                        <Clock className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Next lifecycle step"
+                        onClick={() => setLifecycleActionDevice(device)}
+                        className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
                       <button type="button" onClick={() => setDetailDevice(device)} className="px-3 py-1.5 text-sm font-medium text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-lg transition-colors">
                         View
                       </button>
                     </div>
                   </div>
+                  {expandedTimeline === `mob-${device.id}` && (
+                    <DeviceTimeline
+                      deviceId={device.id}
+                      deviceCode={device.code}
+                      onClose={() => setExpandedTimeline(null)}
+                    />
+                  )}
                 </div>
               )
             })
@@ -1254,16 +1324,7 @@ const Devices = () => {
                   </div>
                 )
               })()}
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500">Lifecycle</span>
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${
-                  getDeviceLifecycleStatus(detailDevice) === 'deployed' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' :
-                  getDeviceLifecycleStatus(detailDevice) === 'assigning' ? 'bg-amber-100 text-amber-800 border-amber-200' :
-                  'bg-slate-100 text-slate-800 border-slate-200'
-                }`}>
-                  {getDeviceLifecycleStatus(detailDevice) === 'deployed' ? 'Deployed' : getDeviceLifecycleStatus(detailDevice) === 'assigning' ? 'Assigning' : 'In Warehouse'}
-                </span>
-              </div>
+
               {detailDevice.brand && <div className="flex justify-between"><span className="text-gray-500">Brand</span><span className="font-medium">{detailDevice.brand}</span></div>}
               {detailDevice.size && <div className="flex justify-between"><span className="text-gray-500">Size</span><span className="font-medium">{detailDevice.size}</span></div>}
               {detailDevice.model && <div className="flex justify-between"><span className="text-gray-500">Model</span><span className="font-medium">{detailDevice.model}</span></div>}
@@ -1272,7 +1333,7 @@ const Devices = () => {
               {detailDevice.mfgDate && <div className="flex justify-between"><span className="text-gray-500">IN Date</span><span className="font-medium">{typeof detailDevice.mfgDate === 'string' ? detailDevice.mfgDate : new Date(detailDevice.mfgDate).toLocaleDateString('en-IN')}</span></div>}
               <div className="flex justify-between items-center">
                 <span className="text-gray-500">Health</span>
-                {(() => { const h = detailDevice.healthStatus || 'ok'; const s = { ok: 'bg-emerald-100 text-emerald-800 border-emerald-200', repair: 'bg-amber-100 text-amber-800 border-amber-200', damage: 'bg-red-100 text-red-800 border-red-200' }; const l = { ok: '✓ OK', repair: '🔧 Repair', damage: '⚠ Damage' }; return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s[h]||s.ok}`}>{l[h]||'OK'}</span> })()}
+                {(() => { const hs = getHealthStyle(detailDevice.healthStatus); return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${hs.badge}`}>{hs.label}</span> })()}
               </div>
               {getDeviceLifecycleStatus(detailDevice) === 'deployed' && (detailDevice.state || detailDevice.district || detailDevice.location) && (
                 <div className="space-y-1">
@@ -1829,6 +1890,21 @@ const Devices = () => {
           onClose={() => {
             setShowBulkBarcodes(false)
             setBulkCreatedDevices([])
+          }}
+        />
+      )}
+
+      {/* LIFECYCLE ACTION MODAL — request next step for a device */}
+      {lifecycleActionDevice && (
+        <LifecycleActionModal
+          device={lifecycleActionDevice}
+          onClose={() => setLifecycleActionDevice(null)}
+          onSuccess={() => {
+            setLifecycleActionDevice(null)
+            if (expandedTimeline === lifecycleActionDevice.id) {
+              setExpandedTimeline(null)
+              setTimeout(() => setExpandedTimeline(lifecycleActionDevice.id), 100)
+            }
           }}
         />
       )}

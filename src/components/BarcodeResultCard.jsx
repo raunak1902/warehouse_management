@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import {
   Download, Printer, Copy, Check, X, MapPin, Activity,
@@ -26,311 +26,1012 @@ const StatusBadge = ({ status }) => {
 // ─────────────────────────────────────────────────────────────
 // HEALTH BADGE (inline editable)
 // ─────────────────────────────────────────────────────────────
-const HealthBadge = ({ deviceId, current, onUpdated }) => {
-  const { updateHealthStatus } = useInventory()
-  const [open, setOpen]   = useState(false)
-  const [saving, setSaving] = useState(false)
+const HealthBadge = ({ current }) => {
+  const colors = HEALTH_COLORS[current] || HEALTH_COLORS.ok
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${colors.bg} ${colors.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
+      {colors.label}
+    </span>
+  )
+}
 
-  const options = ['ok', 'repair', 'damage']
-  const colors  = HEALTH_COLORS[current] || HEALTH_COLORS.ok
+// ─────────────────────────────────────────────────────────────
+// HEALTH CONFIRM STEP
+// Shown before every lifecycle request submission.
+// User must actively confirm or update health before proceeding.
+// ─────────────────────────────────────────────────────────────
+const HEALTH_OPTIONS = [
+  { value: 'ok',     label: 'Healthy',      dot: 'bg-green-500',  bg: 'border-green-200 bg-green-50',  text: 'text-green-800' },
+  { value: 'repair', label: 'Needs Repair', dot: 'bg-amber-400',  bg: 'border-amber-200 bg-amber-50',  text: 'text-amber-800' },
+  { value: 'damage', label: 'Damaged',      dot: 'bg-red-500',    bg: 'border-red-200 bg-red-50',      text: 'text-red-800'   },
+]
 
-  const handleChange = async (val) => {
-    if (val === current) { setOpen(false); return }
-    setSaving(true)
-    try {
-      await updateHealthStatus(deviceId, val)
-      onUpdated && onUpdated(val)
-    } finally {
-      setSaving(false)
-      setOpen(false)
-    }
-  }
+const HealthConfirm = ({ currentHealth, stepLabel, onConfirm, onCancel, busy }) => {
+  const [health, setHealth]   = useState(currentHealth || 'ok')
+  const [note, setNote]       = useState('')
+
+  const needsNote = health !== 'ok'
+  const canSubmit = !needsNote || note.trim().length > 0
 
   return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        disabled={saving}
-        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold cursor-pointer transition-opacity ${colors.bg} ${colors.text} hover:opacity-80`}
-      >
-        <span className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
-        {saving ? 'Saving…' : colors.label}
-        <ChevronDown className="w-3 h-3 ml-0.5" />
-      </button>
+    <div className="space-y-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-gray-800">Confirm device health before submitting</p>
+        <span className="text-xs text-gray-400 font-medium">→ {stepLabel}</span>
+      </div>
 
-      {open && (
-        <div className="absolute z-50 top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden min-w-[140px]">
-          {options.map(opt => {
-            const c = HEALTH_COLORS[opt]
-            return (
-              <button
-                key={opt}
-                onClick={() => handleChange(opt)}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-gray-50 text-left ${opt === current ? 'bg-gray-50' : ''}`}
-              >
-                <span className={`w-2 h-2 rounded-full ${c.dot}`} />
-                {c.label}
-                {opt === current && <Check className="w-3 h-3 ml-auto text-gray-400" />}
-              </button>
-            )
-          })}
+      {/* Health selector */}
+      <div className="grid grid-cols-3 gap-2">
+        {HEALTH_OPTIONS.map(opt => (
+          <button key={opt.value} onClick={() => setHealth(opt.value)}
+            className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg border-2 text-xs font-semibold transition-all
+              ${health === opt.value ? opt.bg + ' border-2 ' + opt.text + ' ring-2 ring-offset-1 ' + opt.dot.replace('bg-', 'ring-')
+                : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>
+            <span className={`w-2.5 h-2.5 rounded-full ${opt.dot}`} />
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Note — required if health is not ok */}
+      {needsNote && (
+        <div>
+          <p className="text-xs text-amber-700 font-medium mb-1">
+            ⚠ Health note required for {health === 'repair' ? 'Needs Repair' : 'Damaged'} status:
+          </p>
+          <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
+            placeholder="Describe the issue…"
+            className="w-full px-3 py-2 border border-amber-200 rounded-lg text-sm resize-none bg-white" />
         </div>
       )}
+
+      <div className="flex gap-2">
+        <button onClick={() => onConfirm(health, needsNote ? note.trim() : null)}
+          disabled={!canSubmit || busy}
+          className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
+          {busy ? 'Submitting…' : 'Confirm & Submit Request'}
+        </button>
+        <button onClick={onCancel} disabled={busy}
+          className="px-4 py-2 border border-gray-200 rounded-lg text-sm hover:bg-gray-50">
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+// PENDING REQUEST BANNER
+// Shown when there is already a pending request for this device.
+// Ground team sees: submitter info + Withdraw (own) or locked (others)
+// Manager sees: submitter info + health warning + Approve / Reject
+// ─────────────────────────────────────────────────────────────
+const PendingBanner = ({ pending, currentUserId, isManager, onWithdraw, onApprove, onReject, busy }) => {
+  const [showReject, setShowReject] = useState(false)
+  const [rejectNote, setRejectNote] = useState('')
+
+  const isOwn      = pending.requestedById === currentUserId
+  const stepLabel  = pending.stepLabel || pending.toStep
+  const submitter  = pending.requestedByName || 'Unknown'
+  const submittedAt = pending.createdAt
+    ? new Date(pending.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+    : ''
+
+  if (showReject) {
+    return (
+      <div className="space-y-2 p-3 bg-red-50 rounded-xl border border-red-200">
+        <p className="text-sm font-semibold text-red-800">Rejection reason:</p>
+        <textarea value={rejectNote} onChange={e => setRejectNote(e.target.value)} rows={2}
+          placeholder="Required…" className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm resize-none" />
+        <div className="flex gap-2">
+          <button onClick={() => onReject(pending.id, rejectNote)} disabled={!rejectNote.trim() || busy}
+            className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">
+            {busy ? 'Rejecting…' : 'Confirm Reject'}
+          </button>
+          <button onClick={() => setShowReject(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Back</button>
+        </div>
+      </div>
+    )
+  }
+
+  // Health warning for manager
+  const healthWarning = pending.healthStatus && pending.healthStatus !== 'ok'
+  const healthOpt     = HEALTH_OPTIONS.find(o => o.value === pending.healthStatus)
+
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 pt-3 pb-2">
+        <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-amber-900">
+            ⏳ <span className="font-bold">{stepLabel}</span> request pending
+          </p>
+          <p className="text-xs text-amber-700 mt-0.5">
+            Submitted by <span className="font-semibold">{isOwn ? 'you' : submitter}</span>
+            {submittedAt && <span className="text-amber-500"> · {submittedAt}</span>}
+          </p>
+        </div>
+      </div>
+
+      {/* Health warning — shown to everyone if health is not ok */}
+      {healthWarning && (
+        <div className={`mx-3 mt-2 px-3 py-2 rounded-lg border text-xs font-medium flex items-start gap-2 ${healthOpt?.bg} ${healthOpt?.text}`}>
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <div>
+            <span className="font-bold">Health: {healthOpt?.label}</span>
+            {pending.healthNote && <p className="mt-0.5 font-normal opacity-90">{pending.healthNote}</p>}
+          </div>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="px-3 pb-3 pt-1">
+        {isManager ? (
+          // Manager: approve or reject
+          <div className="flex gap-2">
+            <button onClick={() => onApprove(pending.id)} disabled={busy}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 disabled:opacity-50">
+              <CheckCircle2 className="w-4 h-4" />{busy ? '…' : 'Approve'}
+            </button>
+            <button onClick={() => setShowReject(true)} disabled={busy}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-red-100 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-200">
+              <X className="w-4 h-4" />Reject
+            </button>
+          </div>
+        ) : isOwn ? (
+          // Ground team — own request: can withdraw
+          <button onClick={() => onWithdraw(pending.id)} disabled={busy}
+            className="w-full flex items-center justify-center gap-2 py-2 bg-white border border-amber-300 text-amber-800 rounded-lg text-sm font-semibold hover:bg-amber-100 disabled:opacity-50">
+            <RotateCcw className="w-3.5 h-3.5" />{busy ? 'Withdrawing…' : 'Withdraw Request'}
+          </button>
+        ) : (
+          // Ground team — someone else's request: read-only
+          <p className="text-xs text-amber-600 text-center py-1">
+            🔒 Only <span className="font-semibold">{submitter}</span> or a manager can withdraw this request.
+          </p>
+        )}
+      </div>
     </div>
   )
 }
 
 // ─────────────────────────────────────────────────────────────
 // CONTEXT-AWARE ACTION BUTTON
+// On mount, fetches the pending request (if any) for this device.
+// Re-fetches after every action so state is always fresh.
 // ─────────────────────────────────────────────────────────────
-const ActionButton = ({ device, onAction }) => {
-  const { requestAssign, approveAssign, rejectAssign,
-          requestDeploy, approveDeploy, rejectDeploy,
-          requestReturn, approveReturn, rejectReturn,
-          clients } = useInventory()
+const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
+  const { submitLifecycleStep, getPendingRequest,
+          withdrawLifecycleRequest, approveLifecycleRequest,
+          rejectLifecycleRequest, clients } = useInventory()
 
-  const [busy, setBusy]         = useState(false)
-  const [showReject, setShowReject] = useState(false)
-  const [showAssign, setShowAssign] = useState(false)
-  const [showDeploy, setShowDeploy] = useState(false)
-  const [showReturn, setShowReturn] = useState(false)
+  const [pending, setPending]             = useState(undefined)
+  const [busy, setBusy]                   = useState(false)
+  const [showClientPick, setShowClientPick] = useState(false)
   const [selectedClient, setSelectedClient] = useState('')
-  const [rejectNote, setRejectNote]         = useState('')
-  const [locationData, setLocationData]     = useState({ state: '', district: '', pinpoint: '' })
+  const [note, setNote]                   = useState('')
+  const [showNote, setShowNote]           = useState(false)
+  // healthStep: null = not showing, otherwise { toStep, label, extraNote }
+  const [healthStep, setHealthStep]       = useState(null)
 
   const status = device.lifecycleStatus
 
-  const run = async (fn) => {
-    setBusy(true)
-    try { await fn() }
-    catch (e) { alert(e.message) }
-    finally { setBusy(false); onAction && onAction() }
+  // Ask for health confirmation before submitting any step
+  const askHealth = (toStep, stepLabel, extraNote = null) => {
+    setHealthStep({ toStep, stepLabel, extraNote })
   }
 
-  // Warehouse → request assignment
-  if (status === LIFECYCLE.WAREHOUSE) {
-    if (showAssign) {
+  const confirmHealth = (health, healthNote) => {
+    if (!healthStep) return
+    const { toStep, extraNote } = healthStep
+    setHealthStep(null)
+    run(() => submitLifecycleStep(device.id, toStep, extraNote, health, healthNote))
+  }
+
+  // Fetch pending request on mount and whenever device changes
+  useEffect(() => {
+    let cancelled = false
+    setPending(undefined)
+    getPendingRequest(device.id)
+      .then(r => { if (!cancelled) setPending(r ?? null) })
+      .catch(() => { if (!cancelled) setPending(null) })
+    return () => { cancelled = true }
+  }, [device.id, device.lifecycleStatus, getPendingRequest])
+
+  // Poll every 5 seconds while a pending request exists so that when a manager
+  // approves/rejects externally (e.g. from the Requests page), the barcode card
+  // updates automatically without needing a manual refresh.
+  useEffect(() => {
+    // Only poll when there is an active pending request
+    if (!pending) return
+
+    const interval = setInterval(async () => {
+      try {
+        const fresh = await getPendingRequest(device.id)
+        if (fresh && fresh.status === 'pending') {
+          // Still pending — keep showing banner (no change needed)
+          return
+        }
+        // Request was approved or rejected externally — re-fetch the device
+        // so lifecycleStatus updates and the correct next step button shows.
+        if (onAction) await onAction()
+        setPending(undefined)
+      } catch {
+        // silently ignore poll errors
+      }
+    }, 5000)
+
+    return () => clearInterval(interval)
+  }, [pending, device.id, getPendingRequest, onAction])
+
+  const run = async (fn) => {
+    setBusy(true)
+    try {
+      const result = await fn()
+      if (result && result.status === 'pending') {
+        // Ground team submission: show PendingBanner immediately from the
+        // returned request — no re-fetch needed.
+        setPending(result)
+      } else {
+        // Approval / withdrawal / rejection:
+        // Wait for the device re-fetch BEFORE clearing pending, so we never
+        // flash the stale "awaiting approval" fallback UI while the new
+        // lifecycleStatus is still loading.
+        if (onAction) await onAction()
+        setPending(undefined)
+      }
+    } catch (e) {
+      alert(e.message || 'Request failed')
+      setBusy(false)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submit = (toStep, extraNote = null) =>
+    run(() => submitLifecycleStep(device.id, toStep, extraNote))
+
+  const handleWithdraw = (requestId) => run(() => withdrawLifecycleRequest(requestId))
+  const handleApprove  = (requestId) => run(() => approveLifecycleRequest(requestId))
+  const handleReject   = (requestId, rejNote) => run(() => rejectLifecycleRequest(requestId, rejNote))
+
+  // If health confirmation is in progress, show it
+  if (healthStep) {
+    return (
+      <HealthConfirm
+        currentHealth={device.healthStatus}
+        stepLabel={healthStep.stepLabel}
+        onConfirm={confirmHealth}
+        onCancel={() => setHealthStep(null)}
+        busy={busy}
+      />
+    )
+  }
+
+  // Still loading the pending request — show a neutral spinner so we never
+  // flash the wrong fallback UI before the fetch completes.
+  if (pending === undefined) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-4 text-sm text-gray-400">
+        <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+        </svg>
+        Loading status…
+      </div>
+    )
+  }
+
+  // If there is a pending request — show banner instead of action button
+  if (pending) {
+    return (
+      <PendingBanner
+        pending={pending}
+        currentUserId={currentUserId}
+        isManager={isManager}
+        onWithdraw={handleWithdraw}
+        onApprove={handleApprove}
+        onReject={handleReject}
+        busy={busy}
+      />
+    )
+  }
+
+  // ── No pending request (confirmed null) — show the appropriate action button ──
+
+  // Available / Warehouse → request assigning
+  if (status === 'available' || status === 'warehouse') {
+    if (showClientPick) {
       return (
         <div className="space-y-3 p-3 bg-blue-50 rounded-xl border border-blue-200">
           <p className="text-sm font-semibold text-blue-800">Select client to assign:</p>
-          <select
-            value={selectedClient}
-            onChange={e => setSelectedClient(e.target.value)}
-            className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm bg-white"
-          >
+          <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)}
+            className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm bg-white">
             <option value="">-- Choose client --</option>
-            {clients.map(c => <option key={c.id} value={c.id}>{c.name} {c.company ? `(${c.company})` : ''}</option>)}
+            {clients.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` (${c.company})` : ''}</option>)}
           </select>
           <div className="flex gap-2">
-            <button
-              onClick={() => run(() => requestAssign(device.id, selectedClient))}
+            <button onClick={() => {
+                if (!selectedClient) return
+                setShowClientPick(false)
+                askHealth('assigning', 'Assigning to Client', JSON.stringify({ clientId: selectedClient }))
+              }}
               disabled={!selectedClient || busy}
-              className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50"
-            >
-              {busy ? 'Submitting…' : 'Submit Request'}
+              className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">
+              {busy ? 'Submitting…' : 'Next: Confirm Health'}
             </button>
-            <button onClick={() => setShowAssign(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">
-              Cancel
-            </button>
+            <button onClick={() => setShowClientPick(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
           </div>
         </div>
       )
     }
     return (
-      <button
-        onClick={() => setShowAssign(true)}
-        className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700 transition-colors"
-      >
-        <ArrowRight className="w-4 h-4" />
-        Request Assignment to Client
-      </button>
-    )
-  }
-
-  // Pending assignment approval
-  if (status === LIFECYCLE.ASSIGN_REQUESTED) {
-    if (showReject) {
-      return (
-        <div className="space-y-2 p-3 bg-red-50 rounded-xl border border-red-200">
-          <p className="text-sm font-semibold text-red-800">Rejection reason:</p>
-          <textarea
-            value={rejectNote}
-            onChange={e => setRejectNote(e.target.value)}
-            rows={2}
-            placeholder="Optional note…"
-            className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm resize-none"
-          />
-          <div className="flex gap-2">
-            <button onClick={() => run(() => rejectAssign(device.id, rejectNote))} disabled={busy}
-              className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold">
-              {busy ? 'Rejecting…' : 'Confirm Reject'}
-            </button>
-            <button onClick={() => setShowReject(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">
-              Back
-            </button>
-          </div>
-        </div>
-      )
-    }
-    return (
-      <div className="space-y-2">
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
-          <Clock className="w-4 h-4 inline mr-1" />
-          Awaiting admin approval for assignment to <strong>{device.client?.name}</strong>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => run(() => approveAssign(device.id))} disabled={busy}
-            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700">
-            <CheckCircle2 className="w-4 h-4" />
-            {busy ? '…' : 'Approve'}
-          </button>
-          <button onClick={() => setShowReject(true)}
-            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-red-100 text-red-700 rounded-xl text-sm font-semibold hover:bg-red-200">
-            <X className="w-4 h-4" />
-            Reject
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // Assigned → request deployment
-  if (status === LIFECYCLE.ASSIGNED) {
-    if (showDeploy) {
-      return (
-        <div className="space-y-3 p-3 bg-blue-50 rounded-xl border border-blue-200">
-          <p className="text-sm font-semibold text-blue-800">Confirm deployment location:</p>
-          <input value={locationData.state} onChange={e => setLocationData(p => ({...p, state: e.target.value}))}
-            placeholder="State" className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm" />
-          <input value={locationData.district} onChange={e => setLocationData(p => ({...p, district: e.target.value}))}
-            placeholder="District" className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm" />
-          <input value={locationData.pinpoint} onChange={e => setLocationData(p => ({...p, pinpoint: e.target.value}))}
-            placeholder="Pinpoint / Site name" className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm" />
-          <div className="flex gap-2">
-            <button onClick={() => run(() => requestDeploy(device.id, locationData))} disabled={busy}
-              className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold">
-              {busy ? 'Submitting…' : 'Submit Deployment Request'}
-            </button>
-            <button onClick={() => setShowDeploy(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">
-              Cancel
-            </button>
-          </div>
-        </div>
-      )
-    }
-    return (
-      <button onClick={() => setShowDeploy(true)}
+      <button onClick={() => setShowClientPick(true)}
         className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700">
-        <Truck className="w-4 h-4" />
-        Request Deployment
+        <ArrowRight className="w-4 h-4" />Request Assignment to Client
       </button>
     )
   }
 
-  // Pending deployment approval
-  if (status === LIFECYCLE.DEPLOY_REQUESTED) {
-    if (showReject) {
+  // Assigning → ready to deploy
+  if (status === 'assigning' || status === 'assign_requested' || status === 'assigned') {
+    return (
+      <div className="space-y-2">
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800">
+          <CheckCircle2 className="w-4 h-4 inline mr-1 text-blue-600" />
+          Assigned to <strong>{device.client?.name || 'client'}</strong>. Mark as ready to deploy when packed.
+        </div>
+        <button onClick={() => askHealth('ready_to_deploy', 'Ready to Deploy')} disabled={busy}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-teal-600 text-white rounded-xl font-semibold text-sm hover:bg-teal-700">
+          <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Ready to Deploy'}
+        </button>
+      </div>
+    )
+  }
+
+  // Ready to deploy → in transit
+  if (status === 'ready_to_deploy' || status === 'deploy_requested') {
+    return (
+      <div className="space-y-2">
+        <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl text-sm text-teal-800">
+          <CheckCircle2 className="w-4 h-4 inline mr-1 text-teal-600" />
+          Ready to deploy. Mark as In Transit once device leaves warehouse.
+        </div>
+        <button onClick={() => askHealth('in_transit', 'In Transit')} disabled={busy}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 text-white rounded-xl font-semibold text-sm hover:bg-amber-600">
+          <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark In Transit'}
+        </button>
+      </div>
+    )
+  }
+
+  // In transit → received
+  if (status === 'in_transit') {
+    return (
+      <div className="space-y-2">
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
+          <Truck className="w-4 h-4 inline mr-1" />Device is in transit. Confirm receipt at the client site.
+        </div>
+        <button onClick={() => askHealth('received', 'Received at Site')} disabled={busy}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-purple-600 text-white rounded-xl font-semibold text-sm hover:bg-purple-700">
+          <Package className="w-4 h-4" />{busy ? 'Submitting…' : 'Confirm Received at Site'}
+        </button>
+      </div>
+    )
+  }
+
+  // Received → installed
+  if (status === 'received') {
+    return (
+      <div className="space-y-2">
+        <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl text-sm text-purple-800">
+          <Package className="w-4 h-4 inline mr-1" />Received at site. Mark as installed once setup is complete.
+        </div>
+        <button onClick={() => askHealth('installed', 'Installed')} disabled={busy}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 text-white rounded-xl font-semibold text-sm hover:bg-indigo-700">
+          <CheckCircle2 className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Installed'}
+        </button>
+      </div>
+    )
+  }
+
+  // Installed → active
+  if (status === 'installed') {
+    return (
+      <div className="space-y-2">
+        <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-sm text-indigo-800">
+          <CheckCircle2 className="w-4 h-4 inline mr-1" />Device is installed. Mark as Active once running.
+        </div>
+        <button onClick={() => askHealth('active', 'Active / Live')} disabled={busy}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-green-600 text-white rounded-xl font-semibold text-sm hover:bg-green-700">
+          <CheckCircle2 className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Active / Live'}
+        </button>
+      </div>
+    )
+  }
+
+  // Active → maintenance or return
+  if (status === 'active' || status === 'deployed') {
+    if (showNote) {
       return (
-        <div className="space-y-2 p-3 bg-red-50 rounded-xl border border-red-200">
-          <p className="text-sm font-semibold text-red-800">Rejection reason:</p>
-          <textarea value={rejectNote} onChange={e => setRejectNote(e.target.value)} rows={2}
-            placeholder="Optional note…" className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm resize-none" />
+        <div className="space-y-2 p-3 bg-rose-50 rounded-xl border border-rose-200">
+          <p className="text-sm font-semibold text-rose-800">Return reason:</p>
+          <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
+            placeholder="Reason for return…" className="w-full px-3 py-2 border border-rose-200 rounded-lg text-sm resize-none" />
           <div className="flex gap-2">
-            <button onClick={() => run(() => rejectDeploy(device.id, rejectNote))} disabled={busy}
-              className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold">
-              {busy ? 'Rejecting…' : 'Confirm Reject'}
+            <button onClick={() => { setShowNote(false); askHealth('return_initiated', 'Return Initiated', note) }}
+              disabled={!note.trim() || busy}
+              className="flex-1 py-2 bg-rose-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">
+              Next: Confirm Health
             </button>
-            <button onClick={() => setShowReject(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Back</button>
+            <button onClick={() => setShowNote(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
+          </div>
+        </div>
+      )
+    }
+    return (
+      <div className="flex gap-2">
+        <button onClick={() => askHealth('under_maintenance', 'Under Maintenance')} disabled={busy}
+          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-orange-100 text-orange-700 rounded-xl text-sm font-semibold hover:bg-orange-200">
+          <AlertTriangle className="w-4 h-4" />{busy ? '…' : 'Under Maintenance'}
+        </button>
+        <button onClick={() => setShowNote(true)}
+          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-100 text-rose-700 rounded-xl text-sm font-semibold hover:bg-rose-200">
+          <RotateCcw className="w-4 h-4" />Request Return
+        </button>
+      </div>
+    )
+  }
+
+  // Under maintenance → active or return
+  if (status === 'under_maintenance') {
+    if (showNote) {
+      return (
+        <div className="space-y-2 p-3 bg-rose-50 rounded-xl border border-rose-200">
+          <p className="text-sm font-semibold text-rose-800">Return reason:</p>
+          <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
+            placeholder="Reason for return…" className="w-full px-3 py-2 border border-rose-200 rounded-lg text-sm resize-none" />
+          <div className="flex gap-2">
+            <button onClick={() => { setShowNote(false); askHealth('return_initiated', 'Return Initiated', note) }}
+              disabled={!note.trim() || busy}
+              className="flex-1 py-2 bg-rose-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">
+              Next: Confirm Health
+            </button>
+            <button onClick={() => setShowNote(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
           </div>
         </div>
       )
     }
     return (
       <div className="space-y-2">
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
-          <Clock className="w-4 h-4 inline mr-1" />
-          Awaiting admin approval for deployment
-        </div>
+        <div className="p-3 bg-orange-50 border border-orange-200 rounded-xl text-sm text-orange-800">🛠 Device is under maintenance.</div>
         <div className="flex gap-2">
-          <button onClick={() => run(() => approveDeploy(device.id))} disabled={busy}
-            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700">
-            <CheckCircle2 className="w-4 h-4" />{busy ? '…' : 'Approve Deployment'}
+          <button onClick={() => askHealth('active', 'Active / Live')} disabled={busy}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700">
+            <CheckCircle2 className="w-4 h-4" />{busy ? '…' : 'Mark Active Again'}
           </button>
-          <button onClick={() => setShowReject(true)}
-            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-red-100 text-red-700 rounded-xl text-sm font-semibold hover:bg-red-200">
-            <X className="w-4 h-4" />Reject
+          <button onClick={() => setShowNote(true)}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-100 text-rose-700 rounded-xl text-sm font-semibold hover:bg-rose-200">
+            <RotateCcw className="w-4 h-4" />Request Return
           </button>
         </div>
       </div>
     )
   }
 
-  // Deployed → request return
-  if (status === LIFECYCLE.DEPLOYED) {
-    if (showReturn) {
-      return (
-        <div className="space-y-2 p-3 bg-orange-50 rounded-xl border border-orange-200">
-          <p className="text-sm font-semibold text-orange-800">Return reason / note:</p>
-          <textarea value={rejectNote} onChange={e => setRejectNote(e.target.value)} rows={2}
-            placeholder="Reason for return…" className="w-full px-3 py-2 border border-orange-200 rounded-lg text-sm resize-none" />
-          <div className="flex gap-2">
-            <button onClick={() => run(() => requestReturn(device.id, rejectNote))} disabled={busy}
-              className="flex-1 py-2 bg-orange-600 text-white rounded-lg text-sm font-semibold">
-              {busy ? 'Submitting…' : 'Submit Return Request'}
-            </button>
-            <button onClick={() => setShowReturn(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
-          </div>
-        </div>
-      )
-    }
+  // Return initiated — pending approval (shown via PendingBanner above, but fallback)
+  if (status === 'return_initiated' || status === 'return_requested') {
     return (
-      <button onClick={() => setShowReturn(true)}
-        className="w-full flex items-center justify-center gap-2 py-3 bg-orange-500 text-white rounded-xl font-semibold text-sm hover:bg-orange-600">
-        <RotateCcw className="w-4 h-4" />
-        Request Return to Warehouse
+      <button onClick={() => askHealth('return_transit', 'Return In Transit')} disabled={busy}
+        className="w-full flex items-center justify-center gap-2 py-3 bg-pink-600 text-white rounded-xl font-semibold text-sm hover:bg-pink-700 disabled:opacity-50">
+        <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Device Picked Up — Now In Transit'}
       </button>
     )
   }
 
-  // Pending return approval
-  if (status === LIFECYCLE.RETURN_REQUESTED) {
-    if (showReject) {
-      return (
-        <div className="space-y-2 p-3 bg-red-50 rounded-xl border border-red-200">
-          <p className="text-sm font-semibold text-red-800">Rejection reason:</p>
-          <textarea value={rejectNote} onChange={e => setRejectNote(e.target.value)} rows={2}
-            placeholder="Optional note…" className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm resize-none" />
-          <div className="flex gap-2">
-            <button onClick={() => run(() => rejectReturn(device.id, rejectNote))} disabled={busy}
-              className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold">
-              {busy ? 'Rejecting…' : 'Confirm Reject'}
-            </button>
-            <button onClick={() => setShowReject(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Back</button>
-          </div>
-        </div>
-      )
-    }
+  // Return in transit → confirm received at warehouse
+  if (status === 'return_transit') {
     return (
-      <div className="space-y-2">
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
-          <Clock className="w-4 h-4 inline mr-1" />
-          Awaiting admin approval for return to warehouse
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => run(() => approveReturn(device.id))} disabled={busy}
-            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700">
-            <CheckCircle2 className="w-4 h-4" />{busy ? '…' : 'Approve Return'}
-          </button>
-          <button onClick={() => setShowReject(true)}
-            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-red-100 text-red-700 rounded-xl text-sm font-semibold hover:bg-red-200">
-            <X className="w-4 h-4" />Reject
-          </button>
-        </div>
+      <button onClick={() => askHealth('returned', 'Returned to Warehouse')} disabled={busy}
+        className="w-full flex items-center justify-center gap-2 py-3 bg-slate-600 text-white rounded-xl font-semibold text-sm hover:bg-slate-700 disabled:opacity-50">
+        <Package className="w-4 h-4" />{busy ? 'Submitting…' : 'Confirm Received at Warehouse'}
+      </button>
+    )
+  }
+
+  // Returned
+  if (status === 'returned') {
+    return (
+      <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-600 text-center">
+        ✅ Device returned to warehouse. Ready for re-assignment.
+      </div>
+    )
+  }
+
+  // Lost
+  if (status === 'lost') {
+    return (
+      <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 text-center">
+        ❌ Device marked as lost.
       </div>
     )
   }
 
   return null
+}
+
+// ─────────────────────────────────────────────────────────────
+// SET ACTION BUTTON
+// Identical flow to ActionButton but uses set-specific API calls.
+// Does NOT touch the existing ActionButton — completely parallel.
+// ─────────────────────────────────────────────────────────────
+const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
+  const { submitSetLifecycleStep, getSetPendingRequest,
+          withdrawLifecycleRequest, approveLifecycleRequest,
+          rejectLifecycleRequest, clients } = useInventory()
+
+  const [pending, setPending]               = useState(undefined)
+  const [busy, setBusy]                     = useState(false)
+  const [showClientPick, setShowClientPick] = useState(false)
+  const [selectedClient, setSelectedClient] = useState('')
+  const [note, setNote]                     = useState('')
+  const [showNote, setShowNote]             = useState(false)
+  const [healthStep, setHealthStep]         = useState(null)
+
+  const status = device.lifecycleStatus
+
+  const askHealth = (toStep, stepLabel, extraNote = null) =>
+    setHealthStep({ toStep, stepLabel, extraNote })
+
+  const confirmHealth = (health, healthNote) => {
+    if (!healthStep) return
+    const { toStep, extraNote } = healthStep
+    setHealthStep(null)
+    run(() => submitSetLifecycleStep(device.id, toStep, extraNote, health, healthNote))
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    setPending(undefined)
+    getSetPendingRequest(device.id)
+      .then(r => { if (!cancelled) setPending(r ?? null) })
+      .catch(() => { if (!cancelled) setPending(null) })
+    return () => { cancelled = true }
+  }, [device.id, device.lifecycleStatus, getSetPendingRequest])
+
+  useEffect(() => {
+    if (!pending) return
+    const interval = setInterval(async () => {
+      try {
+        const fresh = await getSetPendingRequest(device.id)
+        if (fresh && fresh.status === 'pending') return
+        if (onAction) await onAction()
+        setPending(undefined)
+      } catch { /* ignore */ }
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [pending, device.id, getSetPendingRequest, onAction])
+
+  const run = async (fn) => {
+    setBusy(true)
+    try {
+      const result = await fn()
+      if (result && result.status === 'pending') {
+        setPending(result)
+      } else {
+        if (onAction) await onAction()
+        setPending(undefined)
+      }
+    } catch (e) {
+      alert(e.message || 'Request failed')
+      setBusy(false)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleWithdraw = (requestId) => run(() => withdrawLifecycleRequest(requestId))
+  const handleApprove  = (requestId) => run(() => approveLifecycleRequest(requestId))
+  const handleReject   = (requestId, rejNote) => run(() => rejectLifecycleRequest(requestId, rejNote))
+
+  if (healthStep) {
+    return (
+      <HealthConfirm
+        currentHealth={device.healthStatus}
+        stepLabel={healthStep.stepLabel}
+        onConfirm={confirmHealth}
+        onCancel={() => setHealthStep(null)}
+        busy={busy}
+      />
+    )
+  }
+
+  if (pending === undefined) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-4 text-sm text-gray-400">
+        <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+        </svg>
+        Loading status…
+      </div>
+    )
+  }
+
+  if (pending) {
+    return (
+      <PendingBanner
+        pending={pending}
+        currentUserId={currentUserId}
+        isManager={isManager}
+        onWithdraw={handleWithdraw}
+        onApprove={handleApprove}
+        onReject={handleReject}
+        busy={busy}
+      />
+    )
+  }
+
+  // Available / Warehouse
+  if (status === 'available' || status === 'warehouse') {
+    if (showClientPick) {
+      return (
+        <div className="space-y-3 p-3 bg-blue-50 rounded-xl border border-blue-200">
+          <p className="text-sm font-semibold text-blue-800">Select client to assign set:</p>
+          <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)}
+            className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm bg-white">
+            <option value="">-- Choose client --</option>
+            {clients.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` (${c.company})` : ''}</option>)}
+          </select>
+          <div className="flex gap-2">
+            <button onClick={() => {
+                if (!selectedClient) return
+                setShowClientPick(false)
+                askHealth('assigning', 'Assigning to Client', JSON.stringify({ clientId: selectedClient }))
+              }}
+              disabled={!selectedClient || busy}
+              className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">
+              {busy ? 'Submitting…' : 'Next: Confirm Health'}
+            </button>
+            <button onClick={() => setShowClientPick(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
+          </div>
+        </div>
+      )
+    }
+    return (
+      <button onClick={() => setShowClientPick(true)}
+        className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700">
+        <ArrowRight className="w-4 h-4" />Assign Set to Client
+      </button>
+    )
+  }
+
+  if (status === 'assigning' || status === 'assign_requested' || status === 'assigned') {
+    return (
+      <div className="space-y-2">
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800">
+          <CheckCircle2 className="w-4 h-4 inline mr-1 text-blue-600" />
+          Set assigned to <strong>{device.client?.name || 'client'}</strong>. Mark as ready to deploy when packed.
+        </div>
+        <button onClick={() => askHealth('ready_to_deploy', 'Ready to Deploy')} disabled={busy}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-teal-600 text-white rounded-xl font-semibold text-sm hover:bg-teal-700">
+          <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Ready to Deploy'}
+        </button>
+      </div>
+    )
+  }
+
+  if (status === 'ready_to_deploy' || status === 'deploy_requested') {
+    return (
+      <div className="space-y-2">
+        <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl text-sm text-teal-800">
+          <CheckCircle2 className="w-4 h-4 inline mr-1 text-teal-600" />
+          Set ready to deploy. Mark as In Transit once it leaves warehouse.
+        </div>
+        <button onClick={() => askHealth('in_transit', 'In Transit')} disabled={busy}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 text-white rounded-xl font-semibold text-sm hover:bg-amber-600">
+          <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark In Transit'}
+        </button>
+      </div>
+    )
+  }
+
+  if (status === 'in_transit') {
+    return (
+      <div className="space-y-2">
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
+          <Truck className="w-4 h-4 inline mr-1" />Set is in transit. Confirm receipt at client site.
+        </div>
+        <button onClick={() => askHealth('received', 'Received at Site')} disabled={busy}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-purple-600 text-white rounded-xl font-semibold text-sm hover:bg-purple-700">
+          <Package className="w-4 h-4" />{busy ? 'Submitting…' : 'Confirm Received at Site'}
+        </button>
+      </div>
+    )
+  }
+
+  if (status === 'received') {
+    return (
+      <div className="space-y-2">
+        <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl text-sm text-purple-800">
+          <Package className="w-4 h-4 inline mr-1" />Set received at site. Mark as installed once setup is complete.
+        </div>
+        <button onClick={() => askHealth('installed', 'Installed')} disabled={busy}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 text-white rounded-xl font-semibold text-sm hover:bg-indigo-700">
+          <CheckCircle2 className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Installed'}
+        </button>
+      </div>
+    )
+  }
+
+  if (status === 'installed') {
+    return (
+      <div className="space-y-2">
+        <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-sm text-indigo-800">
+          <CheckCircle2 className="w-4 h-4 inline mr-1" />Set is installed. Mark as Active once running.
+        </div>
+        <button onClick={() => askHealth('active', 'Active / Live')} disabled={busy}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-green-600 text-white rounded-xl font-semibold text-sm hover:bg-green-700">
+          <CheckCircle2 className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Active / Live'}
+        </button>
+      </div>
+    )
+  }
+
+  if (status === 'active' || status === 'deployed') {
+    if (showNote) {
+      return (
+        <div className="space-y-2 p-3 bg-rose-50 rounded-xl border border-rose-200">
+          <p className="text-sm font-semibold text-rose-800">Return reason:</p>
+          <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
+            placeholder="Reason for return…" className="w-full px-3 py-2 border border-rose-200 rounded-lg text-sm resize-none" />
+          <div className="flex gap-2">
+            <button onClick={() => { setShowNote(false); askHealth('return_initiated', 'Return Initiated', note) }}
+              disabled={!note.trim() || busy}
+              className="flex-1 py-2 bg-rose-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">
+              Next: Confirm Health
+            </button>
+            <button onClick={() => setShowNote(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
+          </div>
+        </div>
+      )
+    }
+    return (
+      <div className="flex gap-2">
+        <button onClick={() => askHealth('under_maintenance', 'Under Maintenance')} disabled={busy}
+          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-orange-100 text-orange-700 rounded-xl text-sm font-semibold hover:bg-orange-200">
+          <AlertTriangle className="w-4 h-4" />{busy ? '…' : 'Under Maintenance'}
+        </button>
+        <button onClick={() => setShowNote(true)}
+          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-100 text-rose-700 rounded-xl text-sm font-semibold hover:bg-rose-200">
+          <RotateCcw className="w-4 h-4" />Request Return
+        </button>
+      </div>
+    )
+  }
+
+  if (status === 'under_maintenance') {
+    if (showNote) {
+      return (
+        <div className="space-y-2 p-3 bg-rose-50 rounded-xl border border-rose-200">
+          <p className="text-sm font-semibold text-rose-800">Return reason:</p>
+          <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
+            placeholder="Reason for return…" className="w-full px-3 py-2 border border-rose-200 rounded-lg text-sm resize-none" />
+          <div className="flex gap-2">
+            <button onClick={() => { setShowNote(false); askHealth('return_initiated', 'Return Initiated', note) }}
+              disabled={!note.trim() || busy}
+              className="flex-1 py-2 bg-rose-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">
+              Next: Confirm Health
+            </button>
+            <button onClick={() => setShowNote(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
+          </div>
+        </div>
+      )
+    }
+    return (
+      <div className="space-y-2">
+        <div className="p-3 bg-orange-50 border border-orange-200 rounded-xl text-sm text-orange-800">🛠 Set is under maintenance.</div>
+        <div className="flex gap-2">
+          <button onClick={() => askHealth('active', 'Active / Live')} disabled={busy}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700">
+            <CheckCircle2 className="w-4 h-4" />{busy ? '…' : 'Mark Active Again'}
+          </button>
+          <button onClick={() => setShowNote(true)}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-100 text-rose-700 rounded-xl text-sm font-semibold hover:bg-rose-200">
+            <RotateCcw className="w-4 h-4" />Request Return
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (status === 'return_initiated' || status === 'return_requested') {
+    return (
+      <button onClick={() => askHealth('return_transit', 'Return In Transit')} disabled={busy}
+        className="w-full flex items-center justify-center gap-2 py-3 bg-pink-600 text-white rounded-xl font-semibold text-sm hover:bg-pink-700 disabled:opacity-50">
+        <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Set Picked Up — Now In Transit'}
+      </button>
+    )
+  }
+
+  if (status === 'return_transit') {
+    return (
+      <button onClick={() => askHealth('returned', 'Returned to Warehouse')} disabled={busy}
+        className="w-full flex items-center justify-center gap-2 py-3 bg-slate-600 text-white rounded-xl font-semibold text-sm hover:bg-slate-700 disabled:opacity-50">
+        <Package className="w-4 h-4" />{busy ? 'Submitting…' : 'Confirm Set Received at Warehouse'}
+      </button>
+    )
+  }
+
+  if (status === 'returned') {
+    return (
+      <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-600 text-center">
+        ✅ Set returned to warehouse. Ready for re-assignment.
+      </div>
+    )
+  }
+
+  if (status === 'lost') {
+    return (
+      <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 text-center">
+        ❌ Set marked as lost.
+      </div>
+    )
+  }
+
+  return null
+}
+
+// ─────────────────────────────────────────────────────────────
+// DEVICE IN SET BANNER
+// Shown when a scanned device belongs to a set.
+// No lifecycle actions — only health change request allowed.
+// ─────────────────────────────────────────────────────────────
+const HEALTH_REQUEST_OPTIONS = [
+  { value: 'ok',     label: 'Healthy',      dot: 'bg-green-500', bg: 'border-green-200 bg-green-50', text: 'text-green-800' },
+  { value: 'repair', label: 'Needs Repair', dot: 'bg-amber-400', bg: 'border-amber-200 bg-amber-50', text: 'text-amber-800' },
+  { value: 'damage', label: 'Damaged',      dot: 'bg-red-500',   bg: 'border-red-200 bg-red-50',     text: 'text-red-800'   },
+]
+
+const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
+  const { submitLifecycleStep, getPendingRequest,
+          withdrawLifecycleRequest, approveLifecycleRequest,
+          rejectLifecycleRequest } = useInventory()
+
+  const [pending, setPending]       = useState(undefined)
+  const [busy, setBusy]             = useState(false)
+  const [showHealthReq, setShowHealthReq] = useState(false)
+  const [newHealth, setNewHealth]   = useState(device.healthStatus || 'ok')
+  const [healthNote, setHealthNote] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    setPending(undefined)
+    getPendingRequest(device.id)
+      .then(r => { if (!cancelled) setPending(r ?? null) })
+      .catch(() => { if (!cancelled) setPending(null) })
+    return () => { cancelled = true }
+  }, [device.id, device.healthStatus, getPendingRequest])
+
+  useEffect(() => {
+    if (!pending) return
+    const interval = setInterval(async () => {
+      try {
+        const fresh = await getPendingRequest(device.id)
+        if (fresh && fresh.status === 'pending') return
+        if (onAction) await onAction()
+        setPending(undefined)
+      } catch { /* ignore */ }
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [pending, device.id, getPendingRequest, onAction])
+
+  const run = async (fn) => {
+    setBusy(true)
+    try {
+      const result = await fn()
+      if (result && result.status === 'pending') {
+        setPending(result)
+      } else {
+        if (onAction) await onAction()
+        setPending(undefined)
+      }
+    } catch (e) {
+      alert(e.message || 'Request failed')
+      setBusy(false)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleWithdraw = (requestId) => run(() => withdrawLifecycleRequest(requestId))
+  const handleApprove  = (requestId) => run(() => approveLifecycleRequest(requestId))
+  const handleReject   = (requestId, rejNote) => run(() => rejectLifecycleRequest(requestId, rejNote))
+
+  const handleSubmitHealthRequest = () => {
+    if (newHealth === device.healthStatus) {
+      alert('Please select a different health status.')
+      return
+    }
+    if (newHealth !== 'ok' && !healthNote.trim()) {
+      alert('Please provide a note describing the issue.')
+      return
+    }
+    setShowHealthReq(false)
+    run(() => submitLifecycleStep(device.id, 'health_update', null, newHealth, healthNote.trim() || null))
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Set info banner */}
+      <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm">
+        <p className="font-semibold text-blue-900 mb-0.5">Part of a Device Set</p>
+        <p className="text-blue-700 text-xs">This device is part of a set. Lifecycle is managed through the set.</p>
+      </div>
+
+      {/* Pending health request or health change button */}
+      {pending === undefined ? (
+        <div className="flex items-center justify-center gap-2 py-3 text-sm text-gray-400">
+          <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+          Loading…
+        </div>
+      ) : pending ? (
+        <PendingBanner
+          pending={pending}
+          currentUserId={currentUserId}
+          isManager={isManager}
+          onWithdraw={handleWithdraw}
+          onApprove={handleApprove}
+          onReject={handleReject}
+          busy={busy}
+        />
+      ) : showHealthReq ? (
+        <div className="space-y-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-gray-800">Request Health Change</p>
+            <span className="text-xs text-gray-400">Current: {HEALTH_REQUEST_OPTIONS.find(o => o.value === device.healthStatus)?.label || device.healthStatus}</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {HEALTH_REQUEST_OPTIONS.map(opt => (
+              <button key={opt.value} onClick={() => setNewHealth(opt.value)}
+                className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg border-2 text-xs font-semibold transition-all
+                  ${newHealth === opt.value
+                    ? opt.bg + ' ' + opt.text + ' ring-2 ring-offset-1 ' + opt.dot.replace('bg-', 'ring-')
+                    : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>
+                <span className={`w-2.5 h-2.5 rounded-full ${opt.dot}`} />
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {newHealth !== 'ok' && (
+            <textarea value={healthNote} onChange={e => setHealthNote(e.target.value)} rows={2}
+              placeholder="Describe the issue (required)…"
+              className="w-full px-3 py-2 border border-amber-200 rounded-lg text-sm resize-none bg-white" />
+          )}
+          <div className="flex gap-2">
+            <button onClick={handleSubmitHealthRequest} disabled={busy}
+              className="flex-1 py-2 bg-cyan-600 text-white rounded-lg text-sm font-semibold hover:bg-cyan-700 disabled:opacity-50">
+              {busy ? 'Submitting…' : 'Submit Health Request'}
+            </button>
+            <button onClick={() => setShowHealthReq(false)} disabled={busy}
+              className="px-4 py-2 border border-gray-200 rounded-lg text-sm hover:bg-gray-50">
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => { setNewHealth(device.healthStatus || 'ok'); setHealthNote(''); setShowHealthReq(true) }}
+          className="w-full flex items-center justify-center gap-2 py-2.5 bg-cyan-50 border border-cyan-200 text-cyan-800 rounded-xl text-sm font-semibold hover:bg-cyan-100">
+          🩺 Request Health Status Change
+        </button>
+      )}
+    </div>
+  )
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -351,18 +1052,26 @@ const DeviceHistoryLog = ({ history }) => {
       </button>
       {open && (
         <div className="mt-2 space-y-2 max-h-48 overflow-y-auto">
-          {history.map((h, i) => (
-            <div key={h.id || i} className="flex items-start gap-2 text-xs text-gray-600">
-              <div className="w-1.5 h-1.5 rounded-full bg-gray-300 mt-1.5 shrink-0" />
-              <div>
-                <span className="font-medium">{LIFECYCLE_LABELS[h.fromStatus] || h.fromStatus}</span>
-                <ArrowRight className="w-3 h-3 inline mx-1 text-gray-400" />
-                <span className="font-medium">{LIFECYCLE_LABELS[h.toStatus] || h.toStatus}</span>
-                {h.note && <p className="text-gray-500 mt-0.5">{h.note}</p>}
-                <p className="text-gray-400">{fmt(h.changedAt)}</p>
+          {history.map((h, i) => {
+            // DeviceHistory records use fromStatus/toStatus/changedAt/note
+            // LifecycleRequest records (sets) use fromStep/toStep/approvedAt/note
+            const from = h.fromStatus ?? h.fromStep ?? ''
+            const to   = h.toStatus   ?? h.toStep   ?? ''
+            const at   = h.changedAt  ?? h.approvedAt ?? null
+            const note = h.note       ?? null
+            return (
+              <div key={h.id || i} className="flex items-start gap-2 text-xs text-gray-600">
+                <div className="w-1.5 h-1.5 rounded-full bg-gray-300 mt-1.5 shrink-0" />
+                <div>
+                  <span className="font-medium">{LIFECYCLE_LABELS[from] || from || '—'}</span>
+                  <ArrowRight className="w-3 h-3 inline mx-1 text-gray-400" />
+                  <span className="font-medium">{LIFECYCLE_LABELS[to] || to || '—'}</span>
+                  {note && <p className="text-gray-500 mt-0.5">{note}</p>}
+                  <p className="text-gray-400">{fmt(at)}</p>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
@@ -373,17 +1082,41 @@ const DeviceHistoryLog = ({ history }) => {
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────
 const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) => {
+  const { scanDevice } = useInventory()
   const [device, setDevice] = useState(initialDevice)
   const [copied, setCopied] = useState(false)
+
+  // Read current user from localStorage (set at login)
+  const currentUser  = JSON.parse(localStorage.getItem('user') || '{}')
+  const currentUserId = currentUser.id ?? null
+  const userRole      = (currentUser.role ?? '').toLowerCase().replace(/[\s_-]/g, '')
+  const isManager     = ['manager', 'superadmin'].includes(userRole)
+
+  // Re-fetch device from API after any lifecycle action so status reflects immediately
+  const handleActionDone = async () => {
+    try {
+      const fresh = await scanDevice(device.barcode)
+      setDevice(fresh)
+      onDeviceUpdated && onDeviceUpdated(fresh)
+    } catch {
+      // silently ignore — stale data is better than a crash
+    }
+  }
+
+  const handleManualRefresh = async () => {
+    try {
+      const fresh = await scanDevice(device.barcode)
+      setDevice(fresh)
+      onDeviceUpdated && onDeviceUpdated(fresh)
+    } catch {
+      // ignore
+    }
+  }
 
   // When parent gives us a freshly-scanned device, update local state
   const handleDeviceRefresh = (newDevice) => {
     setDevice(newDevice)
     onDeviceUpdated && onDeviceUpdated(newDevice)
-  }
-
-  const handleHealthUpdated = (newHealth) => {
-    setDevice(d => ({ ...d, healthStatus: newHealth }))
   }
 
   const barcodeData = JSON.stringify({
@@ -431,10 +1164,16 @@ const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) 
 
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-gray-100 sticky top-0 bg-white z-10 rounded-t-2xl">
-          <h3 className="text-lg font-bold text-gray-900">Device Barcode</h3>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-            <X className="w-5 h-5" />
-          </button>
+          <h3 className="text-lg font-bold text-gray-900">{device._isSet ? 'Set Barcode' : 'Device Barcode'}</h3>
+          <div className="flex items-center gap-1">
+            <button onClick={handleManualRefresh} title="Refresh status"
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-400 hover:text-gray-600">
+              <RotateCcw className="w-4 h-4" />
+            </button>
+            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="p-5 space-y-4">
@@ -444,27 +1183,33 @@ const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) 
             <QRCodeSVG id="barcode-qr" value={barcodeData} size={180} level="H" includeMargin />
           </div>
 
-          {/* Device Identity */}
+          {/* Device / Set Identity */}
           <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl">
             <div className="grid grid-cols-2 gap-2 text-sm mb-2">
               <div>
-                <p className="text-gray-500 text-xs">Device Code</p>
+                <p className="text-gray-500 text-xs">{device._isSet ? 'Set Code' : 'Device Code'}</p>
                 <p className="font-bold text-gray-900">{device.code}</p>
               </div>
               <div>
                 <p className="text-gray-500 text-xs">Type</p>
                 <p className="font-bold text-gray-900 capitalize">{device.type?.replace(/-/g, ' ')}</p>
               </div>
-              {device.brand && (
+              {!device._isSet && device.brand && (
                 <div>
                   <p className="text-gray-500 text-xs">Brand</p>
                   <p className="font-semibold text-gray-800">{device.brand}</p>
                 </div>
               )}
-              {device.model && (
+              {!device._isSet && device.model && (
                 <div>
                   <p className="text-gray-500 text-xs">Model</p>
                   <p className="font-semibold text-gray-800">{device.model}</p>
+                </div>
+              )}
+              {device._isSet && device.components?.length > 0 && (
+                <div className="col-span-2">
+                  <p className="text-gray-500 text-xs">Components</p>
+                  <p className="font-semibold text-gray-800">{device.components.length} device{device.components.length !== 1 ? 's' : ''}</p>
                 </div>
               )}
             </div>
@@ -483,11 +1228,12 @@ const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) 
             </p>
             <div className="flex items-center gap-2 flex-wrap">
               <StatusBadge status={device.lifecycleStatus} />
-              <HealthBadge
-                deviceId={device.id}
-                current={device.healthStatus}
-                onUpdated={handleHealthUpdated}
-              />
+              {device._isSet
+                ? <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${device.healthStatus === 'ok' ? 'bg-emerald-100 text-emerald-700' : device.healthStatus === 'repair' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                    ● {device.healthStatus === 'ok' ? 'Healthy' : device.healthStatus === 'repair' ? 'Needs Repair' : 'Damaged'}
+                  </span>
+                : <HealthBadge current={device.healthStatus} />
+              }
             </div>
             {device.client && (
               <p className="text-sm text-gray-600">
@@ -517,8 +1263,29 @@ const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) 
             <p className="text-sm font-semibold text-gray-800">{locationStr}</p>
           </div>
 
-          {/* ACTION BUTTON — context-aware */}
-          <ActionButton device={device} onAction={() => onDeviceUpdated && onDeviceUpdated(device)} />
+          {/* ACTION BUTTON — device in set, standalone device, or set */}
+          {device._isSet ? (
+            <SetActionButton
+              device={device}
+              currentUserId={currentUserId}
+              isManager={isManager}
+              onAction={handleActionDone}
+            />
+          ) : device.setId ? (
+            <DeviceInSetBanner
+              device={device}
+              currentUserId={currentUserId}
+              isManager={isManager}
+              onAction={handleActionDone}
+            />
+          ) : (
+            <ActionButton
+              device={device}
+              currentUserId={currentUserId}
+              isManager={isManager}
+              onAction={handleActionDone}
+            />
+          )}
 
           {/* Download + Print */}
           <div className="flex gap-2">
