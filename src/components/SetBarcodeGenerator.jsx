@@ -164,7 +164,7 @@ const SetBarcodeGenerator = ({ set: initialSet, onClose }) => {
             )}
 
             {/* Assign to Client — status aware */}
-            {set.lifecycleStatus === 'warehouse' ? (
+            {(set.lifecycleStatus === 'warehouse' || set.lifecycleStatus === 'available') ? (
               <button
                 onClick={() => setShowAssignModal(true)}
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium transition-colors"

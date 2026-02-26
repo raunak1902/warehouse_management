@@ -76,7 +76,8 @@ router.post('/', authMiddleware, requirePermission('Sets', 'create'), async (req
     const deviceIds = componentDeviceIds.map(id => parseInt(id))
     const devices = await prisma.device.findMany({ where: { id: { in: deviceIds } } })
     if (devices.length !== deviceIds.length) return res.status(400).json({ error: 'One or more devices not found' })
-    const notInWarehouse = devices.filter(d => d.lifecycleStatus !== 'warehouse')
+    // Accept both 'available' (new) and 'warehouse' (legacy) statuses
+    const notInWarehouse = devices.filter(d => d.lifecycleStatus !== 'warehouse' && d.lifecycleStatus !== 'available')
     if (notInWarehouse.length > 0) return res.status(400).json({ error: `Devices not in warehouse: ${notInWarehouse.map(d => d.code).join(', ')}` })
     const alreadyInSet = devices.filter(d => d.setId)
     if (alreadyInSet.length > 0) return res.status(400).json({ error: `Devices already in a set: ${alreadyInSet.map(d => d.code).join(', ')}` })
@@ -92,7 +93,7 @@ router.post('/', authMiddleware, requirePermission('Sets', 'create'), async (req
 
     const newSet = await prisma.$transaction(async (tx) => {
       const set = await tx.deviceSet.create({
-        data: { code, barcode, setType, setTypeName, name: name || null, lifecycleStatus: 'warehouse', healthStatus: 'ok', location: location || 'Warehouse A', clientId: clientId ? parseInt(clientId) : null },
+        data: { code, barcode, setType, setTypeName, name: name || null, lifecycleStatus: 'available', healthStatus: 'ok', location: location || 'Warehouse A', clientId: clientId ? parseInt(clientId) : null },
       })
       await tx.device.updateMany({ where: { id: { in: deviceIds } }, data: { setId: set.id } })
       return await tx.deviceSet.findUnique({ where: { id: set.id }, include: INCLUDE_SET })
@@ -152,7 +153,7 @@ router.post('/:id/disassemble', authMiddleware, requirePermission('Sets', 'disas
         if (action === 'lost') {
           await tx.device.delete({ where: { id: device.id } })
         } else {
-          await tx.device.update({ where: { id: device.id }, data: { setId: null, lifecycleStatus: 'warehouse', location: 'Warehouse A', healthStatus: dHealth } })
+          await tx.device.update({ where: { id: device.id }, data: { setId: null, lifecycleStatus: 'available', location: 'Warehouse A', healthStatus: dHealth } })
         }
       }
       await tx.deviceSet.delete({ where: { id: parseInt(id) } })
@@ -170,7 +171,7 @@ router.delete('/:id', authMiddleware, requirePermission('Sets', 'delete'), async
     if (!set) return res.status(404).json({ error: 'Set not found' })
     await prisma.$transaction(async (tx) => {
       if (set.components.length > 0) {
-        await tx.device.updateMany({ where: { setId: parseInt(id) }, data: { setId: null, lifecycleStatus: 'warehouse', location: 'Warehouse A' } })
+        await tx.device.updateMany({ where: { setId: parseInt(id) }, data: { setId: null, lifecycleStatus: 'available', location: 'Warehouse A' } })
       }
       await tx.deviceSet.delete({ where: { id: parseInt(id) } })
     })
