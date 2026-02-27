@@ -44,6 +44,8 @@ import {
   getDeviceLifecycleStatus,
   getSubscriptionFilterStatus,
   getSubscriptionStatus,
+  LIFECYCLE_LABELS,
+  LIFECYCLE_COLORS,
 } from '../../context/InventoryContext'
 import {
   ALL_PRODUCT_TYPES,
@@ -65,7 +67,7 @@ import {
   getColorClasses,
 } from '../../config/deviceTypeRegistry'
 import BarcodeScanner from '../../components/BarcodeScanner'
-import BarcodeGenerator from '../../components/BarcodeGenerator'
+import BarcodeResultCard from '../../components/BarcodeResultCard'
 import BulkBarcodeGenerator from '../../components/BulkBarcodeGenerator'
 import DeviceTimeline from '../../components/DeviceTimeline'
 import LifecycleActionModal from '../../components/LifecycleActionModal'
@@ -183,6 +185,24 @@ const Devices = () => {
     deleteDeviceSet,
     getAvailableDevicesForComponent,
   } = useInventory()
+
+  // ── Pending lifecycle requests map: deviceId → true ──────────────────────
+  // Fetched once on mount and whenever devices change, so the 🕐 badge is
+  // always current without polling.
+  const [pendingDeviceIds, setPendingDeviceIds] = useState(new Set())
+
+  useEffect(() => {
+    if (!devices.length) return
+    const token = localStorage.getItem('token')
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    fetch('/api/lifecycle-requests?status=pending', { headers })
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => {
+        const ids = new Set(rows.filter(r => r.deviceId).map(r => r.deviceId))
+        setPendingDeviceIds(ids)
+      })
+      .catch(() => {})
+  }, [devices])
 
   const [lifecycleFilter, setLifecycleFilter] = useState('all')
   const [selectedType, setSelectedType] = useState(null)
@@ -1076,19 +1096,44 @@ const Devices = () => {
                     ? getSubscriptionStatus(device.subscriptionEnd)
                     : { type: 'active', label: '—' }
                   const filterStatus = getSubscriptionFilterStatus(device.subscriptionStart, device.subscriptionEnd)
-                  const locationDisplay =
-                    lifecycle === 'deployed'
-                      ? [device.state, device.district, device.location].filter(Boolean).join(' → ')
-                      : lifecycle === 'assigning' ? 'Assigning' : (device.location || '—')
-                  const lifecycleStyles = {
-                    deployed: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-                    assigning: 'bg-amber-100 text-amber-800 border-amber-200',
-                    warehouse: 'bg-slate-100 text-slate-800 border-slate-200',
-                  }
+
+                  // ── Exact granular step for display ──────────────────────
+                  const exactStep  = device.lifecycleStatus || 'available'
+                  const stepLabel  = LIFECYCLE_LABELS[exactStep] || exactStep
+                  const stepColors = LIFECYCLE_COLORS[exactStep] || LIFECYCLE_COLORS.available
+                  const hasPending = pendingDeviceIds.has(device.id)
+
+                  // ── Location column logic ─────────────────────────────────
+                  // deployed / under_maintenance → full site location
+                  // return_initiated / return_transit → client name + "Returning"
+                  // assigning → installed → client name + target location if known
+                  // warehouse → warehouse name
+                  const locationDisplay = (() => {
+                    const s = exactStep
+                    if (s === 'active' || s === 'under_maintenance' || s === 'deployed') {
+                      return [device.state, device.district, device.location].filter(Boolean).join(' → ') || '—'
+                    }
+                    if (s === 'return_initiated' || s === 'return_transit') {
+                      return client ? `${client.name} · Returning` : 'Returning'
+                    }
+                    if (['assigning','assign_requested','assigned','ready_to_deploy','deploy_requested','in_transit','received','installed'].includes(s)) {
+                      const parts = []
+                      if (client) parts.push(client.name)
+                      // Only show state/district as target — device.location still holds
+                      // the old warehouse name at this point, so we exclude it.
+                      const loc = [device.state, device.district].filter(Boolean).join(' → ')
+                      if (loc) parts.push(loc)
+                      return parts.join(' · ') || '—'
+                    }
+                    // warehouse / returned / available
+                    return device.location || 'Warehouse'
+                  })()
+
                   const LifecycleIcon = lifecycle === 'deployed' ? Truck : lifecycle === 'assigning' ? Link2 : Package
+
                   return (
                     <>
-                    <tr key={device.id} className="hover:bg-gray-50">
+                    <tr key={device.id} className={`hover:bg-gray-50 ${hasPending ? 'bg-amber-50/30' : ''}`}>
                       <td className="py-3 px-4">
                         <span className="inline-flex items-center gap-1.5 font-mono font-medium text-gray-900">
                           <QrCode className="w-4 h-4 text-gray-400" />
@@ -1112,16 +1157,43 @@ const Devices = () => {
                           <span className="text-gray-400 text-xs">Individual</span>
                         )}
                       </td>
+                      {/* ── Lifecycle column: exact step + pending badge ── */}
                       <td className="py-3 px-4">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${lifecycleStyles[lifecycle]}`}>
-                          <LifecycleIcon className="w-3.5 h-3.5" />
-                          {lifecycle === 'deployed' ? 'Deployed' : lifecycle === 'assigning' ? 'Assigning' : 'In Warehouse'}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${stepColors.bg} ${stepColors.text} border-transparent`}>
+                            <LifecycleIcon className="w-3.5 h-3.5" />
+                            {stepLabel}
+                          </span>
+                          {hasPending && (
+                            <span
+                              title="Awaiting manager approval"
+                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 border border-amber-300"
+                            >
+                              🕐 Pending
+                            </span>
+                          )}
+                        </div>
                       </td>
+                      {/* ── Location column ── */}
                       <td className="py-3 px-4 text-sm text-gray-700">
-                        {lifecycle === 'deployed' && <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-gray-400" />{locationDisplay}</span>}
-                        {lifecycle === 'assigning' && <span className="text-amber-700">Ordered, not yet at site</span>}
-                        {lifecycle === 'warehouse' && <span className="flex items-center gap-1"><Package className="w-3.5 h-3.5 text-gray-400" />{locationDisplay}</span>}
+                        {lifecycle === 'deployed' && (
+                          <span className="flex items-center gap-1">
+                            <MapPin className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                            {locationDisplay}
+                          </span>
+                        )}
+                        {lifecycle === 'assigning' && (
+                          <span className="flex items-center gap-1 text-blue-700">
+                            <User className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                            {locationDisplay}
+                          </span>
+                        )}
+                        {lifecycle === 'warehouse' && (
+                          <span className="flex items-center gap-1">
+                            <Package className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                            {locationDisplay}
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-sm">
                         {client ? <span className="flex items-center gap-1 text-gray-700"><User className="w-3.5 h-3.5 text-gray-400" />{client.name}</span> : <span className="text-gray-400">—</span>}
@@ -1194,20 +1266,36 @@ const Devices = () => {
             filteredDevices.map((device) => {
               const lifecycle = getDeviceLifecycleStatus(device)
               const client = device.clientId ? getClientById(device.clientId) : null
-              const locationDisplay =
-                lifecycle === 'deployed'
-                  ? [device.state, device.district, device.location].filter(Boolean).join(' → ')
-                  : lifecycle === 'assigning' ? 'Assigning' : (device.location || '—')
-              const lifecycleBadge = {
-                deployed: 'bg-emerald-100 text-emerald-800',
-                assigning: 'bg-amber-100 text-amber-800',
-                warehouse: 'bg-slate-100 text-slate-700',
-              }
+              const exactStep  = device.lifecycleStatus || 'available'
+              const stepLabel  = LIFECYCLE_LABELS[exactStep] || exactStep
+              const stepColors = LIFECYCLE_COLORS[exactStep] || LIFECYCLE_COLORS.available
+              const hasPending = pendingDeviceIds.has(device.id)
+
+              const locationDisplay = (() => {
+                const s = exactStep
+                if (s === 'active' || s === 'under_maintenance' || s === 'deployed') {
+                  return [device.state, device.district, device.location].filter(Boolean).join(' → ') || '—'
+                }
+                if (s === 'return_initiated' || s === 'return_transit') {
+                  return client ? `${client.name} · Returning` : 'Returning'
+                }
+                if (['assigning','assign_requested','assigned','ready_to_deploy','deploy_requested','in_transit','received','installed'].includes(s)) {
+                  const parts = []
+                  if (client) parts.push(client.name)
+                  // Only show state/district as target — device.location still holds
+                  // the old warehouse name at this point, so we exclude it.
+                  const loc = [device.state, device.district].filter(Boolean).join(' → ')
+                  if (loc) parts.push(loc)
+                  return parts.join(' · ') || '—'
+                }
+                return device.location || 'Warehouse'
+              })()
+
               const LifecycleIcon = lifecycle === 'deployed' ? Truck : lifecycle === 'assigning' ? Link2 : Package
               const hs = getHealthStyle(device.healthStatus)
               const set = device.setId ? deviceSets.find(s => s.id === device.setId || s.id === Number(device.setId)) : null
               return (
-                <div key={device.id} className="p-4 bg-white hover:bg-gray-50 active:bg-gray-100 transition-colors">
+                <div key={device.id} className={`p-4 hover:bg-gray-50 active:bg-gray-100 transition-colors ${hasPending ? 'bg-amber-50/40' : 'bg-white'}`}>
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div>
                       <span className="font-mono font-bold text-gray-900 text-base flex items-center gap-1.5">
@@ -1222,10 +1310,16 @@ const Devices = () => {
                   </div>
 
                   <div className="flex flex-wrap gap-1.5 mb-3">
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${lifecycleBadge[lifecycle]}`}>
+                    {/* Exact lifecycle step badge */}
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${stepColors.bg} ${stepColors.text}`}>
                       <LifecycleIcon className="w-3 h-3" />
-                      {lifecycle === 'deployed' ? 'Deployed' : lifecycle === 'assigning' ? 'Assigning' : 'In Warehouse'}
+                      {stepLabel}
                     </span>
+                    {hasPending && (
+                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 border border-amber-300">
+                        🕐 Pending
+                      </span>
+                    )}
                     {set && (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
                         <Layers className="w-3 h-3" />
@@ -1666,13 +1760,16 @@ const Devices = () => {
         />
       )}
 
-      {/* NEW: Barcode Generator Modal */}
+      {/* Unified Barcode / Lifecycle Card */}
       {showBarcodeModal && selectedDeviceForBarcode && (
-        <BarcodeGenerator
-          device={selectedDeviceForBarcode}
+        <BarcodeResultCard
+          device={{ ...selectedDeviceForBarcode, _isSet: false }}
           onClose={() => {
             setShowBarcodeModal(false)
             setSelectedDeviceForBarcode(null)
+          }}
+          onDeviceUpdated={(fresh) => {
+            setSelectedDeviceForBarcode(fresh)
           }}
         />
       )}

@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   ClipboardList, CheckCircle, XCircle, Clock, ChevronDown, ChevronUp,
   AlertCircle, RefreshCw, Search, X, User, Layers, Monitor,
   Building2, AlertTriangle, FileText, TrendingUp,
   ArrowRight, CheckCircle2, Truck,
-  ChevronRight, Hourglass
+  Hourglass, Plus, Send, Zap, Heart
 } from 'lucide-react'
 import { normaliseRole, ROLES } from '../../App'
 import { useInventory } from '../../context/InventoryContext'
@@ -14,6 +14,84 @@ const authHeaders = () => ({
   'Content-Type': 'application/json',
   Authorization: `Bearer ${localStorage.getItem('token')}`,
 })
+
+// ── Mobile Action Tray (bottom sheet for pending requests) ────────────────────
+const MobileActionTray = ({ group, canApprove, onApprove, onClose }) => {
+  const { pendingRequests } = group
+  const latestPending = pendingRequests[0]
+  const stepMeta = latestPending ? STEP_META[latestPending.toStep] : null
+  const waiting  = latestPending ? waitingDuration(latestPending.createdAt) : null
+
+  if (!latestPending || !stepMeta) return null
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center lg:hidden" onClick={onClose}>
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+
+      {/* Sheet */}
+      <div
+        className="relative w-full max-w-lg bg-white rounded-t-2xl shadow-2xl overflow-hidden animate-slide-up"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Drag handle */}
+        <div className="flex justify-center pt-3 pb-1">
+          <div className="w-10 h-1 rounded-full bg-gray-300" />
+        </div>
+
+        {/* Amber header */}
+        <div className="bg-gradient-to-r from-amber-400 to-orange-400 mx-4 mb-3 rounded-xl p-4 relative overflow-hidden">
+          <div className="absolute -top-4 -right-4 w-20 h-20 rounded-full bg-white/10 pointer-events-none" />
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            <p className="text-xs font-extrabold text-white uppercase tracking-widest">Awaiting Approval</p>
+            {pendingRequests.length > 1 && (
+              <span className="ml-auto bg-white/30 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full">
+                +{pendingRequests.length - 1} more
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xl">{stepMeta.emoji}</span>
+            <span className="text-base font-extrabold text-white">{stepMeta.label}</span>
+            <span className={`ml-auto text-sm font-extrabold px-2 py-0.5 rounded-full flex-shrink-0
+              ${waiting?.urgent ? 'bg-red-500 text-white' : 'bg-white/25 text-white'}`}>
+              {waiting?.label}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="w-6 h-6 rounded-full bg-white/30 border-2 border-white/50 text-white text-[10px] font-extrabold flex items-center justify-center flex-shrink-0">
+              {initials(latestPending.requestedByName)}
+            </span>
+            <span className="text-sm font-bold text-white truncate">{latestPending.requestedByName}</span>
+          </div>
+        </div>
+
+        {/* Action buttons */}
+        {canApprove ? (
+          <div className="flex gap-3 px-4 pb-6 pt-1">
+            <button
+              onClick={() => { onApprove(latestPending, 'approve'); onClose() }}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-extrabold transition-all shadow-md active:scale-95"
+            >
+              <CheckCircle size={15} /> Approve
+            </button>
+            <button
+              onClick={() => { onApprove(latestPending, 'reject'); onClose() }}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 border-2 border-red-200 text-red-600 hover:bg-red-50 rounded-xl text-sm font-extrabold transition-all active:scale-95"
+            >
+              <XCircle size={15} /> Reject
+            </button>
+          </div>
+        ) : (
+          <div className="px-4 pb-6 pt-1">
+            <p className="text-xs text-text-muted text-center font-medium">This request is awaiting manager approval</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 // ── Journey steps (no "available" — page is about deployed devices) ──────────
 const DEPLOY_STEPS  = ['assigning', 'ready_to_deploy', 'in_transit', 'received', 'installed', 'active']
@@ -55,6 +133,63 @@ const waitingDuration = (dateStr) => {
 const initials = (name = '') =>
   name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
 
+// ── Custom Select ─────────────────────────────────────────────────────────────
+const CustomSelect = ({ value, onChange, options, placeholder = 'All' }) => {
+  const [open, setOpen] = useState(false)
+  const ref = React.useRef(null)
+  const selected = options.find(o => String(o.value) === String(value))
+
+  // Close on outside click
+  React.useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  return (
+    <div ref={ref} className="relative sm:w-44">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={`w-full flex items-center justify-between gap-2 px-3 py-2 border rounded-lg text-xs font-medium transition-all bg-gray-50
+          ${open ? 'border-primary-400 ring-2 ring-primary-100 bg-white' : 'border-gray-200 hover:border-gray-300'}`}
+      >
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Building2 size={12} className="text-gray-400 flex-shrink-0" />
+          <span className={`truncate ${selected ? 'text-text-primary font-semibold' : 'text-text-muted'}`}>
+            {selected ? selected.label : placeholder}
+          </span>
+        </div>
+        <ChevronDown size={12} className={`text-gray-400 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-30 overflow-hidden max-h-52 overflow-y-auto">
+          <button
+            type="button"
+            onClick={() => { onChange(''); setOpen(false) }}
+            className={`w-full text-left px-3 py-2 text-xs font-medium transition-colors
+              ${!value ? 'bg-primary-50 text-primary-700 font-bold' : 'text-text-secondary hover:bg-gray-50'}`}
+          >
+            {placeholder}
+          </button>
+          {options.map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => { onChange(String(opt.value)); setOpen(false) }}
+              className={`w-full text-left px-3 py-2 text-xs font-medium transition-colors border-t border-gray-50
+                ${String(value) === String(opt.value) ? 'bg-primary-50 text-primary-700 font-bold' : 'text-text-secondary hover:bg-gray-50'}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Step Track ────────────────────────────────────────────────────────────────
 const StepTrack = ({ currentStatus, pendingStep }) => {
   const isReturn   = isReturnJourney(currentStatus) || isReturnJourney(pendingStep)
@@ -88,17 +223,17 @@ const StepTrack = ({ currentStatus, pendingStep }) => {
                 <div className={`
                   flex items-center justify-center rounded-full border-2 transition-all
                   ${isCurrent
-                    ? 'w-8 h-8 bg-primary-600 border-primary-600 text-white shadow-md ring-2 ring-primary-200'
+                    ? 'w-9 h-9 bg-primary-600 border-primary-600 text-white shadow-md ring-2 ring-primary-200'
                     : isDone
-                    ? 'w-7 h-7 bg-primary-100 border-primary-300 text-primary-600'
+                    ? 'w-8 h-8 bg-primary-100 border-primary-300 text-primary-600'
                     : isPending
-                    ? 'w-8 h-8 bg-amber-500 border-amber-400 text-white shadow-md ring-2 ring-amber-200 animate-pulse'
+                    ? 'w-9 h-9 bg-amber-500 border-amber-400 text-white shadow-md ring-2 ring-amber-200 animate-pulse'
                     : isNext
-                    ? 'w-6 h-6 bg-orange-50 border-orange-300 text-orange-400'
-                    : 'w-5 h-5 bg-gray-100 border-gray-200 text-gray-300'
+                    ? 'w-7 h-7 bg-orange-50 border-orange-300 text-orange-400'
+                    : 'w-6 h-6 bg-gray-100 border-gray-200 text-gray-300'
                   }
                 `}>
-                  {isDone ? <CheckCircle2 size={isCurrent ? 14 : 12} /> : <span style={{ fontSize: isCurrent ? 14 : 11 }}>{meta?.emoji}</span>}
+                  {isDone ? <CheckCircle2 size={isCurrent ? 16 : 14} /> : <span style={{ fontSize: isCurrent ? 17 : 14 }}>{meta?.emoji}</span>}
                 </div>
                 <span className={`text-[9px] leading-tight text-center font-semibold max-w-[44px] truncate
                   ${isCurrent ? 'text-primary-700' : isDone ? 'text-primary-400' : isPending ? 'text-amber-600 font-bold' : isNext ? 'text-orange-400' : 'text-gray-300'}`}>
@@ -145,26 +280,12 @@ const Requests = ({ userRole }) => {
   const [expandedTimeline, setExpandedTimeline] = useState(null)
   const [approveModal,     setApproveModal]     = useState(null)
 
-  const [deployCollapsed,  setDeployCollapsed]  = useState(false)
-  const [returnCollapsed,  setReturnCollapsed]  = useState(false)
-  const [completedCollapsed, setCompletedCollapsed] = useState(true)
-
-  const [searchQuery,      setSearchQuery]      = useState('')
-  const [filterClient,     setFilterClient]     = useState('')
-  const [filterStatus,     setFilterStatus]     = useState('')
-  const [filterRequester,  setFilterRequester]  = useState('')
-
-  // Per-section filter state
-  const [deploySearch,     setDeploySearch]     = useState('')
-  const [deployFilterClient, setDeployFilterClient] = useState('')
-  const [deployFiltersOpen,  setDeployFiltersOpen]  = useState(false)
-  const [returnSearch,     setReturnSearch]     = useState('')
-  const [returnFilterClient, setReturnFilterClient] = useState('')
-  const [returnFiltersOpen,  setReturnFiltersOpen]  = useState(false)
-  const [completedSearch,  setCompletedSearch]  = useState('')
+  const [activeTab,        setActiveTab]        = useState('all')  // 'all' | 'deployments' | 'returns' | 'completed'
+  const [globalSearch,     setGlobalSearch]     = useState('')
+  const [globalFilterClient, setGlobalFilterClient] = useState('')
 
   const [groundUsers,  setGroundUsers]  = useState([])
-  const [deviceSetMap, setDeviceSetMap] = useState({})
+  const deviceSetMapRef = useRef({})
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   const fetchRequests = useCallback(async () => {
@@ -192,9 +313,28 @@ const Requests = ({ userRole }) => {
           }
         }
       }
+      // ── Seed map from devices/sets context ────────────────────────────────
+      // Devices at in-progress statuses must appear on this page even if they
+      // have no lifecycle request records (e.g. migrated from an older system,
+      // or the request was created externally). Without this, devices like one
+      // sitting at return_transit with an already-approved request but no pending
+      // request are completely invisible to the Requests page.
+      const IN_PROGRESS_STATUSES = new Set([
+        'assigning', 'ready_to_deploy', 'in_transit', 'received', 'installed',
+        'return_initiated', 'return_transit', 'under_maintenance',
+      ])
       if (devices) {
         devices.forEach(d => {
           const key = `device-${d.id}`
+          if (!map[key] && IN_PROGRESS_STATUSES.has(d.lifecycleStatus)) {
+            // Device has no request records yet — seed it so it still appears
+            const clientName = clients ? (clients.find(c => c.id === d.clientId)?.name ?? null) : null
+            map[key] = {
+              id: d.id, code: d.code, type: d.type, isSet: false,
+              clientId: d.clientId ?? null, clientName,
+              currentStatus: d.lifecycleStatus, healthStatus: d.healthStatus || 'ok',
+            }
+          }
           if (map[key]) {
             map[key].currentStatus = d.lifecycleStatus
             map[key].healthStatus  = d.healthStatus || 'ok'
@@ -208,6 +348,14 @@ const Requests = ({ userRole }) => {
       if (deviceSets) {
         deviceSets.forEach(s => {
           const key = `set-${s.id}`
+          if (!map[key] && IN_PROGRESS_STATUSES.has(s.lifecycleStatus)) {
+            const clientName = clients ? (clients.find(c => c.id === s.clientId)?.name ?? null) : null
+            map[key] = {
+              id: s.id, code: s.code, type: s.setTypeName, isSet: true,
+              clientId: s.clientId ?? null, clientName,
+              currentStatus: s.lifecycleStatus, healthStatus: s.healthStatus || 'ok',
+            }
+          }
           if (map[key]) {
             map[key].currentStatus = s.lifecycleStatus
             map[key].healthStatus  = s.healthStatus || 'ok'
@@ -218,7 +366,7 @@ const Requests = ({ userRole }) => {
           }
         })
       }
-      setDeviceSetMap(map)
+      deviceSetMapRef.current = map
     } catch (err) {
       setError(err.message)
     } finally {
@@ -242,20 +390,46 @@ const Requests = ({ userRole }) => {
   // ── Group ─────────────────────────────────────────────────────────────────
   const groupedRequests = useMemo(() => {
     const groups = {}
+
+    // Build groups from request records first
     allRequests.forEach(req => {
       const key = req.deviceId ? `device-${req.deviceId}` : `set-${req.setId}`
       if (!groups[key]) {
-        groups[key] = { key, deviceId: req.deviceId, setId: req.setId, code: req.deviceCode || req.setCode, type: req.deviceType, isSet: !!req.setId, info: deviceSetMap[key] || {}, pendingRequests: [], approvedHistory: [] }
+        groups[key] = { key, deviceId: req.deviceId, setId: req.setId, code: req.deviceCode || req.setCode, type: req.deviceType, isSet: !!req.setId, info: deviceSetMapRef.current[key] || {}, pendingRequests: [], approvedHistory: [] }
       }
-      if (req.status === 'pending')       groups[key].pendingRequests.push(req)
-      else if (req.status === 'approved') groups[key].approvedHistory.push(req)
+      if (req.status === 'pending')                          groups[key].pendingRequests.push(req)
+      else if (req.status === 'approved' || req.status === 'rejected') groups[key].approvedHistory.push(req)
     })
+
+    // Also create groups for devices/sets that are in-progress but have no
+    // request records (seeded into deviceSetMap from the devices/sets context).
+    Object.entries(deviceSetMapRef.current).forEach(([key, info]) => {
+      if (!groups[key] && info.currentStatus) {
+        const isSet = key.startsWith('set-')
+        const entityId = parseInt(key.split('-')[1])
+        groups[key] = {
+          key,
+          deviceId: isSet ? null : entityId,
+          setId:    isSet ? entityId : null,
+          code: info.code, type: info.type, isSet,
+          info, pendingRequests: [], approvedHistory: [],
+        }
+      }
+    })
+
     Object.values(groups).forEach(g => {
+      // Always sync latest info from deviceSetMap (status may have changed)
+      if (deviceSetMapRef.current[g.key]) g.info = deviceSetMapRef.current[g.key]
       g.pendingRequests.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      g.approvedHistory.sort((a, b) => new Date(b.approvedAt) - new Date(a.approvedAt))
+      g.approvedHistory.sort((a, b) => {
+        const da = new Date(b.approvedAt || b.updatedAt || b.createdAt)
+        const db = new Date(a.approvedAt || a.updatedAt || a.createdAt)
+        return da - db
+      })
     })
     return Object.values(groups)
-  }, [allRequests, deviceSetMap])
+  // deviceSetMapRef is a ref (always current) — allRequests change is the trigger
+  }, [allRequests])
 
   // Classification helpers
   const isDeployGroup  = (g) => {
@@ -270,10 +444,16 @@ const Requests = ({ userRole }) => {
     const s = g.info.currentStatus
     return s === 'active' || s === 'returned'
   }
-  // Unclassified (no currentStatus yet, or toStep tells us which journey)
-  const journeyOf      = (g) => {
+  // Journey classification — pending toStep always wins over currentStatus.
+  // This ensures a pending return request on an "active" device shows in Returns.
+  const journeyOf = (g) => {
+    const pendingToStep = g.pendingRequests[0]?.toStep
+    if (pendingToStep) {
+      if (RETURN_STEPS.includes(pendingToStep)) return 'return'
+      if (DEPLOY_STEPS.includes(pendingToStep)) return 'deploy'
+    }
     if (!g.info.currentStatus) {
-      const toStep = g.pendingRequests[0]?.toStep || g.approvedHistory[0]?.toStep
+      const toStep = g.approvedHistory[0]?.toStep
       if (toStep && RETURN_STEPS.includes(toStep)) return 'return'
       return 'deploy'
     }
@@ -320,9 +500,18 @@ const Requests = ({ userRole }) => {
       )
     })
 
-  const filteredDeployGroups    = useMemo(() => applyFilter(deployGroups,    deploySearch,    deployFilterClient),    [deployGroups,    deploySearch,    deployFilterClient])
-  const filteredReturnGroups    = useMemo(() => applyFilter(returnGroups,    returnSearch,    returnFilterClient),    [returnGroups,    returnSearch,    returnFilterClient])
-  const filteredCompletedGroups = useMemo(() => applyFilter(completedGroups, completedSearch, ''),                   [completedGroups, completedSearch])
+  const filteredDeployGroups    = useMemo(() => applyFilter(deployGroups,    globalSearch, globalFilterClient), [deployGroups,    globalSearch, globalFilterClient])
+  const filteredReturnGroups    = useMemo(() => applyFilter(returnGroups,    globalSearch, globalFilterClient), [returnGroups,    globalSearch, globalFilterClient])
+  const filteredCompletedGroups = useMemo(() => applyFilter(completedGroups, globalSearch, globalFilterClient), [completedGroups, globalSearch, globalFilterClient])
+
+  // All groups that have at least one pending request — merged across deploy+return,
+  // sorted most urgent first. Used by the "All" tab to surface pending items at the top.
+  const allPendingGroups = useMemo(() => {
+    const combined = [...filteredDeployGroups, ...filteredReturnGroups]
+    return combined
+      .filter(g => g.pendingRequests.length > 0)
+      .sort(sortByPendingThenDate)
+  }, [filteredDeployGroups, filteredReturnGroups])
 
   const counts = useMemo(() => ({
     pending:         allRequests.filter(r => r.status === 'pending').length,
@@ -334,6 +523,92 @@ const Requests = ({ userRole }) => {
     returnPending:   returnGroups.reduce((n, g) => n + g.pendingRequests.length, 0),
     completed:       completedGroups.length,
   }), [allRequests, deployGroups, returnGroups, completedGroups])
+
+  // ── Tab definitions ────────────────────────────────────────────────────────
+  const tabs = [
+    {
+      key: 'all',
+      label: 'All',
+      icon: <ClipboardList size={13} />,
+      pending: counts.deployPending + counts.returnPending,
+      accentActive: 'bg-primary-600 text-white border-primary-600',
+      accentBadge: 'bg-white/25 text-white',
+    },
+    {
+      key: 'deployments',
+      label: 'Deployments',
+      icon: <Truck size={13} />,
+      pending: counts.deployPending,
+      accentActive: 'bg-blue-600 text-white border-blue-600',
+      accentBadge: 'bg-white/25 text-white',
+    },
+    {
+      key: 'returns',
+      label: 'Returns',
+      icon: <ArrowRight size={13} className="rotate-180" />,
+      pending: counts.returnPending,
+      accentActive: 'bg-rose-600 text-white border-rose-600',
+      accentBadge: 'bg-white/25 text-white',
+    },
+    {
+      key: 'completed',
+      label: 'Completed',
+      icon: <CheckCircle2 size={13} />,
+      pending: 0,
+      accentActive: 'bg-emerald-600 text-white border-emerald-600',
+      accentBadge: 'bg-white/25 text-white',
+    },
+  ]
+
+  // ── Section renderer (reusable) ─────────────────────────────────────────────
+  const renderSection = ({ icon, title, subtitle, pendingCount, accentIcon, emptyIcon, emptyMsg, groups }) => (
+    <section>
+      {/* Static section header */}
+      <div className="flex items-center gap-2.5 mb-3">
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${accentIcon}`}>
+          {icon}
+        </div>
+        <div>
+          <h2 className="text-sm font-bold text-text-primary leading-none">{title}</h2>
+          <p className="text-[11px] text-text-muted mt-0.5">
+            {subtitle}
+            {pendingCount > 0 && (
+              <span className="ml-1.5 inline-flex items-center gap-1 bg-amber-100 text-amber-700 border border-amber-300 font-bold px-2 py-0.5 rounded-full text-[11px]">
+                <Clock size={10} className="flex-shrink-0" />
+                {pendingCount} awaiting approval
+              </span>
+            )}
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-2.5">
+        {groups.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 py-12 px-6 text-center shadow-sm">
+            <div className="w-14 h-14 rounded-full bg-gray-50 border border-gray-100 flex items-center justify-center mx-auto mb-3">
+              {emptyIcon}
+            </div>
+            <p className="text-sm font-bold text-text-secondary">{emptyMsg}</p>
+            <p className="text-xs text-text-muted mt-1">Nothing here yet — check back later or try a different filter.</p>
+          </div>
+        ) : (
+          groups.map(group => (
+            <DeviceSetCard
+              key={group.key}
+              group={group}
+              expanded={expandedCard === group.key}
+              timelineExpanded={expandedTimeline === group.key}
+              onToggle={() => setExpandedCard(expandedCard === group.key ? null : group.key)}
+              onToggleTimeline={() => setExpandedTimeline(expandedTimeline === group.key ? null : group.key)}
+              canApprove={canApprove}
+              onApprove={(request, action) => setApproveModal({ request, action })}
+              onRequestDone={fetchRequests}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  )
 
   return (
     <div className="space-y-4">
@@ -360,12 +635,13 @@ const Requests = ({ userRole }) => {
 
       {/* ── Stats Bar ───────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-        {/* Deploy stats */}
-        <div className="bg-white rounded-xl border border-blue-100 p-3 flex items-center gap-3 shadow-sm">
-          <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
+        {/* Deployments tile — blue accent */}
+        <div className="bg-white rounded-xl border border-blue-200 p-3 flex items-center gap-3 shadow-sm relative overflow-hidden" style={{ borderTop: '3px solid #60a5fa' }}>
+          <div className="absolute inset-0 bg-gradient-to-br from-blue-50/50 to-transparent pointer-events-none rounded-xl" />
+          <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0 relative z-10">
             <Truck size={16} className="text-blue-600" />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 relative z-10">
             <p className="text-xl font-bold text-text-primary leading-none">{counts.deployActive}</p>
             <p className="text-[11px] text-text-secondary mt-0.5 font-medium">Deployments</p>
             {counts.deployPending > 0 && (
@@ -373,12 +649,13 @@ const Requests = ({ userRole }) => {
             )}
           </div>
         </div>
-        {/* Return stats */}
-        <div className="bg-white rounded-xl border border-rose-100 p-3 flex items-center gap-3 shadow-sm">
-          <div className="w-9 h-9 rounded-lg bg-rose-50 flex items-center justify-center flex-shrink-0">
+        {/* Returns tile — rose accent */}
+        <div className="bg-white rounded-xl border border-rose-200 p-3 flex items-center gap-3 shadow-sm relative overflow-hidden" style={{ borderTop: '3px solid #fb7185' }}>
+          <div className="absolute inset-0 bg-gradient-to-br from-rose-50/50 to-transparent pointer-events-none rounded-xl" />
+          <div className="w-9 h-9 rounded-lg bg-rose-50 flex items-center justify-center flex-shrink-0 relative z-10">
             <ArrowRight size={16} className="text-rose-500 rotate-180" />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 relative z-10">
             <p className="text-xl font-bold text-text-primary leading-none">{counts.returnActive}</p>
             <p className="text-[11px] text-text-secondary mt-0.5 font-medium">Returns</p>
             {counts.returnPending > 0 && (
@@ -392,17 +669,27 @@ const Requests = ({ userRole }) => {
 
       {/* ── Pending-by-user strip (managers only) ───────────────────────── */}
       {canApprove && counts.pending > 0 && summary.byUser && Object.keys(summary.byUser).length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-1.5 text-amber-700 text-xs font-bold flex-shrink-0">
-            <Clock size={13} /> Awaiting approval:
+        <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-2.5 flex items-center gap-3 flex-wrap shadow-sm">
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="w-5 h-5 rounded-full bg-amber-500 flex items-center justify-center flex-shrink-0">
+              <Clock size={11} className="text-white" />
+            </div>
+            <span className="text-amber-900 text-xs font-extrabold tracking-tight">Awaiting Approval</span>
+            <span className="bg-amber-500 text-white text-[11px] font-extrabold px-2 py-0.5 rounded-full min-w-[20px] text-center">
+              {counts.pending}
+            </span>
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="w-px h-4 bg-amber-300 flex-shrink-0 hidden sm:block" />
+          <div className="flex flex-wrap gap-2">
             {Object.entries(summary.byUser).map(([name, count]) => (
-              <span key={name} className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-amber-200 rounded-full text-xs font-semibold text-amber-800">
-                <span className="w-4 h-4 rounded-full bg-amber-400 text-white text-[9px] font-bold flex items-center justify-center">
+              <span key={name} className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-amber-200 rounded-full text-xs font-bold text-amber-900">
+                <span className="w-5 h-5 rounded-full bg-amber-500 text-white text-[9px] font-extrabold flex items-center justify-center flex-shrink-0">
                   {initials(name)}
                 </span>
-                {name} · {count}
+                {name}
+                <span className="bg-amber-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+                  {count}
+                </span>
               </span>
             ))}
           </div>
@@ -424,249 +711,167 @@ const Requests = ({ userRole }) => {
       )}
 
       {!loading && !error && (
-        <div className="space-y-6">
+        <div className="space-y-4">
 
-          {/* ════════════════════════════════════════════════════════════════
-              📦 DEPLOYMENT REQUESTS
-          ════════════════════════════════════════════════════════════════ */}
-          <section>
-            {/* Section header */}
-            <div className="flex items-center gap-3 mb-3">
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
-                  <Truck size={15} className="text-blue-600" />
-                </div>
-                <div>
-                  <h2 className="text-sm font-bold text-text-primary leading-none">Deployment Requests</h2>
-                  <p className="text-[11px] text-text-muted mt-0.5">
-                    {counts.deployActive} active
-                    {counts.deployPending > 0 && <span className="text-amber-500 font-bold"> · {counts.deployPending} awaiting approval</span>}
-                  </p>
-                </div>
-              </div>
-              {/* Deploy search */}
-              <div className="relative hidden sm:block">
-                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          {/* ── Tabs + Global Search ──────────────────────────────────────── */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+
+            {/* Tab row — horizontal scroll on mobile */}
+            <div className="flex overflow-x-auto border-b border-gray-100" style={{ scrollbarWidth: 'none' }}>
+              {tabs.map(tab => {
+                const isActive = activeTab === tab.key
+                return (
+                  <button
+                    key={tab.key}
+                    onClick={() => { setActiveTab(tab.key); setGlobalSearch(''); setGlobalFilterClient('') }}
+                    className={`flex items-center gap-2 px-4 py-3 text-xs font-bold whitespace-nowrap border-b-2 transition-all flex-shrink-0
+                      ${isActive
+                        ? 'border-primary-600 text-primary-700 bg-primary-50'
+                        : 'border-transparent text-text-secondary hover:text-text-primary hover:bg-gray-50'
+                      }`}
+                  >
+                    <span className={isActive ? 'text-primary-600' : 'text-gray-400'}>{tab.icon}</span>
+                    {tab.label}
+                    {tab.pending > 0 && (
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold
+                        ${isActive
+                          ? 'bg-amber-500 text-white'
+                          : 'bg-amber-100 text-amber-700 border border-amber-300'
+                        }`}>
+                        <Hourglass size={9} />
+                    {tab.pending > 9 ? '9+' : tab.pending}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Global search + filter row */}
+            <div className="flex flex-col sm:flex-row gap-2 p-3">
+              <div className="relative flex-1">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search…"
-                  value={deploySearch}
-                  onChange={e => setDeploySearch(e.target.value)}
-                  className="pl-7 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-300 bg-gray-50 w-36"
+                  placeholder={`Search ${activeTab === 'all' ? 'all requests' : activeTab}…`}
+                  value={globalSearch}
+                  onChange={e => setGlobalSearch(e.target.value)}
+                  className="w-full pl-8 pr-3 py-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-primary-300 focus:border-primary-400 bg-gray-50"
                 />
-              </div>
-              {/* Client filter */}
-              <select
-                value={deployFilterClient}
-                onChange={e => setDeployFilterClient(e.target.value)}
-                className="hidden sm:block px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-300 bg-gray-50 max-w-[120px]"
-              >
-                <option value="">All Clients</option>
-                {clients?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              <button
-                onClick={() => setDeployCollapsed(c => !c)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-text-secondary hover:bg-gray-50 transition-colors flex-shrink-0"
-              >
-                {deployCollapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
-                {deployCollapsed ? 'Show' : 'Hide'}
-              </button>
-            </div>
-
-            {/* Mobile search row */}
-            {!deployCollapsed && (
-              <div className="flex sm:hidden gap-2 mb-3">
-                <div className="relative flex-1">
-                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input type="text" placeholder="Search deployments…" value={deploySearch} onChange={e => setDeploySearch(e.target.value)}
-                    className="w-full pl-7 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-300 bg-gray-50" />
-                </div>
-                <select value={deployFilterClient} onChange={e => setDeployFilterClient(e.target.value)}
-                  className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-gray-50">
-                  <option value="">All Clients</option>
-                  {clients?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-            )}
-
-            {!deployCollapsed && (
-              <div className="space-y-2.5">
-                {filteredDeployGroups.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-gray-200 p-10 text-center shadow-sm">
-                    <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center mx-auto mb-2">
-                      <Truck size={20} className="text-blue-300" />
-                    </div>
-                    <p className="text-sm font-semibold text-text-muted">No active deployment requests</p>
-                  </div>
-                ) : (
-                  filteredDeployGroups.map(group => (
-                    <DeviceSetCard
-                      key={group.key}
-                      group={group}
-                      expanded={expandedCard === group.key}
-                      timelineExpanded={expandedTimeline === group.key}
-                      onToggle={() => setExpandedCard(expandedCard === group.key ? null : group.key)}
-                      onToggleTimeline={() => setExpandedTimeline(expandedTimeline === group.key ? null : group.key)}
-                      canApprove={canApprove}
-                      onApprove={(request, action) => setApproveModal({ request, action })}
-                    />
-                  ))
+                {globalSearch && (
+                  <button onClick={() => setGlobalSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                    <X size={12} />
+                  </button>
                 )}
               </div>
-            )}
-          </section>
-
-          {/* Divider */}
-          <div className="border-t border-dashed border-gray-200" />
-
-          {/* ════════════════════════════════════════════════════════════════
-              ↩️ RETURN REQUESTS
-          ════════════════════════════════════════════════════════════════ */}
-          <section>
-            <div className="flex items-center gap-3 mb-3">
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center flex-shrink-0">
-                  <ArrowRight size={15} className="text-rose-500 rotate-180" />
-                </div>
-                <div>
-                  <h2 className="text-sm font-bold text-text-primary leading-none">Return Requests</h2>
-                  <p className="text-[11px] text-text-muted mt-0.5">
-                    {counts.returnActive} active
-                    {counts.returnPending > 0 && <span className="text-amber-500 font-bold"> · {counts.returnPending} awaiting approval</span>}
-                  </p>
-                </div>
-              </div>
-              <div className="relative hidden sm:block">
-                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search…"
-                  value={returnSearch}
-                  onChange={e => setReturnSearch(e.target.value)}
-                  className="pl-7 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-rose-300 bg-gray-50 w-36"
-                />
-              </div>
-              <select
-                value={returnFilterClient}
-                onChange={e => setReturnFilterClient(e.target.value)}
-                className="hidden sm:block px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-rose-300 bg-gray-50 max-w-[120px]"
-              >
-                <option value="">All Clients</option>
-                {clients?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              <button
-                onClick={() => setReturnCollapsed(c => !c)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-text-secondary hover:bg-gray-50 transition-colors flex-shrink-0"
-              >
-                {returnCollapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
-                {returnCollapsed ? 'Show' : 'Hide'}
-              </button>
+              <CustomSelect
+                value={globalFilterClient}
+                onChange={setGlobalFilterClient}
+                placeholder="All Clients"
+                options={clients?.map(c => ({ value: c.id, label: c.name })) || []}
+              />
             </div>
+          </div>
 
-            {!returnCollapsed && (
-              <div className="flex sm:hidden gap-2 mb-3">
-                <div className="relative flex-1">
-                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input type="text" placeholder="Search returns…" value={returnSearch} onChange={e => setReturnSearch(e.target.value)}
-                    className="w-full pl-7 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-rose-300 bg-gray-50" />
-                </div>
-                <select value={returnFilterClient} onChange={e => setReturnFilterClient(e.target.value)}
-                  className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-gray-50">
-                  <option value="">All Clients</option>
-                  {clients?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-            )}
+          {/* ── Tab Content ───────────────────────────────────────────────── */}
+          <div className="space-y-6">
 
-            {!returnCollapsed && (
-              <div className="space-y-2.5">
-                {filteredReturnGroups.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-gray-200 p-10 text-center shadow-sm">
-                    <div className="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center mx-auto mb-2">
-                      <ArrowRight size={20} className="text-rose-300 rotate-180" />
-                    </div>
-                    <p className="text-sm font-semibold text-text-muted">No active return requests</p>
-                  </div>
-                ) : (
-                  filteredReturnGroups.map(group => (
-                    <DeviceSetCard
-                      key={group.key}
-                      group={group}
-                      expanded={expandedCard === group.key}
-                      timelineExpanded={expandedTimeline === group.key}
-                      onToggle={() => setExpandedCard(expandedCard === group.key ? null : group.key)}
-                      onToggleTimeline={() => setExpandedTimeline(expandedTimeline === group.key ? null : group.key)}
-                      canApprove={canApprove}
-                      onApprove={(request, action) => setApproveModal({ request, action })}
-                    />
-                  ))
+            {/* ALL tab */}
+            {activeTab === 'all' && (
+              <>
+                {/* ── Awaiting Approval: ALL pending groups (deploy + return merged) ── */}
+                {allPendingGroups.length > 0 && (
+                  <>
+                    {renderSection({
+                      icon: <Hourglass size={15} className="text-amber-600" />,
+                      title: 'Awaiting Approval',
+                      subtitle: `Across all request types`,
+                      pendingCount: allPendingGroups.reduce((n, g) => n + g.pendingRequests.length, 0),
+                      accentIcon: 'bg-amber-100',
+                      emptyIcon: <Hourglass size={20} className="text-amber-300" />,
+                      emptyMsg: '',
+                      groups: allPendingGroups,
+                    })}
+                    <div className="border-t border-dashed border-gray-200" />
+                  </>
                 )}
-              </div>
+
+                {renderSection({
+                  icon: <Truck size={15} className="text-blue-600" />,
+                  title: 'Deployment Requests',
+                  subtitle: `${counts.deployActive} active`,
+                  pendingCount: 0,
+                  accentIcon: 'bg-blue-100',
+                  emptyIcon: <Truck size={20} className="text-blue-300" />,
+                  emptyMsg: 'No active deployment requests',
+                  groups: filteredDeployGroups,
+                })}
+
+                <div className="border-t border-dashed border-gray-200" />
+
+                {renderSection({
+                  icon: <ArrowRight size={15} className="text-rose-500 rotate-180" />,
+                  title: 'Return Requests',
+                  subtitle: `${counts.returnActive} active`,
+                  pendingCount: 0,
+                  accentIcon: 'bg-rose-100',
+                  emptyIcon: <ArrowRight size={20} className="text-rose-300 rotate-180" />,
+                  emptyMsg: 'No active return requests',
+                  groups: filteredReturnGroups,
+                })}
+
+                <div className="border-t border-dashed border-gray-200" />
+
+                {renderSection({
+                  icon: <CheckCircle2 size={15} className="text-emerald-600" />,
+                  title: 'Completed',
+                  subtitle: `${counts.completed} devices · active or returned to warehouse`,
+                  pendingCount: 0,
+                  accentIcon: 'bg-emerald-100',
+                  emptyIcon: <CheckCircle2 size={20} className="text-emerald-300" />,
+                  emptyMsg: 'No completed requests found',
+                  groups: filteredCompletedGroups,
+                })}
+              </>
             )}
-          </section>
 
-          {/* Divider */}
-          <div className="border-t border-dashed border-gray-200" />
+            {/* DEPLOYMENTS tab */}
+            {activeTab === 'deployments' && renderSection({
+              icon: <Truck size={15} className="text-blue-600" />,
+              title: 'Deployment Requests',
+              subtitle: `${counts.deployActive} active`,
+              pendingCount: counts.deployPending,
+              accentIcon: 'bg-blue-100',
+              emptyIcon: <Truck size={20} className="text-blue-300" />,
+              emptyMsg: 'No active deployment requests',
+              groups: filteredDeployGroups,
+            })}
 
-          {/* ════════════════════════════════════════════════════════════════
-              ✅ COMPLETED  (collapsed by default)
-          ════════════════════════════════════════════════════════════════ */}
-          <section>
-            <div className="flex items-center gap-3 mb-3">
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
-                  <CheckCircle2 size={15} className="text-emerald-600" />
-                </div>
-                <div>
-                  <h2 className="text-sm font-bold text-text-primary leading-none">Completed</h2>
-                  <p className="text-[11px] text-text-muted mt-0.5">{counts.completed} devices · active or returned to warehouse</p>
-                </div>
-              </div>
-              {!completedCollapsed && (
-                <div className="relative hidden sm:block">
-                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="Search…"
-                    value={completedSearch}
-                    onChange={e => setCompletedSearch(e.target.value)}
-                    className="pl-7 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-emerald-300 bg-gray-50 w-36"
-                  />
-                </div>
-              )}
-              <button
-                onClick={() => setCompletedCollapsed(c => !c)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-text-secondary hover:bg-gray-50 transition-colors flex-shrink-0"
-              >
-                {completedCollapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
-                {completedCollapsed ? 'Show' : 'Hide'}
-              </button>
-            </div>
+            {/* RETURNS tab */}
+            {activeTab === 'returns' && renderSection({
+              icon: <ArrowRight size={15} className="text-rose-500 rotate-180" />,
+              title: 'Return Requests',
+              subtitle: `${counts.returnActive} active`,
+              pendingCount: counts.returnPending,
+              accentIcon: 'bg-rose-100',
+              emptyIcon: <ArrowRight size={20} className="text-rose-300 rotate-180" />,
+              emptyMsg: 'No active return requests',
+              groups: filteredReturnGroups,
+            })}
 
-            {!completedCollapsed && (
-              <div className="space-y-2.5">
-                {filteredCompletedGroups.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-gray-200 p-10 text-center shadow-sm">
-                    <p className="text-sm font-semibold text-text-muted">No completed requests found</p>
-                  </div>
-                ) : (
-                  filteredCompletedGroups.map(group => (
-                    <DeviceSetCard
-                      key={group.key}
-                      group={group}
-                      expanded={expandedCard === group.key}
-                      timelineExpanded={expandedTimeline === group.key}
-                      onToggle={() => setExpandedCard(expandedCard === group.key ? null : group.key)}
-                      onToggleTimeline={() => setExpandedTimeline(expandedTimeline === group.key ? null : group.key)}
-                      canApprove={canApprove}
-                      onApprove={(request, action) => setApproveModal({ request, action })}
-                    />
-                  ))
-                )}
-              </div>
-            )}
-          </section>
+            {/* COMPLETED tab */}
+            {activeTab === 'completed' && renderSection({
+              icon: <CheckCircle2 size={15} className="text-emerald-600" />,
+              title: 'Completed',
+              subtitle: `${counts.completed} devices · active or returned to warehouse`,
+              pendingCount: 0,
+              accentIcon: 'bg-emerald-100',
+              emptyIcon: <CheckCircle2 size={20} className="text-emerald-300" />,
+              emptyMsg: 'No completed requests found',
+              groups: filteredCompletedGroups,
+            })}
 
+          </div>
         </div>
       )}
 
@@ -683,13 +888,246 @@ const Requests = ({ userRole }) => {
   )
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NEXT STEP REQUEST PANEL
+// Inline slide-down panel inside expanded card (no pending requests).
+// Ground Team → creates pending request. Manager → auto-approved.
+// ═══════════════════════════════════════════════════════════════════════════════
+const HEALTH_OPTIONS_PANEL = [
+  { value: 'ok',      label: 'Healthy',       dot: 'bg-emerald-500', cls: 'border-emerald-200 bg-emerald-50 text-emerald-800' },
+  { value: 'repair',  label: 'Needs Repair',  dot: 'bg-amber-400',   cls: 'border-amber-200  bg-amber-50  text-amber-800'  },
+  { value: 'damaged', label: 'Damaged',       dot: 'bg-red-500',     cls: 'border-red-200    bg-red-50    text-red-800'    },
+]
+
+// Steps that require a client picker (handled via barcode only — skip here)
+const BARCODE_ONLY_STEPS = new Set(['assigning'])
+
+// Steps that have multiple options to pick from
+const MULTI_NEXT_STEPS = {
+  active:            ['return_initiated', 'under_maintenance', 'lost'],
+  under_maintenance: ['return_initiated', 'active', 'lost'],
+}
+
+const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
+  const { info, isSet, pendingRequests } = group
+  const currentStatus = info.currentStatus || ''
+  const deviceId      = group.deviceId
+  const setId         = group.setId
+
+  // Determine available next steps
+  const validNextSteps = (VALID_NEXT_STEPS[currentStatus] || []).filter(s => !BARCODE_ONLY_STEPS.has(s) && s !== 'health_update')
+
+  // Terminal / completed — no button
+  const isTerminal = ['returned', 'available', 'lost'].includes(currentStatus) || validNextSteps.length === 0
+
+  const [chosenStep,  setChosenStep]  = useState(validNextSteps.length === 1 ? validNextSteps[0] : '')
+  const [health,      setHealth]      = useState('ok')
+  const [healthNote,  setHealthNote]  = useState('')
+  const [note,        setNote]        = useState('')
+  const [submitting,  setSubmitting]  = useState(false)
+  const [done,        setDone]        = useState(false)
+
+  // Reset panel when group changes (skip on initial mount so the panel
+  // stays open when the card first expands via the Next Step button)
+  const isMountedRef = React.useRef(false)
+  React.useEffect(() => {
+    if (!isMountedRef.current) { isMountedRef.current = true; return }
+    setOpen(false); setChosenStep(validNextSteps.length === 1 ? validNextSteps[0] : '')
+    setHealth('ok'); setHealthNote(''); setNote(''); setSubmitting(false); setDone(false)
+  }, [group.key])
+
+  if (isTerminal) return null
+
+  const isMulti    = validNextSteps.length > 1
+  const stepMeta   = chosenStep ? STEP_META[chosenStep] : null
+  const canSubmit  = chosenStep && (health === 'ok' || healthNote.trim())
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return
+    setSubmitting(true)
+    try {
+      await lifecycleRequestApi.create({
+        ...(deviceId ? { deviceId } : { setId }),
+        toStep:      chosenStep,
+        healthStatus: health,
+        healthNote:  health !== 'ok' ? healthNote.trim() : undefined,
+        note:        note.trim() || undefined,
+      })
+      setDone(true)
+      setTimeout(() => { setOpen(false); setDone(false); onDone() }, 1200)
+    } catch (err) {
+      alert(err.message || 'Failed to submit request')
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="px-4 pb-4">
+      {/* Inline panel — always shown (visibility controlled by parent via nextStepOpen) */}
+      {(() => { return (
+        <div className="rounded-xl border-2 border-primary-200 bg-white overflow-hidden shadow-md">
+
+          {/* Panel header */}
+          <div className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-primary-600 to-primary-500">
+            <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
+              <Send size={12} className="text-white" />
+            </div>
+            <p className="text-xs font-extrabold text-white tracking-wide uppercase">Request Next Step</p>
+            {canApprove && (
+              <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-bold text-amber-200 bg-white/10 border border-white/20 px-2 py-0.5 rounded-full">
+                <Zap size={9} /> Will auto-approve
+              </span>
+            )}
+            <button
+              onClick={() => setOpen(false)}
+              className="ml-auto p-1 hover:bg-white/20 rounded-lg transition-colors"
+            >
+              <X size={14} className="text-white" />
+            </button>
+          </div>
+
+          <div className="p-4 space-y-4">
+
+            {/* Step picker (multi-option steps) */}
+            {isMulti && (
+              <div>
+                <p className="text-[10px] font-extrabold text-text-muted uppercase tracking-widest mb-2">Select Next Step</p>
+                <div className="flex flex-col gap-2">
+                  {validNextSteps.map(step => {
+                    const meta = STEP_META[step]
+                    const selected = chosenStep === step
+                    return (
+                      <button
+                        key={step}
+                        onClick={() => setChosenStep(step)}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 text-left transition-all
+                          ${selected
+                            ? `${meta.bgClass} ${meta.borderClass} ${meta.textClass} shadow-sm`
+                            : 'border-gray-200 bg-gray-50 text-text-secondary hover:border-gray-300 hover:bg-gray-100'
+                          }`}
+                      >
+                        <span className="text-lg flex-shrink-0">{meta.emoji}</span>
+                        <span className="text-xs font-bold">{meta.label}</span>
+                        {selected && <CheckCircle2 size={14} className="ml-auto flex-shrink-0" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Single step confirmation */}
+            {!isMulti && stepMeta && (
+              <div className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border ${stepMeta.bgClass} ${stepMeta.borderClass}`}>
+                <span className="text-xl">{stepMeta.emoji}</span>
+                <div>
+                  <p className={`text-xs font-extrabold ${stepMeta.textClass}`}>{stepMeta.label}</p>
+                  <p className="text-[10px] text-text-muted mt-0.5">
+                    Requesting transition from <span className="font-bold">{STEP_META[currentStatus]?.label ?? currentStatus}</span>
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Health status */}
+            <div>
+              <p className="text-[10px] font-extrabold text-text-muted uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                <Heart size={10} className="text-rose-400" />
+                Device Health <span className="text-rose-500">*</span>
+              </p>
+              <div className="flex gap-2">
+                {HEALTH_OPTIONS_PANEL.map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => { setHealth(opt.value); if (opt.value === 'ok') setHealthNote('') }}
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg border-2 text-[11px] font-bold transition-all
+                      ${health === opt.value ? opt.cls + ' border-opacity-100 shadow-sm' : 'border-gray-200 bg-gray-50 text-gray-500 hover:border-gray-300'}`}
+                  >
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${opt.dot}`} />
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Health note (required if not ok) */}
+            {health !== 'ok' && (
+              <div>
+                <label className="block text-[10px] font-extrabold text-text-muted uppercase tracking-widest mb-1.5">
+                  Health Note <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  value={healthNote}
+                  onChange={e => setHealthNote(e.target.value)}
+                  rows={2}
+                  placeholder="Describe the issue…"
+                  maxLength={300}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-primary-300 focus:border-primary-400 resize-none"
+                />
+              </div>
+            )}
+
+            {/* Optional note */}
+            <div>
+              <label className="block text-[10px] font-extrabold text-text-muted uppercase tracking-widest mb-1.5">
+                Note <span className="text-gray-400 font-medium normal-case">(optional)</span>
+              </label>
+              <textarea
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                rows={2}
+                placeholder="Any additional context…"
+                maxLength={300}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-primary-300 focus:border-primary-400 resize-none"
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => setOpen(false)}
+                disabled={submitting}
+                className="px-4 py-2 border border-gray-200 text-text-secondary rounded-lg hover:bg-gray-50 text-xs font-bold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={!canSubmit || submitting}
+                className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-white text-xs font-extrabold transition-all shadow-sm
+                  ${done
+                    ? 'bg-emerald-600'
+                    : canSubmit && !submitting
+                    ? 'bg-primary-600 hover:bg-primary-700 active:scale-95'
+                    : 'bg-gray-300 cursor-not-allowed'
+                  }`}
+              >
+                {done ? (
+                  <><CheckCircle2 size={13} /> Submitted!</>
+                ) : submitting ? (
+                  <><div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Submitting…</>
+                ) : canApprove ? (
+                  <><Zap size={13} /> Approve & Advance</>
+                ) : (
+                  <><Send size={13} /> Submit Request</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )})()}
+    </div>
+  )
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEVICE / SET CARD
 // ═══════════════════════════════════════════════════════════════════════════════
 const DeviceSetCard = ({
   group, expanded, timelineExpanded,
   onToggle, onToggleTimeline,
-  canApprove, onApprove
+  canApprove, onApprove, onRequestDone
 }) => {
   const { code, type, isSet, info, pendingRequests, approvedHistory } = group
   const currentStatus = info.currentStatus || 'assigning'
@@ -702,6 +1140,8 @@ const DeviceSetCard = ({
   const latestPending = pendingRequests[0]
   const stepMeta      = latestPending ? STEP_META[latestPending.toStep] : null
   const waiting       = latestPending ? waitingDuration(latestPending.createdAt) : null
+  const [mobileTrayCopen, setMobileTrayCopen] = React.useState(false)
+  const [nextStepOpen,    setNextStepOpen]    = React.useState(false)
 
   // Client color hash for avatar
   const clientColor = (() => {
@@ -715,6 +1155,7 @@ const DeviceSetCard = ({
   })()
 
   return (
+    <>
     <div className={`bg-white rounded-xl border-2 shadow-sm overflow-hidden transition-all duration-200
       ${hasPending
         ? 'border-amber-300 shadow-amber-50'
@@ -784,20 +1225,49 @@ const DeviceSetCard = ({
 
               {/* Pending preview (mobile only — desktop shows in right panel) */}
               {latestPending && stepMeta && (
-                <div className="mt-2 lg:hidden flex items-center gap-2 flex-wrap">
-                  <div className={`flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-bold ${stepMeta.bgClass} ${stepMeta.textClass} ${stepMeta.borderClass}`}>
+                <button
+                  className="mt-2 lg:hidden flex items-center gap-2 flex-wrap w-full text-left"
+                  onClick={e => { e.stopPropagation(); setMobileTrayCopen(true) }}
+                >
+                  <div className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-bold ${stepMeta.bgClass} ${stepMeta.textClass} ${stepMeta.borderClass}`}>
                     <ArrowRight size={9} /> {stepMeta.emoji} {stepMeta.label}
                   </div>
                   <span className={`text-[10px] font-bold ${waiting?.urgent ? 'text-red-500' : 'text-amber-600'}`}>
                     waiting {waiting?.label}
                   </span>
-                </div>
+                  <span className="ml-auto text-[10px] font-bold text-primary-600 underline underline-offset-2">Tap to review →</span>
+                </button>
               )}
             </div>
 
-            {/* Chevron */}
-            <div className="flex-shrink-0 mt-1 text-gray-400">
-              {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            {/* Top-right: Next Step button (when no pending) + Chevron */}
+            <div className="flex items-center gap-2 flex-shrink-0 mt-1" onClick={e => e.stopPropagation()}>
+              {!hasPending && (() => {
+                const validSteps = (VALID_NEXT_STEPS[currentStatus] || []).filter(s => s !== 'assigning' && s !== 'health_update')
+                const isTerminal = ['returned', 'available', 'lost'].includes(currentStatus) || validSteps.length === 0
+                if (isTerminal) return null
+                const nextStep   = validSteps.length === 1 ? validSteps[0] : null
+                const meta       = nextStep ? STEP_META[nextStep] : null
+                return (
+                  <button
+                    onClick={() => {
+                      setNextStepOpen(o => !o)
+                      if (!expanded) onToggle()
+                    }}
+                    className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition-all
+                      ${nextStepOpen
+                        ? 'bg-primary-600 border-primary-600 text-white shadow-sm'
+                        : 'bg-primary-50 border-primary-200 text-primary-700 hover:bg-primary-100 hover:border-primary-300'
+                      }`}
+                  >
+                    <Plus size={11} />
+                    {meta ? <>{meta.emoji} {meta.label}</> : 'Next Step'}
+                  </button>
+                )
+              })()}
+              <div className="text-gray-400">
+                {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </div>
             </div>
           </div>
 
@@ -809,40 +1279,61 @@ const DeviceSetCard = ({
 
         {/* ── RIGHT PANEL (desktop only): pending request quick view ──────── */}
         {hasPending && latestPending && stepMeta && (
-          <div className="hidden lg:flex flex-col justify-center gap-2 px-4 py-3 min-w-[240px] max-w-[280px] bg-amber-50/50">
-            <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest flex items-center gap-1">
-              <Clock size={10} className="text-amber-500" /> Awaiting Approval
-            </p>
-            <div className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-bold w-fit ${stepMeta.bgClass} ${stepMeta.textClass} ${stepMeta.borderClass}`}>
-              <ArrowRight size={10} /> {stepMeta.emoji} {stepMeta.label}
+          <div className="hidden lg:flex flex-col justify-between gap-3 px-5 py-4 min-w-[260px] max-w-[300px] bg-gradient-to-br from-amber-400 to-orange-400 relative overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Decorative background circle */}
+            <div className="absolute -top-6 -right-6 w-24 h-24 rounded-full bg-white/10 pointer-events-none" />
+            <div className="absolute -bottom-4 -left-4 w-16 h-16 rounded-full bg-white/10 pointer-events-none" />
+
+            {/* Header */}
+            <div className="flex items-center gap-2 relative z-10">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                <p className="text-xs font-extrabold text-white uppercase tracking-widest">Awaiting Approval</p>
+              </div>
+              {pendingRequests.length > 1 && (
+                <span className="ml-auto bg-white/30 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full flex-shrink-0">
+                  +{pendingRequests.length - 1} more
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
-              <span className="w-5 h-5 rounded-full bg-primary-100 text-primary-700 text-[9px] font-bold flex items-center justify-center flex-shrink-0">
+
+            {/* Step badge */}
+            <div className="relative z-10">
+              <div className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white/20 border border-white/30 backdrop-blur-sm w-full">
+                <span className="text-lg">{stepMeta.emoji}</span>
+                <span className="text-sm font-extrabold text-white truncate">{stepMeta.label}</span>
+              </div>
+            </div>
+
+            {/* Requester + waiting */}
+            <div className="flex items-center gap-2 relative z-10">
+              <span className="w-7 h-7 rounded-full bg-white/30 border-2 border-white/50 text-white text-[10px] font-extrabold flex items-center justify-center flex-shrink-0 shadow-sm">
                 {initials(latestPending.requestedByName)}
               </span>
-              <span className="font-semibold text-text-secondary truncate">{latestPending.requestedByName}</span>
-              <span className="text-gray-300">·</span>
-              <span className={`font-bold flex-shrink-0 ${waiting?.urgent ? 'text-red-500' : 'text-amber-600'}`}>
+              <span className="text-sm font-bold text-white truncate">{latestPending.requestedByName}</span>
+              <span className={`ml-auto text-sm font-extrabold flex-shrink-0 px-2 py-0.5 rounded-full
+                ${waiting?.urgent ? 'bg-red-500 text-white' : 'bg-white/25 text-white'}`}>
                 {waiting?.label}
               </span>
             </div>
+
+            {/* Action buttons */}
             {canApprove && (
-              <div className="flex items-center gap-1.5 mt-1" onClick={e => e.stopPropagation()}>
+              <div className="flex gap-2 relative z-10">
                 <button
                   onClick={() => onApprove(latestPending, 'approve')}
-                  className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold transition-all shadow-sm"
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 bg-white hover:bg-emerald-50 text-emerald-700 rounded-xl text-xs font-extrabold transition-all shadow-md hover:shadow-lg active:scale-95"
                 >
-                  <CheckCircle size={11} /> Approve
+                  <CheckCircle size={13} /> Approve
                 </button>
                 <button
                   onClick={() => onApprove(latestPending, 'reject')}
-                  className="flex items-center gap-1 px-2.5 py-1 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-[11px] font-bold transition-all"
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 bg-white/20 hover:bg-white/30 border border-white/40 text-white rounded-xl text-xs font-extrabold transition-all active:scale-95"
                 >
-                  <XCircle size={11} /> Reject
+                  <XCircle size={13} /> Reject
                 </button>
-                {pendingRequests.length > 1 && (
-                  <span className="text-[10px] text-text-muted font-medium ml-0.5">+{pendingRequests.length - 1} more</span>
-                )}
               </div>
             )}
           </div>
@@ -873,12 +1364,25 @@ const DeviceSetCard = ({
             </div>
           )}
 
-          {/* All caught up message */}
+          {/* All caught up + Next Step panel */}
           {pendingRequests.length === 0 && (
-            <div className="px-4 py-3 flex items-center gap-2 text-xs font-semibold text-emerald-700 border-b border-gray-100">
-              <CheckCircle2 size={14} className="text-emerald-500" />
-              No pending requests — all caught up
-            </div>
+            <>
+              <div className="px-4 py-3 flex items-center gap-2 text-xs font-semibold text-emerald-700 border-b border-gray-100">
+                <CheckCircle2 size={14} className="text-emerald-500" />
+                No pending requests — all caught up
+              </div>
+              {nextStepOpen && (
+                <div className="pt-3">
+                  <NextStepPanel
+                    group={group}
+                    canApprove={canApprove}
+                    onDone={onRequestDone}
+                    open={nextStepOpen}
+                    setOpen={setNextStepOpen}
+                  />
+                </div>
+              )}
+            </>
           )}
 
           {/* Timeline toggle */}
@@ -889,9 +1393,9 @@ const DeviceSetCard = ({
                 className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-primary-700 bg-primary-50 hover:bg-primary-100 border border-primary-200 rounded-lg transition-colors"
               >
                 <TrendingUp size={13} />
-                {timelineExpanded ? 'Hide' : 'Show'} Approval History
+                {timelineExpanded ? 'Hide' : 'Show'} History
                 <span className="ml-auto bg-primary-200 text-primary-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  {approvedHistory.length} steps
+                  {approvedHistory.length} entries
                 </span>
                 {timelineExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
               </button>
@@ -902,9 +1406,13 @@ const DeviceSetCard = ({
           {timelineExpanded && approvedHistory.length > 0 && (
             <div className="px-4 pb-4">
               <div className="bg-white rounded-xl border border-gray-200 p-4">
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-4 flex items-center gap-1.5">
-                  <TrendingUp size={10} /> Approval History · Latest First
-                </p>
+                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-100">
+                  <div className="w-6 h-6 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
+                    <TrendingUp size={12} className="text-primary-600" />
+                  </div>
+                  <p className="text-xs font-bold text-text-primary">History</p>
+                  <span className="ml-auto text-[10px] font-semibold text-text-muted bg-gray-100 px-2 py-0.5 rounded-full">Latest first</span>
+                </div>
                 <div>
                   {approvedHistory.map((req, idx) => (
                     <TimelineItem key={req.id} request={req} isLast={idx === approvedHistory.length - 1} />
@@ -916,11 +1424,19 @@ const DeviceSetCard = ({
         </div>
       )}
     </div>
+
+    {/* Mobile action tray */}
+    {mobileTrayCopen && hasPending && (
+      <MobileActionTray
+        group={group}
+        canApprove={canApprove}
+        onApprove={onApprove}
+        onClose={() => setMobileTrayCopen(false)}
+      />
+    )}
+    </>
   )
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PENDING REQUEST ITEM
 // ═══════════════════════════════════════════════════════════════════════════════
 const PendingRequestItem = ({ request: req, index, total, canApprove, onApprove }) => {
   const meta       = STEP_META[req.toStep] || { label: req.toStep, emoji: '📋', bgClass: 'bg-gray-100', textClass: 'text-gray-700', borderClass: 'border-gray-200' }
@@ -1027,29 +1543,86 @@ const PendingRequestItem = ({ request: req, index, total, canApprove, onApprove 
 // TIMELINE ITEM
 // ═══════════════════════════════════════════════════════════════════════════════
 const TimelineItem = ({ request: req, isLast }) => {
-  const meta = STEP_META[req.toStep] || { label: req.toStep, emoji: '📋', bgClass: 'bg-gray-100', textClass: 'text-gray-700', borderClass: 'border-gray-200' }
+  const meta       = STEP_META[req.toStep] || { label: req.toStep, emoji: '📋', bgClass: 'bg-gray-100', textClass: 'text-gray-700', borderClass: 'border-gray-200' }
+  const isRejected = req.status === 'rejected'
 
   return (
     <div className="flex gap-3">
       {/* Spine */}
       <div className="flex flex-col items-center flex-shrink-0">
-        <div className={`w-7 h-7 rounded-full border-2 border-white shadow flex items-center justify-center text-sm ${meta.bgClass}`}>
-          {meta.emoji}
+        <div className={`w-7 h-7 rounded-full border-2 border-white shadow flex items-center justify-center text-sm
+          ${isRejected ? 'bg-red-100' : meta.bgClass}`}>
+          {isRejected ? '❌' : meta.emoji}
         </div>
         {!isLast && <div className="w-px bg-gradient-to-b from-gray-300 to-transparent flex-1 mt-1 min-h-[14px]" />}
       </div>
 
       {/* Content */}
       <div className="flex-1 pb-4">
-        <p className={`text-xs font-bold ${meta.textClass}`}>{meta.label}</p>
-        <p className="text-[10px] text-text-muted mt-0.5 flex items-center gap-1">
-          <User size={9} />
-          {req.approvedByName || 'System'}
-          <span className="text-gray-300">·</span>
-          {new Date(req.approvedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-        </p>
-        {req.note && !req.note.startsWith('{') && (
-          <p className="mt-1 text-[10px] text-text-secondary italic bg-gray-50 border-l-2 border-gray-300 pl-2 py-0.5 rounded-r">
+        <div className="flex items-center gap-2">
+          <p className={`text-xs font-bold ${isRejected ? 'text-red-600' : meta.textClass}`}>{meta.label}</p>
+          {isRejected && (
+            <span className="text-[9px] font-extrabold uppercase tracking-wide bg-red-100 text-red-600 border border-red-200 px-1.5 py-0.5 rounded-full">
+              Rejected
+            </span>
+          )}
+        </div>
+
+        {/* Requested by row */}
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <span className="text-[9px] font-extrabold uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">Requested</span>
+          <div className="flex items-center gap-1 text-[10px] text-text-muted">
+            <div className="w-4 h-4 rounded-full bg-gray-200 text-gray-600 text-[8px] font-bold flex items-center justify-center flex-shrink-0">
+              {(req.requestedByName || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2)}
+            </div>
+            <span className="font-semibold text-text-secondary">{req.requestedByName || '—'}</span>
+            <span className="text-gray-300">·</span>
+            <span>{new Date(req.createdAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+          </div>
+        </div>
+
+        {/* Approved / Rejected by row */}
+        <div className="mt-1 flex items-center gap-1.5">
+          <span className={`text-[9px] font-extrabold uppercase tracking-wide w-16 flex-shrink-0 ${isRejected ? 'text-red-400' : 'text-emerald-500'}`}>
+            {isRejected ? 'Rejected' : 'Approved'}
+          </span>
+          <div className="flex items-center gap-1 text-[10px] text-text-muted">
+            {(() => {
+              // For both approved and rejected, the actor name is in approvedByName
+              // (backend now saves approvedById/approvedAt on rejection too)
+              const actorName = req.approvedByName || req.rejectedByName
+              const actorDate = req.approvedAt || req.updatedAt
+              const actorInitials = actorName
+                ? actorName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
+                : '?'
+              const dateStr = actorDate
+                ? new Date(actorDate).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                : null
+              return (
+                <>
+                  <div className={`w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center flex-shrink-0
+                    ${isRejected ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                    {actorInitials}
+                  </div>
+                  <span className="font-semibold text-text-secondary">{actorName || '—'}</span>
+                  {dateStr && <><span className="text-gray-300">·</span><span>{dateStr}</span></>}
+                  {!dateStr && <span className="italic text-gray-300">date unavailable</span>}
+                </>
+              )
+            })()}
+          </div>
+        </div>
+
+        {/* Rejection reason */}
+        {isRejected && req.rejectionNote && (
+          <div className="mt-1.5 flex gap-1.5 p-2 bg-red-50 border border-red-200 rounded-lg">
+            <XCircle size={11} className="text-red-400 flex-shrink-0 mt-0.5" />
+            <p className="text-[10px] text-red-700 italic">{req.rejectionNote}</p>
+          </div>
+        )}
+
+        {!isRejected && req.note && !req.note.startsWith('{') && (
+          <p className="mt-1.5 text-[10px] text-text-secondary italic bg-gray-50 border-l-2 border-gray-300 pl-2 py-0.5 rounded-r">
             {req.note}
           </p>
         )}

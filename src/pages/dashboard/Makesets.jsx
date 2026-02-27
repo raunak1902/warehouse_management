@@ -3,7 +3,7 @@ import {
   Layers, Plus, Search, X, ChevronRight, Package, Monitor, Smartphone,
   LayoutGrid, Tv, Battery, Check, AlertTriangle, Trash2, RefreshCw,
   Info, Wrench, PackagePlus, ArrowRight, Box, Lightbulb, TrendingUp,
-  CheckCircle, XCircle, Settings, Save, ChevronDown, ChevronUp, Mouse, Zap, QrCode,
+  CheckCircle, XCircle, Settings, Save, ChevronDown, ChevronUp, Mouse, Zap, QrCode, Link2,
 } from 'lucide-react'
 import { useInventory } from '../../context/InventoryContext'
 import { setApi } from '../../api/setApi'
@@ -75,9 +75,52 @@ const getHealthStyle = (raw) => HEALTH_STYLES[normalizeHealth(raw)] ?? HEALTH_ST
 const getHealthLabel = (raw) => ({ ok: '✓ OK', repair: '🔧 Repair', damage: '⚠ Damage' }[normalizeHealth(raw)] ?? '✓ OK')
 
 const LIFECYCLE_STYLES = {
-  warehouse: 'bg-slate-100 text-slate-700 border-slate-200',
-  deployed: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-  assigning: 'bg-sky-100 text-sky-700 border-sky-200',
+  // warehouse bucket
+  available:        'bg-slate-100 text-slate-700 border-slate-200',
+  warehouse:        'bg-slate-100 text-slate-700 border-slate-200',
+  returned:         'bg-slate-100 text-slate-600 border-slate-200',
+  // assigning bucket
+  assigning:        'bg-blue-100 text-blue-700 border-blue-200',
+  assign_requested: 'bg-blue-100 text-blue-700 border-blue-200',
+  assigned:         'bg-blue-100 text-blue-700 border-blue-200',
+  ready_to_deploy:  'bg-teal-100 text-teal-700 border-teal-200',
+  deploy_requested: 'bg-teal-100 text-teal-700 border-teal-200',
+  in_transit:       'bg-amber-100 text-amber-700 border-amber-200',
+  received:         'bg-purple-100 text-purple-700 border-purple-200',
+  installed:        'bg-indigo-100 text-indigo-700 border-indigo-200',
+  // deployed bucket
+  active:           'bg-emerald-100 text-emerald-700 border-emerald-200',
+  deployed:         'bg-emerald-100 text-emerald-700 border-emerald-200',
+  under_maintenance:'bg-orange-100 text-orange-700 border-orange-200',
+  // return
+  return_initiated: 'bg-rose-100 text-rose-700 border-rose-200',
+  return_requested: 'bg-rose-100 text-rose-700 border-rose-200',
+  return_transit:   'bg-pink-100 text-pink-700 border-pink-200',
+  // other
+  lost:             'bg-red-100 text-red-700 border-red-200',
+  health_update:    'bg-cyan-100 text-cyan-700 border-cyan-200',
+}
+
+const LIFECYCLE_STEP_LABELS = {
+  available:        'In Warehouse',
+  warehouse:        'In Warehouse',
+  returned:         'Returned',
+  assigning:        'Assigning to Client',
+  assign_requested: 'Assigning to Client',
+  assigned:         'Assigning to Client',
+  ready_to_deploy:  'Ready to Deploy',
+  deploy_requested: 'Ready to Deploy',
+  in_transit:       'In Transit',
+  received:         'Received at Site',
+  installed:        'Installed',
+  active:           'Active / Live',
+  deployed:         'Active / Live',
+  under_maintenance:'Under Maintenance',
+  return_initiated: 'Return Initiated',
+  return_requested: 'Return Initiated',
+  return_transit:   'Return In Transit',
+  lost:             'Lost',
+  health_update:    'Health Update',
 }
 
 const CUSTOM_COLORS = [
@@ -194,11 +237,16 @@ const Makesets = () => {
     )
   }), [sets, search, filterType, filterHealth])
 
+  const WAREHOUSE_SET_STEPS = new Set(['available', 'warehouse', 'returned'])
+  const DEPLOYED_SET_STEPS  = new Set(['active', 'deployed', 'under_maintenance'])
+  const ASSIGNING_SET_STEPS = new Set(['assigning','assign_requested','assigned','ready_to_deploy','deploy_requested','in_transit','received','installed','return_initiated','return_requested','return_transit'])
+
   const stats = useMemo(() => ({
-    total: sets.length,
-    warehouse: sets.filter(s => s.lifecycleStatus === 'available' || s.lifecycleStatus === 'warehouse').length,
-    deployed: sets.filter(s => s.lifecycleStatus === 'active' || s.lifecycleStatus === 'deployed').length,
-    damaged: sets.filter(s => s.healthStatus !== 'ok').length,
+    total:     sets.length,
+    warehouse: sets.filter(s => WAREHOUSE_SET_STEPS.has(s.lifecycleStatus)).length,
+    deployed:  sets.filter(s => DEPLOYED_SET_STEPS.has(s.lifecycleStatus)).length,
+    assigning: sets.filter(s => ASSIGNING_SET_STEPS.has(s.lifecycleStatus)).length,
+    damaged:   sets.filter(s => s.healthStatus !== 'ok').length,
   }), [sets])
 
   // ── Create set
@@ -294,6 +342,7 @@ const Makesets = () => {
         {[
           { label: 'Total Sets',      value: stats.total,     bg: 'bg-violet-100',  icon: Layers,         iconColor: 'text-violet-600'  },
           { label: 'In Warehouse',    value: stats.warehouse, bg: 'bg-slate-100',   icon: Package,        iconColor: 'text-slate-600'   },
+          { label: 'Assigning',       value: stats.assigning, bg: 'bg-blue-100',    icon: Link2,          iconColor: 'text-blue-600'    },
           { label: 'Deployed',        value: stats.deployed,  bg: 'bg-emerald-100', icon: ArrowRight,     iconColor: 'text-emerald-600' },
           { label: 'Needs Attention', value: stats.damaged,   bg: 'bg-amber-100',   icon: AlertTriangle,  iconColor: 'text-amber-600'   },
         ].map(({ label, value, bg, icon: Icon, iconColor }) => (
@@ -442,8 +491,8 @@ const Makesets = () => {
                   <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${getHealthStyle(set.healthStatus)}`}>
                     {getHealthLabel(set.healthStatus)}
                   </span>
-                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${LIFECYCLE_STYLES[set.lifecycleStatus] || LIFECYCLE_STYLES.warehouse}`}>
-                    {set.lifecycleStatus}
+                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${LIFECYCLE_STYLES[set.lifecycleStatus] || LIFECYCLE_STYLES.available}`}>
+                    {LIFECYCLE_STEP_LABELS[set.lifecycleStatus] || set.lifecycleStatus || 'In Warehouse'}
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 text-xs text-gray-500">
@@ -693,7 +742,7 @@ const Makesets = () => {
                 {[
                   { label: 'Code', value: showDetail.code },
                   { label: 'Barcode', value: showDetail.barcode, mono: true },
-                  { label: 'Status', value: showDetail.lifecycleStatus },
+                  { label: 'Status', value: LIFECYCLE_STEP_LABELS[showDetail.lifecycleStatus] || showDetail.lifecycleStatus || 'In Warehouse' },
                   { label: 'Health', value: showDetail.healthStatus },
                   { label: 'Location', value: showDetail.location || '—' },
                   { label: 'Name', value: showDetail.name || '—' },

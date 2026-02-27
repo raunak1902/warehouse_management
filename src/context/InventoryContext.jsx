@@ -125,12 +125,41 @@ export const getSubscriptionStatus = (endDateStr) => {
   return { label: 'Active', type: 'active', days }
 }
 
-// getDeviceLifecycleStatus: kept for any existing code that uses it
+// ─────────────────────────────────────────────────────────────
+// LIFECYCLE BUCKET MAPPING
+// Maps granular lifecycleStatus values → 3 display buckets used
+// throughout the Devices page filters and counters.
+//
+//  deployed  → active, under_maintenance (device is at client site)
+//  assigning → assigning, ready_to_deploy, in_transit, received,
+//              installed, return_initiated, return_transit
+//              (device is in motion — leaving warehouse or coming back)
+//  warehouse → available, returned  (device is physically in warehouse)
+// ─────────────────────────────────────────────────────────────
+const DEPLOYED_STEPS  = new Set(['active', 'under_maintenance', 'deployed'])
+const ASSIGNING_STEPS = new Set([
+  'assigning', 'assign_requested', 'assigned',
+  'ready_to_deploy', 'deploy_requested',
+  'in_transit',
+  'received',
+  'installed',
+  'return_initiated', 'return_requested',
+  'return_transit',
+])
+const WAREHOUSE_STEPS = new Set(['available', 'warehouse', 'returned'])
+
 export const getDeviceLifecycleStatus = (device) => {
-  if (device.lifecycleStatus) return device.lifecycleStatus
-  if (!device.clientId) return 'warehouse'
-  if (device.clientId && !device.state && !device.district && !device.pinpoint) return 'assign_requested'
-  if (device.clientId && (device.state || device.district || device.pinpoint)) return 'deployed'
+  const s = device.lifecycleStatus
+  if (!s) {
+    // Legacy fallback: derive from clientId/location fields
+    if (!device.clientId) return 'warehouse'
+    if (device.clientId && (device.state || device.district || device.pinpoint)) return 'deployed'
+    return 'assigning'
+  }
+  if (DEPLOYED_STEPS.has(s))  return 'deployed'
+  if (ASSIGNING_STEPS.has(s)) return 'assigning'
+  if (WAREHOUSE_STEPS.has(s)) return 'warehouse'
+  // Unknown status — treat as warehouse so device is still visible
   return 'warehouse'
 }
 

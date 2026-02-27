@@ -101,8 +101,10 @@ async function shape(r) {
     requestedByName: reqUser?.name ?? 'Unknown',
     approvedById:    r.approvedById,
     approvedByName:  appUser?.name ?? null,
+    rejectedByName:  r.status === 'rejected' ? (appUser?.name ?? null) : null,
     createdAt:       r.createdAt,
     approvedAt:      r.approvedAt,
+    updatedAt:       r.updatedAt,
   }
 }
 
@@ -206,10 +208,36 @@ async function applyApproval(tx, req, approverId) {
 
     await tx.deviceSet.update({ where: { id: req.setId }, data: setUpdate })
 
-    // Cascade lifecycle to all member devices
+    // Fetch updated set to cascade ALL fields (clientId, state, district, location) to members
+    const updatedSet = await tx.deviceSet.findUnique({
+      where: { id: req.setId },
+      select: { clientId: true, state: true, district: true, location: true },
+    })
+
+    // Build member device update — sync lifecycle + client + location
+    const memberUpdate = { lifecycleStatus: req.toStep, updatedAt: now }
+
+    if (updatedSet) {
+      memberUpdate.clientId = updatedSet.clientId ?? null
+
+      if (['active', 'installed', 'received', 'under_maintenance'].includes(req.toStep)) {
+        // Cascade full location once device is at/near client site
+        memberUpdate.state    = updatedSet.state    ?? null
+        memberUpdate.district = updatedSet.district ?? null
+        memberUpdate.location = updatedSet.location ?? null
+      } else if (req.toStep === 'returned') {
+        // Clear client + location on return
+        memberUpdate.clientId = null
+        memberUpdate.state    = null
+        memberUpdate.district = null
+        memberUpdate.location = null
+      }
+    }
+
+    // Cascade to all member devices
     await tx.device.updateMany({
       where: { setId: req.setId },
-      data: { lifecycleStatus: req.toStep, updatedAt: now },
+      data:  memberUpdate,
     })
   }
 
@@ -502,7 +530,7 @@ router.patch('/:id/reject', requirePermission('LifecycleRequests', 'reject'), as
 
     const updated = await prisma.lifecycleRequest.update({
       where: { id },
-      data: { status: 'rejected', rejectionNote: rejectionNote.trim() },
+      data: { status: 'rejected', rejectionNote: rejectionNote.trim(), approvedById: req.user.userId, approvedAt: new Date() },
     })
 
     // Notify the requester

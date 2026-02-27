@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import {
   Download, Printer, Copy, Check, X, MapPin, Activity,
   ChevronDown, ChevronUp, Clock, AlertTriangle, CheckCircle2,
-  ArrowRight, RotateCcw, Truck, Package
+  ArrowRight, RotateCcw, Truck, Package, MoreVertical
 } from 'lucide-react'
 import { useInventory, LIFECYCLE, LIFECYCLE_LABELS, LIFECYCLE_COLORS, HEALTH_COLORS } from '../context/InventoryContext'
+import AssignToClientModal from './AssignToClientModal'
 
 // ─────────────────────────────────────────────────────────────
 // LIFECYCLE STATUS BADGE
@@ -209,12 +210,15 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
 
   const [pending, setPending]             = useState(undefined)
   const [busy, setBusy]                   = useState(false)
-  const [showClientPick, setShowClientPick] = useState(false)
-  const [selectedClient, setSelectedClient] = useState('')
+  const [showAssignModal, setShowAssignModal] = useState(false)
   const [note, setNote]                   = useState('')
   const [showNote, setShowNote]           = useState(false)
   // healthStep: null = not showing, otherwise { toStep, label, extraNote }
   const [healthStep, setHealthStep]       = useState(null)
+  // Keep onAction in a ref so the polling interval always calls the latest version
+  // without needing it as a useEffect dependency (which would cause spurious re-fires).
+  const onActionRef = useRef(onAction)
+  useEffect(() => { onActionRef.current = onAction }, [onAction])
 
   const status = device.lifecycleStatus
 
@@ -256,15 +260,20 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
         }
         // Request was approved or rejected externally — re-fetch the device
         // so lifecycleStatus updates and the correct next step button shows.
-        if (onAction) await onAction()
-        setPending(undefined)
+        if (onActionRef.current) await onActionRef.current()
+        try {
+          const latest = await getPendingRequest(device.id)
+          setPending(latest ?? null)
+        } catch {
+          setPending(null)
+        }
       } catch {
         // silently ignore poll errors
       }
     }, 5000)
 
     return () => clearInterval(interval)
-  }, [pending, device.id, getPendingRequest, onAction])
+  }, [pending, device.id, getPendingRequest])
 
   const run = async (fn) => {
     setBusy(true)
@@ -276,11 +285,18 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
         setPending(result)
       } else {
         // Approval / withdrawal / rejection:
-        // Wait for the device re-fetch BEFORE clearing pending, so we never
-        // flash the stale "awaiting approval" fallback UI while the new
-        // lifecycleStatus is still loading.
+        // Re-fetch the device first (for approve — status advances),
+        // then fetch the actual pending state directly.
+        // We do NOT set undefined here because rejection does NOT change
+        // lifecycleStatus, so the useEffect watching device.lifecycleStatus
+        // would never fire, leaving the component stuck on "Loading status…".
         if (onAction) await onAction()
-        setPending(undefined)
+        try {
+          const fresh = await getPendingRequest(device.id)
+          setPending(fresh ?? null)
+        } catch {
+          setPending(null)
+        }
       }
     } catch (e) {
       alert(e.message || 'Request failed')
@@ -341,37 +357,22 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
 
   // ── No pending request (confirmed null) — show the appropriate action button ──
 
-  // Available / Warehouse → request assigning
-  if (status === 'available' || status === 'warehouse') {
-    if (showClientPick) {
-      return (
-        <div className="space-y-3 p-3 bg-blue-50 rounded-xl border border-blue-200">
-          <p className="text-sm font-semibold text-blue-800">Select client to assign:</p>
-          <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)}
-            className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm bg-white">
-            <option value="">-- Choose client --</option>
-            {clients.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` (${c.company})` : ''}</option>)}
-          </select>
-          <div className="flex gap-2">
-            <button onClick={() => {
-                if (!selectedClient) return
-                setShowClientPick(false)
-                askHealth('assigning', 'Assigning to Client', JSON.stringify({ clientId: selectedClient }))
-              }}
-              disabled={!selectedClient || busy}
-              className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">
-              {busy ? 'Submitting…' : 'Next: Confirm Health'}
-            </button>
-            <button onClick={() => setShowClientPick(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
-          </div>
-        </div>
-      )
-    }
+  // Available / Warehouse → open full 5-step assignment modal
+  if (status === 'available' || status === 'warehouse' || status === 'returned') {
     return (
-      <button onClick={() => setShowClientPick(true)}
-        className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700">
-        <ArrowRight className="w-4 h-4" />Request Assignment to Client
-      </button>
+      <>
+        <button onClick={() => setShowAssignModal(true)}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700">
+          <ArrowRight className="w-4 h-4" />Request Assignment to Client
+        </button>
+        {showAssignModal && (
+          <AssignToClientModal
+            device={device}
+            onClose={() => setShowAssignModal(false)}
+            onSuccess={() => { setShowAssignModal(false); onAction && onAction() }}
+          />
+        )}
+      </>
     )
   }
 
@@ -572,10 +573,12 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
           withdrawLifecycleRequest, approveLifecycleRequest,
           rejectLifecycleRequest, clients } = useInventory()
 
+  const onActionRef = useRef(onAction)
+  useEffect(() => { onActionRef.current = onAction }, [onAction])
+
   const [pending, setPending]               = useState(undefined)
   const [busy, setBusy]                     = useState(false)
-  const [showClientPick, setShowClientPick] = useState(false)
-  const [selectedClient, setSelectedClient] = useState('')
+  const [showAssignModal, setShowAssignModal] = useState(false)
   const [note, setNote]                     = useState('')
   const [showNote, setShowNote]             = useState(false)
   const [healthStep, setHealthStep]         = useState(null)
@@ -607,12 +610,15 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
       try {
         const fresh = await getSetPendingRequest(device.id)
         if (fresh && fresh.status === 'pending') return
-        if (onAction) await onAction()
-        setPending(undefined)
+        if (onActionRef.current) await onActionRef.current()
+        try {
+          const latest = await getSetPendingRequest(device.id)
+          setPending(latest ?? null)
+        } catch { setPending(null) }
       } catch { /* ignore */ }
     }, 5000)
     return () => clearInterval(interval)
-  }, [pending, device.id, getSetPendingRequest, onAction])
+  }, [pending, device.id, getSetPendingRequest])
 
   const run = async (fn) => {
     setBusy(true)
@@ -621,8 +627,13 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
       if (result && result.status === 'pending') {
         setPending(result)
       } else {
-        if (onAction) await onAction()
-        setPending(undefined)
+        if (onActionRef.current) await onActionRef.current()
+        try {
+          const fresh = await getSetPendingRequest(device.id)
+          setPending(fresh ?? null)
+        } catch {
+          setPending(null)
+        }
       }
     } catch (e) {
       alert(e.message || 'Request failed')
@@ -674,37 +685,22 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
     )
   }
 
-  // Available / Warehouse
-  if (status === 'available' || status === 'warehouse') {
-    if (showClientPick) {
-      return (
-        <div className="space-y-3 p-3 bg-blue-50 rounded-xl border border-blue-200">
-          <p className="text-sm font-semibold text-blue-800">Select client to assign set:</p>
-          <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)}
-            className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm bg-white">
-            <option value="">-- Choose client --</option>
-            {clients.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` (${c.company})` : ''}</option>)}
-          </select>
-          <div className="flex gap-2">
-            <button onClick={() => {
-                if (!selectedClient) return
-                setShowClientPick(false)
-                askHealth('assigning', 'Assigning to Client', JSON.stringify({ clientId: selectedClient }))
-              }}
-              disabled={!selectedClient || busy}
-              className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">
-              {busy ? 'Submitting…' : 'Next: Confirm Health'}
-            </button>
-            <button onClick={() => setShowClientPick(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm">Cancel</button>
-          </div>
-        </div>
-      )
-    }
+  // Available / Warehouse → open full 5-step assignment modal
+  if (status === 'available' || status === 'warehouse' || status === 'returned') {
     return (
-      <button onClick={() => setShowClientPick(true)}
-        className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700">
-        <ArrowRight className="w-4 h-4" />Assign Set to Client
-      </button>
+      <>
+        <button onClick={() => setShowAssignModal(true)}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700">
+          <ArrowRight className="w-4 h-4" />Assign Set to Client
+        </button>
+        {showAssignModal && (
+          <AssignToClientModal
+            device={device}
+            onClose={() => setShowAssignModal(false)}
+            onSuccess={() => { setShowAssignModal(false); onAction && onAction() }}
+          />
+        )}
+      </>
     )
   }
 
@@ -900,6 +896,9 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
           withdrawLifecycleRequest, approveLifecycleRequest,
           rejectLifecycleRequest } = useInventory()
 
+  const onActionRef = useRef(onAction)
+  useEffect(() => { onActionRef.current = onAction }, [onAction])
+
   const [pending, setPending]       = useState(undefined)
   const [busy, setBusy]             = useState(false)
   const [showHealthReq, setShowHealthReq] = useState(false)
@@ -921,12 +920,15 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
       try {
         const fresh = await getPendingRequest(device.id)
         if (fresh && fresh.status === 'pending') return
-        if (onAction) await onAction()
-        setPending(undefined)
+        if (onActionRef.current) await onActionRef.current()
+        try {
+          const latest = await getPendingRequest(device.id)
+          setPending(latest ?? null)
+        } catch { setPending(null) }
       } catch { /* ignore */ }
     }, 5000)
     return () => clearInterval(interval)
-  }, [pending, device.id, getPendingRequest, onAction])
+  }, [pending, device.id, getPendingRequest])
 
   const run = async (fn) => {
     setBusy(true)
@@ -935,8 +937,13 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
       if (result && result.status === 'pending') {
         setPending(result)
       } else {
-        if (onAction) await onAction()
-        setPending(undefined)
+        if (onActionRef.current) await onActionRef.current()
+        try {
+          const fresh = await getPendingRequest(device.id)
+          setPending(fresh ?? null)
+        } catch {
+          setPending(null)
+        }
       }
     } catch (e) {
       alert(e.message || 'Request failed')
@@ -1037,41 +1044,134 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
 // ─────────────────────────────────────────────────────────────
 // DEVICE HISTORY
 // ─────────────────────────────────────────────────────────────
+// ── Step emoji map (mirrors Requests page STEP_META) ─────────────────────────
+const STEP_EMOJI = {
+  assigning: '🔗', ready_to_deploy: '✅', in_transit: '🚚',
+  received: '📦', installed: '🔧', active: '🟢',
+  under_maintenance: '🛠', return_initiated: '↩️', return_transit: '🚛',
+  returned: '🏭', lost: '❌', health_update: '🩺',
+  // legacy
+  warehouse: '🏭', available: '🏭', assigning_to_client: '🔗',
+}
+
 const DeviceHistoryLog = ({ history }) => {
   const [open, setOpen] = useState(false)
   if (!history || history.length === 0) return null
 
-  const fmt = (dt) => dt ? new Date(dt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'
+  const fmt = (dt) => dt
+    ? new Date(dt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '—'
+
+  // Parse the LR# and any extra detail out of the note string
+  // e.g. "[LR#120] → In Transit | Health: repair | Note: cracked"
+  //      "[LR#120] Request withdrawn — rolled back to in_transit"
+  const parseLRNote = (note) => {
+    if (!note) return { lrId: null, isWithdrawn: false, extraNote: null }
+    const lrMatch = note.match(/\[LR#(\d+)\]/)
+    const lrId = lrMatch ? lrMatch[1] : null
+    const isWithdrawn = note.includes('withdrawn')
+    // Extract health note if present
+    const noteMatch = note.match(/\| Note: (.+)$/)
+    const extraNote = noteMatch ? noteMatch[1].trim() : null
+    return { lrId, isWithdrawn, extraNote }
+  }
 
   return (
     <div className="border-t border-gray-100 pt-3">
-      <button onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-700 w-full">
+      {/* Toggle button — styled like Requests page "Show History" */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-primary-700 bg-primary-50 hover:bg-primary-100 border border-primary-200 rounded-lg transition-colors"
+      >
         {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-        History ({history.length} events)
+        {open ? 'Hide' : 'Show'} History
+        <span className="ml-auto bg-primary-200 text-primary-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+          {history.length} events
+        </span>
       </button>
+
       {open && (
-        <div className="mt-2 space-y-2 max-h-48 overflow-y-auto">
-          {history.map((h, i) => {
-            // DeviceHistory records use fromStatus/toStatus/changedAt/note
-            // LifecycleRequest records (sets) use fromStep/toStep/approvedAt/note
-            const from = h.fromStatus ?? h.fromStep ?? ''
-            const to   = h.toStatus   ?? h.toStep   ?? ''
-            const at   = h.changedAt  ?? h.approvedAt ?? null
-            const note = h.note       ?? null
-            return (
-              <div key={h.id || i} className="flex items-start gap-2 text-xs text-gray-600">
-                <div className="w-1.5 h-1.5 rounded-full bg-gray-300 mt-1.5 shrink-0" />
-                <div>
-                  <span className="font-medium">{LIFECYCLE_LABELS[from] || from || '—'}</span>
-                  <ArrowRight className="w-3 h-3 inline mx-1 text-gray-400" />
-                  <span className="font-medium">{LIFECYCLE_LABELS[to] || to || '—'}</span>
-                  {note && <p className="text-gray-500 mt-0.5">{note}</p>}
-                  <p className="text-gray-400">{fmt(at)}</p>
+        <div className="mt-2 bg-white rounded-xl border border-gray-200 p-4">
+          {/* Header row */}
+          <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-100">
+            <div className="w-6 h-6 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
+              <Activity className="w-3.5 h-3.5 text-primary-600" />
+            </div>
+            <p className="text-xs font-bold text-text-primary">History</p>
+            <span className="ml-auto text-[10px] font-semibold text-text-muted bg-gray-100 px-2 py-0.5 rounded-full">Latest first</span>
+          </div>
+
+          {/* Timeline items */}
+          <div>
+            {history.map((h, i) => {
+              const from        = h.fromStatus ?? h.fromStep ?? ''
+              const to          = h.toStatus   ?? h.toStep   ?? ''
+              const at          = h.changedAt  ?? h.approvedAt ?? null
+              const isLast      = i === history.length - 1
+              const isWithdrawn = h.note?.includes('withdrawn') ?? false
+              const { lrId, extraNote } = parseLRNote(h.note)
+              const emoji       = STEP_EMOJI[to] ?? '📋'
+              const toLabel     = LIFECYCLE_LABELS[to] || to || '—'
+              const fromLabel   = LIFECYCLE_LABELS[from] || from || '—'
+
+              return (
+                <div key={h.id || i} className="flex gap-3">
+                  {/* Spine + icon */}
+                  <div className="flex flex-col items-center flex-shrink-0">
+                    <div className={`w-7 h-7 rounded-full border-2 border-white shadow flex items-center justify-center text-sm
+                      ${isWithdrawn ? 'bg-gray-100' : 'bg-primary-50'}`}>
+                      {isWithdrawn ? '↩' : emoji}
+                    </div>
+                    {!isLast && (
+                      <div className="w-px bg-gradient-to-b from-gray-300 to-transparent flex-1 mt-1 min-h-[14px]" />
+                    )}
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 pb-4">
+                    {/* Step label + LR ref */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-bold text-text-primary">{toLabel}</p>
+                      {lrId && (
+                        <span className="text-[9px] font-extrabold uppercase tracking-wide bg-primary-50 text-primary-600 border border-primary-200 px-1.5 py-0.5 rounded-full">
+                          LR#{lrId}
+                        </span>
+                      )}
+                      {isWithdrawn && (
+                        <span className="text-[9px] font-extrabold uppercase tracking-wide bg-gray-100 text-gray-600 border border-gray-200 px-1.5 py-0.5 rounded-full">
+                          Withdrawn
+                        </span>
+                      )}
+                    </div>
+
+                    {/* From → To */}
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <span className="text-[9px] font-extrabold uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">From</span>
+                      <div className="flex items-center gap-1 text-[10px] text-text-muted">
+                        <span className="font-semibold text-text-secondary">{fromLabel}</span>
+                        <ArrowRight className="w-2.5 h-2.5 text-gray-300 flex-shrink-0" />
+                        <span className="font-semibold text-text-secondary">{toLabel}</span>
+                      </div>
+                    </div>
+
+                    {/* Timestamp */}
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <span className="text-[9px] font-extrabold uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">When</span>
+                      <span className="text-[10px] text-text-muted">{fmt(at)}</span>
+                    </div>
+
+                    {/* Extra note (health note etc) */}
+                    {extraNote && (
+                      <div className="mt-1.5 flex gap-1.5 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                        <AlertTriangle className="w-2.5 h-2.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                        <p className="text-[10px] text-amber-800 italic">{extraNote}</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )
-          })}
+              )
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -1085,6 +1185,8 @@ const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) 
   const { scanDevice } = useInventory()
   const [device, setDevice] = useState(initialDevice)
   const [copied, setCopied] = useState(false)
+  const [showMore, setShowMore] = useState(false)
+  const moreRef = useRef(null)
 
   // Read current user from localStorage (set at login)
   const currentUser  = JSON.parse(localStorage.getItem('user') || '{}')
@@ -1092,8 +1194,20 @@ const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) 
   const userRole      = (currentUser.role ?? '').toLowerCase().replace(/[\s_-]/g, '')
   const isManager     = ['manager', 'superadmin'].includes(userRole)
 
-  // Re-fetch device from API after any lifecycle action so status reflects immediately
-  const handleActionDone = async () => {
+  // Close "more options" dropdown when clicking outside
+  useEffect(() => {
+    if (!showMore) return
+    const handler = (e) => {
+      if (moreRef.current && !moreRef.current.contains(e.target)) setShowMore(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showMore])
+
+  // Re-fetch device from API after any lifecycle action so status reflects immediately.
+  // Wrapped in useCallback so its identity stays stable across re-renders — prevents
+  // the polling useEffect in ActionButton from re-firing when device state updates.
+  const handleActionDone = useCallback(async () => {
     try {
       const fresh = await scanDevice(device.barcode)
       setDevice(fresh)
@@ -1101,7 +1215,7 @@ const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) 
     } catch {
       // silently ignore — stale data is better than a crash
     }
-  }
+  }, [scanDevice, device.barcode, onDeviceUpdated])
 
   const handleManualRefresh = async () => {
     try {
@@ -1170,6 +1284,40 @@ const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) 
               className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-400 hover:text-gray-600">
               <RotateCcw className="w-4 h-4" />
             </button>
+
+            {/* ⋯ More Options */}
+            <div className="relative" ref={moreRef}>
+              <button
+                onClick={() => setShowMore(o => !o)}
+                title="More options"
+                className={`p-2 rounded-lg transition-colors ${showMore ? 'bg-gray-100 text-gray-700' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
+              >
+                <MoreVertical className="w-4 h-4" />
+              </button>
+
+              {showMore && (
+                <div className="absolute right-0 top-10 w-44 bg-white rounded-xl shadow-lg border border-gray-100 z-50 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-gray-100">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Barcode Options</p>
+                  </div>
+                  <button
+                    onClick={() => { handleDownload(); setShowMore(false) }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    <Download className="w-4 h-4 text-blue-500" />
+                    Download QR
+                  </button>
+                  <button
+                    onClick={() => { window.print(); setShowMore(false) }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    <Printer className="w-4 h-4 text-green-500" />
+                    Print QR
+                  </button>
+                </div>
+              )}
+            </div>
+
             <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
               <X className="w-5 h-5" />
             </button>
@@ -1287,24 +1435,9 @@ const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) 
             />
           )}
 
-          {/* Download + Print */}
-          <div className="flex gap-2">
-            <button onClick={handleDownload}
-              className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors">
-              <Download className="w-4 h-4" />Download
-            </button>
-            <button onClick={() => window.print()}
-              className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700 transition-colors">
-              <Printer className="w-4 h-4" />Print
-            </button>
-          </div>
-
           {/* History */}
           {device.history && <DeviceHistoryLog history={device.history} />}
 
-          <p className="text-xs text-gray-400 text-center">
-            Tip: Print this barcode and attach it to the physical device for easy scanning.
-          </p>
         </div>
       </div>
 

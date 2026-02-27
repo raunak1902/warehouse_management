@@ -3,7 +3,7 @@ import {
   X, Users, Search, Calendar, ChevronRight, ChevronLeft,
   CheckCircle2, Clock, Building2, Phone, Mail, AlertTriangle,
   Wrench, Shield, Package, Send, Loader2, Info, Layers,
-  Monitor, Smartphone, LayoutGrid, ArrowRight, Sparkles,
+  Monitor, Smartphone, LayoutGrid, ArrowRight, Sparkles, MapPin,
 } from 'lucide-react'
 import { useInventory } from '../context/InventoryContext'
 import { normaliseRole, ROLES } from '../App'
@@ -16,10 +16,11 @@ const authHeaders = () => ({
 
 // ── constants ─────────────────────────────────────────────────
 const STEPS = [
-  { id: 'client',  label: 'Client',      icon: Users },
-  { id: 'health',  label: 'Health',      icon: Shield },
-  { id: 'return',  label: 'Return',      icon: Calendar },
-  { id: 'confirm', label: 'Confirm',     icon: CheckCircle2 },
+  { id: 'client',   label: 'Client',    icon: Users },
+  { id: 'health',   label: 'Health',    icon: Shield },
+  { id: 'location', label: 'Location',  icon: MapPin },
+  { id: 'return',   label: 'Return',    icon: Calendar },
+  { id: 'confirm',  label: 'Confirm',   icon: CheckCircle2 },
 ]
 
 const HEALTH_OPTIONS = [
@@ -75,6 +76,9 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
     clientId: null,
     healthStatus: 'ok',
     healthComment: '',
+    state: '',
+    district: '',
+    site: '',
     returnType: 'days',
     returnDays: '30',
     returnMonths: '',
@@ -115,7 +119,8 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
       const needsComment = form.healthStatus === 'repair' || form.healthStatus === 'damage'
       return !needsComment || form.healthComment.trim().length > 0
     }
-    if (step === 2) {
+    if (step === 2) return true // location is optional
+    if (step === 3) {
       if (form.returnType === 'days') return !!form.returnDays && parseInt(form.returnDays) > 0
       if (form.returnType === 'months') return !!form.returnMonths && parseInt(form.returnMonths) > 0
       if (form.returnType === 'date') return !!form.returnDate && new Date(form.returnDate) > new Date()
@@ -133,14 +138,20 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
     setSubmitting(true); setError(null)
     try {
       const selectedClientObj = clients.find(c => c.id === form.clientId)
+      const subscriptionEnd = computeReturnDate(form)
 
-      // Build note embedding clientId and return info for the lifecycle request
+      // Build note embedding all details so manager sees everything in the request
       const note = JSON.stringify({
         clientId:     form.clientId,
+        clientName:   selectedClientObj?.name,
+        state:        form.state    || null,
+        district:     form.district || null,
+        site:         form.site     || null,
         returnType:   form.returnType,
         returnDays:   form.returnDays   || null,
         returnMonths: form.returnMonths || null,
         returnDate:   form.returnDate   || null,
+        subscriptionEnd: subscriptionEnd ? subscriptionEnd.toISOString() : null,
         label: `Assign ${device.code} → client "${selectedClientObj?.name}"`,
       })
 
@@ -159,6 +170,29 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.message || data.error || `Error ${res.status}`)
+
+      // Save location + subscription dates directly to the device record
+      // so they're available immediately regardless of approval status
+      if (!isSet) {
+        const deviceUpdates = {}
+        if (form.state)    deviceUpdates.state    = form.state
+        if (form.district) deviceUpdates.district = form.district
+        if (form.site)     deviceUpdates.location = form.site
+        // subscriptionStart = today, subscriptionEnd = computed return date
+        deviceUpdates.subscriptionStart = new Date().toISOString().split('T')[0]
+        if (subscriptionEnd) deviceUpdates.subscriptionEnd = subscriptionEnd.toISOString().split('T')[0]
+
+        if (Object.keys(deviceUpdates).length > 0) {
+          try {
+            await fetch(`/api/devices/${device.id}`, {
+              method: 'PUT',
+              headers: authHeaders(),
+              body: JSON.stringify(deviceUpdates),
+            })
+          } catch (_) { /* non-critical — lifecycle request already submitted */ }
+        }
+      }
+
       if (data.autoApproved) setAutoApproved(true)
       setSubmitted(true)
     } catch (err) {
@@ -216,8 +250,11 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
               ['Client', selectedClient?.name],
               ['Device', device.code],
               ['Health', form.healthStatus === 'ok' ? 'Good Condition' : form.healthStatus === 'repair' ? 'Needs Repair' : 'Damaged'],
+              form.state || form.district || form.site
+                ? ['Location', [form.state, form.district, form.site].filter(Boolean).join(' → ')]
+                : null,
               ['Return By', formatDate(computedDate)],
-            ].map(([k, v]) => (
+            ].filter(Boolean).map(([k, v]) => (
               <div key={k} className="flex justify-between text-sm">
                 <span className="text-gray-400">{k}</span>
                 <span className="font-semibold text-gray-800">{v}</span>
@@ -413,8 +450,65 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
             </div>
           )}
 
-          {/* STEP 2 — Return Date */}
+          {/* STEP 2 — Location */}
           {step === 2 && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Deployment Location</h3>
+                <p className="text-sm text-gray-400">Where will this {isSet ? 'set' : 'device'} be deployed? (optional)</p>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">State</label>
+                  <input
+                    type="text"
+                    value={form.state}
+                    onChange={e => setForm(f => ({ ...f, state: e.target.value }))}
+                    placeholder="e.g. Maharashtra"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">District / City</label>
+                  <input
+                    type="text"
+                    value={form.district}
+                    onChange={e => setForm(f => ({ ...f, district: e.target.value }))}
+                    placeholder="e.g. Mumbai"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Site / Pinpoint</label>
+                  <input
+                    type="text"
+                    value={form.site}
+                    onChange={e => setForm(f => ({ ...f, site: e.target.value }))}
+                    placeholder="e.g. Andheri West Branch"
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  />
+                </div>
+              </div>
+
+              {(form.state || form.district || form.site) && (
+                <div className="flex items-center gap-3 p-3.5 bg-blue-50 border border-blue-100 rounded-2xl">
+                  <MapPin className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                  <p className="text-sm font-semibold text-blue-800">
+                    {[form.state, form.district, form.site].filter(Boolean).join(' → ')}
+                  </p>
+                </div>
+              )}
+
+              <p className="text-xs text-gray-400 flex items-center gap-1.5">
+                <Info className="w-3.5 h-3.5" />
+                You can skip this and enter location later when the device arrives on site.
+              </p>
+            </div>
+          )}
+
+          {/* STEP 3 — Return Date */}
+          {step === 3 && (
             <div className="space-y-5">
               <div>
                 <h3 className="text-lg font-bold text-gray-900">Return Date</h3>
@@ -496,8 +590,8 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
             </div>
           )}
 
-          {/* STEP 3 — Confirm */}
-          {step === 3 && (
+          {/* STEP 4 — Confirm */}
+          {step === 4 && (
             <div className="space-y-4">
               <div>
                 <h3 className="text-lg font-bold text-gray-900">Review & Confirm</h3>
@@ -547,6 +641,19 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
                       {form.healthStatus === 'ok' ? '✓ OK' : form.healthStatus === 'repair' ? '⚠ Repair' : '✕ Damaged'}
                     </span>
                   </div>
+
+                  {/* Location */}
+                  {(form.state || form.district || form.site) && (
+                    <div className="p-4 flex items-center gap-3">
+                      <MapPin className="w-5 h-5 text-gray-300 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-gray-400 font-medium">Deployment Location</p>
+                        <p className="font-semibold text-gray-900 text-sm">
+                          {[form.state, form.district, form.site].filter(Boolean).join(' → ')}
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Return date */}
                   <div className="p-4 flex items-center justify-between">
