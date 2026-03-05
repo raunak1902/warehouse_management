@@ -160,7 +160,6 @@ model LifecycleRequest {
   device        Device?    @relation("DeviceRequests", fields: [deviceId], references: [id])
   requestedBy   User       @relation("RequestedBy", fields: [requestedById], references: [id])
   deviceSet     DeviceSet? @relation("SetRequests", fields: [setId], references: [id])
-  proofFiles    ProofFile[]
 
   @@index([status])
   @@index([deviceId])
@@ -258,20 +257,4 @@ model TeamRequestComment {
   teamRequest   TeamRequest @relation(fields: [teamRequestId], references: [id], onDelete: Cascade)
 
   @@index([teamRequestId])
-}
-
-model ProofFile {
-  id          Int              @id @default(autoincrement())
-  requestId   Int
-  fileName    String           // original filename
-  storedName  String           // uuid-based name on disk / storage key
-  fileType    String           // 'image' | 'video' | 'pdf'
-  mimeType    String
-  sizeKb      Int
-  url         String           // public URL (local path or CDN URL)
-  thumbUrl    String?          // compressed thumbnail URL (images only)
-  createdAt   DateTime         @default(now())
-  request     LifecycleRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-
-  @@index([requestId])
 }

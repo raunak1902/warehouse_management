@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Smartphone,
   LayoutGrid,
@@ -38,6 +38,12 @@ import {
   ShieldCheck,
   Mouse,
   Zap,
+  Heart,
+  RefreshCw,
+  Loader2,
+  History,
+  Building2,
+  Activity,
 } from 'lucide-react'
 import {
   useInventory,
@@ -71,6 +77,7 @@ import BarcodeResultCard from '../../components/BarcodeResultCard'
 import BulkBarcodeGenerator from '../../components/BulkBarcodeGenerator'
 import DeviceTimeline from '../../components/DeviceTimeline'
 import LifecycleActionModal from '../../components/LifecycleActionModal'
+import { lifecycleRequestApi, STEP_META } from '../../api/lifecycleRequestApi'
 
 // Normalize legacy health status values to canonical ones used throughout the system.
 // Ground team requests may have written 'damaged', 'needs_repair', 'critical' into the DB.
@@ -164,6 +171,293 @@ const statusStyles = {
   warehouse: 'bg-slate-100 text-slate-800 border-slate-200',
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEVICE DETAIL MODAL
+// Redesigned "View" modal: hardware identity + live status + mini timeline
+// ─────────────────────────────────────────────────────────────────────────────
+const fmt = (dt) =>
+  dt ? new Date(dt).toLocaleString('en-IN', {
+    day: 'numeric', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  }) : '—'
+
+const fmtDate = (dt) =>
+  dt ? new Date(dt).toLocaleDateString('en-IN', {
+    day: 'numeric', month: 'short', year: 'numeric',
+  }) : '—'
+
+// Compact row used in both sections
+const DetailRow = ({ label, children }) => (
+  <div className="flex items-center justify-between gap-4 py-1.5 border-b border-gray-50 last:border-0">
+    <span className="text-xs text-gray-400 font-medium flex-shrink-0">{label}</span>
+    <span className="text-xs font-semibold text-gray-800 text-right">{children}</span>
+  </div>
+)
+
+function DeviceDetailModal({ device, deviceSets, getClientById, getSubscriptionStatus, statusStyles, getHealthStyle, getDeviceTypeLabel, getDeviceLifecycleStatus, onClose, onViewBarcode }) {
+  const [history, setHistory]   = useState([])
+  const [histLoading, setHistLoading] = useState(true)
+
+  // Fetch last 3 approved history entries on open
+  useEffect(() => {
+    if (!device?.id) return
+    setHistLoading(true)
+    lifecycleRequestApi.getDeviceHistory(device.id)
+      .then(data => setHistory((data || []).slice(-3).reverse())) // most-recent first, max 3
+      .catch(() => setHistory([]))
+      .finally(() => setHistLoading(false))
+  }, [device?.id])
+
+  if (!device) return null
+
+  const lifecycle    = getDeviceLifecycleStatus(device)
+  const exactStep    = device.lifecycleStatus || 'available'
+  const stepMeta     = STEP_META[exactStep]
+  const hs           = getHealthStyle(device.healthStatus)
+  const client       = device.clientId ? getClientById(device.clientId) : null
+  const set          = device.setId ? deviceSets.find(s => s.id === device.setId || s.id === Number(device.setId)) : null
+
+  // Determine location context
+  const inWarehouse  = lifecycle === 'warehouse'
+  const isDeployed   = lifecycle === 'deployed'
+  const isAssigning  = lifecycle === 'assigning'
+
+  // Subscription status
+  const subStatus = client && device.subscriptionEnd
+    ? getSubscriptionStatus(device.subscriptionEnd)
+    : null
+
+  // Step colour classes
+  const stepBg   = stepMeta ? stepMeta.bgClass   : 'bg-gray-100'
+  const stepText = stepMeta ? stepMeta.textClass  : 'text-gray-700'
+  const stepBorder = stepMeta ? stepMeta.borderClass : 'border-gray-200'
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[92vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* ── Header ─────────────────────────────────────────────── */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center flex-shrink-0">
+              <QrCode className="w-5 h-5 text-primary-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900 font-mono leading-tight">{device.code}</h2>
+              <p className="text-xs text-gray-400">{getDeviceTypeLabel(device.type)}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 text-gray-400 hover:bg-gray-100 rounded-xl transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-5">
+
+          {/* ── LIVE STATUS CARD ───────────────────────────────────── */}
+          <div className={`rounded-xl border p-4 space-y-3 ${stepBg} ${stepBorder}`}>
+            <p className={`text-[10px] font-extrabold uppercase tracking-widest ${stepText} opacity-70`}>
+              Current Status
+            </p>
+
+            {/* Big step badge */}
+            <div className="flex items-center gap-2">
+              <span className="text-2xl leading-none">{stepMeta?.emoji ?? '📋'}</span>
+              <span className={`text-sm font-extrabold ${stepText}`}>
+                {stepMeta?.label ?? exactStep}
+              </span>
+            </div>
+
+            {/* Health */}
+            <div className="flex items-center justify-between">
+              <span className={`text-xs font-medium ${stepText} opacity-70 flex items-center gap-1`}>
+                <Heart className="w-3 h-3" /> Health
+              </span>
+              <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${hs.badge}`}>
+                {hs.label}
+              </span>
+            </div>
+
+            {/* Location — context-sensitive */}
+            {inWarehouse && device.location && (
+              <div className="flex items-center justify-between">
+                <span className={`text-xs font-medium ${stepText} opacity-70 flex items-center gap-1`}>
+                  <Building2 className="w-3 h-3" /> Warehouse
+                </span>
+                <span className={`text-xs font-bold ${stepText}`}>{device.location}</span>
+              </div>
+            )}
+            {isDeployed && (device.state || device.district || device.location) && (
+              <div className="space-y-1.5">
+                <p className={`text-xs font-medium ${stepText} opacity-70 flex items-center gap-1`}>
+                  <MapPin className="w-3 h-3" /> Deployment Site
+                </p>
+                {device.state    && <div className="flex justify-between"><span className={`text-[11px] ${stepText} opacity-60`}>State</span><span className={`text-[11px] font-semibold ${stepText}`}>{device.state}</span></div>}
+                {device.district && <div className="flex justify-between"><span className={`text-[11px] ${stepText} opacity-60`}>District</span><span className={`text-[11px] font-semibold ${stepText}`}>{device.district}</span></div>}
+                {device.location && <div className="flex justify-between"><span className={`text-[11px] ${stepText} opacity-60`}>Site</span><span className={`text-[11px] font-semibold ${stepText}`}>{device.location}</span></div>}
+              </div>
+            )}
+            {isAssigning && (
+              <div className="flex items-center gap-1.5">
+                <Activity className="w-3 h-3 text-amber-600" />
+                <span className="text-xs text-amber-700 font-medium">Device in motion — check timeline for details</span>
+              </div>
+            )}
+
+            {/* Client */}
+            {client ? (
+              <div className="pt-2 border-t border-black/5 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className={`text-xs font-medium ${stepText} opacity-70 flex items-center gap-1`}>
+                    <User className="w-3 h-3" /> Client
+                  </span>
+                  <span className={`text-xs font-bold ${stepText}`}>{client.name}</span>
+                </div>
+                {device.subscriptionStart && device.subscriptionEnd && (
+                  <div className="flex items-center justify-between">
+                    <span className={`text-xs font-medium ${stepText} opacity-70 flex items-center gap-1`}>
+                      <Calendar className="w-3 h-3" /> Subscription
+                    </span>
+                    <span className={`text-[11px] font-medium ${stepText}`}>
+                      {fmtDate(device.subscriptionStart)} → {fmtDate(device.subscriptionEnd)}
+                    </span>
+                  </div>
+                )}
+                {subStatus && (
+                  <div className="flex justify-end">
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${statusStyles[subStatus.type]}`}>
+                      {subStatus.label}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between pt-2 border-t border-black/5">
+                <span className={`text-xs font-medium ${stepText} opacity-70 flex items-center gap-1`}>
+                  <User className="w-3 h-3" /> Client
+                </span>
+                <span className="text-xs text-gray-400">Unassigned</span>
+              </div>
+            )}
+          </div>
+
+          {/* ── HARDWARE IDENTITY ──────────────────────────────────── */}
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-widest text-gray-400 mb-2">
+              Hardware
+            </p>
+            <div className="bg-gray-50 rounded-xl px-4 py-2 divide-y divide-gray-100">
+              <DetailRow label="Type">{getDeviceTypeLabel(device.type)}</DetailRow>
+              {set && (
+                <DetailRow label="In Set">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-100 text-orange-800 border border-orange-200">
+                    <Layers className="w-3 h-3" />
+                    {set.code || set.name || `Set #${device.setId}`}
+                  </span>
+                </DetailRow>
+              )}
+              {device.brand && <DetailRow label="Brand">{device.brand}</DetailRow>}
+              {device.size  && <DetailRow label="Size">{device.size}</DetailRow>}
+              {device.model && <DetailRow label="Model">{device.model}</DetailRow>}
+              {device.color && <DetailRow label="Color">{device.color}</DetailRow>}
+              {device.gpsId && <DetailRow label="GPS ID"><span className="font-mono">{device.gpsId}</span></DetailRow>}
+              {device.mfgDate && (
+                <DetailRow label="Entered Warehouse">
+                  {typeof device.mfgDate === 'string' ? device.mfgDate : fmtDate(device.mfgDate)}
+                </DetailRow>
+              )}
+            </div>
+          </div>
+
+          {/* ── MINI TIMELINE ─────────────────────────────────────── */}
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-widest text-gray-400 mb-2 flex items-center gap-1.5">
+              <History className="w-3 h-3" /> Recent Activity
+            </p>
+
+            {histLoading ? (
+              <div className="flex items-center justify-center py-6 bg-gray-50 rounded-xl">
+                <Loader2 className="w-4 h-4 animate-spin text-gray-400 mr-2" />
+                <span className="text-xs text-gray-400">Loading history…</span>
+              </div>
+            ) : history.length === 0 ? (
+              <div className="flex flex-col items-center py-6 bg-gray-50 rounded-xl">
+                <Clock className="w-7 h-7 text-gray-200 mb-1.5" />
+                <p className="text-xs text-gray-400">No history yet</p>
+              </div>
+            ) : (
+              <div className="relative space-y-0">
+                {/* Vertical connector line */}
+                <div className="absolute left-3.5 top-4 bottom-4 w-px bg-gray-200 z-0" />
+
+                {history.map((item, idx) => {
+                  const meta     = STEP_META[item.toStep] ?? { label: item.toStep, emoji: '📋', textClass: 'text-gray-700', bgClass: 'bg-gray-100', borderClass: 'border-gray-200' }
+                  const isFirst  = idx === 0
+                  const itemHs   = { ok: 'bg-emerald-50 text-emerald-700 border-emerald-200', repair: 'bg-amber-50 text-amber-700 border-amber-200', damage: 'bg-red-50 text-red-700 border-red-200' }[item.healthStatus] || 'bg-gray-50 text-gray-600 border-gray-200'
+                  const healthLabel = { ok: '✓ OK', repair: '🔧 Repair', damage: '⚠ Damage' }[item.healthStatus] || item.healthStatus
+                  return (
+                    <div key={item.id} className="relative flex gap-3 pb-3 last:pb-0">
+                      {/* Dot */}
+                      <div className={`relative z-10 w-7 h-7 flex-shrink-0 rounded-full flex items-center justify-center text-sm shadow-sm
+                        ${isFirst ? `${meta.bgClass} border-2 ${meta.borderClass}` : 'bg-gray-100 border border-gray-200'}`}>
+                        {meta.emoji}
+                      </div>
+
+                      {/* Card */}
+                      <div className={`flex-1 min-w-0 rounded-xl border px-3 py-2 shadow-sm
+                        ${isFirst ? `${meta.bgClass} ${meta.borderClass}` : 'bg-white border-gray-200'}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <span className={`text-xs font-bold ${isFirst ? meta.textClass : 'text-gray-700'} leading-tight`}>
+                            {meta.label}
+                          </span>
+                          <span className="text-[10px] text-gray-400 flex-shrink-0">
+                            {fmt(item.approvedAt || item.createdAt)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          {item.requestedByName && (
+                            <span className="text-[10px] text-gray-400 flex items-center gap-0.5">
+                              <User className="w-2.5 h-2.5" /> {item.requestedByName}
+                            </span>
+                          )}
+                          <span className={`inline-flex items-center px-1.5 py-px rounded-full text-[10px] font-semibold border ${itemHs}`}>
+                            {healthLabel}
+                          </span>
+                          {item.healthNote && (
+                            <span className="text-[10px] text-amber-600 font-medium truncate max-w-[120px]" title={item.healthNote}>
+                              ⚠ {item.healthNote}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ── ACTIONS ───────────────────────────────────────────── */}
+          {device.barcode && (
+            <button
+              onClick={() => onViewBarcode(device)}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-colors text-sm font-semibold"
+            >
+              <QrCode className="w-4 h-4" /> View Barcode
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function getDeviceTypeLabel(type) {
   // Registry resolves any type string (legacy or canonical) to a display label
   return getTypeLabel(type) || type || '—'
@@ -171,6 +465,8 @@ function getDeviceTypeLabel(type) {
 
 const Devices = () => {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  
   const {
     devices,
     clients,
@@ -204,9 +500,40 @@ const Devices = () => {
       .catch(() => {})
   }, [devices])
 
-  const [lifecycleFilter, setLifecycleFilter] = useState('all')
-  const [selectedType, setSelectedType] = useState(null)
+  // ── URL Query Parameter Support ──────────────────────
+  // Get initial filters from URL parameters
+  const urlType = searchParams.get('type')
+  const urlStatus = searchParams.get('status')
+  const urlHealth = searchParams.get('health')
+  // exactLifecycle: filters individual devices to specific lifecycleStatus values (comma-separated)
+  const urlExactLifecycle = searchParams.get('exactLifecycle')
+  // setLifecycle: when present, show a matching sets section below devices
+  const urlSetLifecycle = searchParams.get('setLifecycle')
+
+  const [lifecycleFilter, setLifecycleFilter] = useState(() => {
+    if (urlStatus === 'available') return 'warehouse'
+    if (urlStatus === 'active') return 'deployed'
+    if (urlStatus) return urlStatus
+    return 'all'
+  })
+
+  const [exactLifecycleFilter] = useState(() => urlExactLifecycle || null)
+
+  // Sets matching the setLifecycle param — shown inline below the device list
+  const matchingSets = useMemo(() => {
+    if (!urlSetLifecycle) return []
+    const steps = urlSetLifecycle.split(',')
+    return deviceSets.filter(s => steps.includes(s.lifecycleStatus))
+  }, [deviceSets, urlSetLifecycle])
+  const [selectedType, setSelectedType] = useState(() => {
+    if (urlType) return resolveTypeId(urlType) || urlType
+    return null
+  })
+  
   const [searchCode, setSearchCode] = useState('')
+  const [healthFilter, setHealthFilter] = useState(() => {
+    return urlHealth || ''
+  })
   const [detailDevice, setDetailDevice] = useState(null)
   const [showAddDevice, setShowAddDevice] = useState(false)
   const [showFilters, setShowFilters] = useState(true)
@@ -345,6 +672,19 @@ const Devices = () => {
       : devices
     list = getDevicesForLifecycle(list)
     if (lifecycleFilter !== 'warehouse' && filterClientId) list = list.filter((d) => d.clientId === Number(filterClientId))
+    
+    // Health filter support (from URL params)
+    if (healthFilter) {
+      const healthValues = healthFilter.split(',')
+      list = list.filter((d) => healthValues.includes(d.healthStatus))
+    }
+
+    // Exact lifecycle step filter — overrides coarse bucket, from dashboard drill-down
+    if (exactLifecycleFilter) {
+      const steps = exactLifecycleFilter.split(',')
+      list = list.filter((d) => steps.includes(d.lifecycleStatus))
+    }
+    
     if (filterState === 'Warehouse') {
       list = list.filter((d) => !(d.state || '').trim() && (d.location || ''))
       if (filterPinpoint) list = list.filter((d) => (d.location || '') === filterPinpoint)
@@ -364,6 +704,7 @@ const Devices = () => {
     getDevicesByType,
     lifecycleFilter,
     filterClientId,
+    healthFilter,
     filterState,
     filterDistrict,
     filterPinpoint,
@@ -371,12 +712,15 @@ const Devices = () => {
     filterSize,
     filterModel,
     searchCode,
+    exactLifecycleFilter,
   ])
 
   const counts = useMemo(() => {
     // Group devices by canonical type ID (resolves all legacy strings automatically)
+    // Exclude devices that are already part of a set (setId is set)
     const out = {}
     devices.forEach((d) => {
+      if (d.setId) return
       const canonicalId = resolveTypeId(d.type) || d.type
       if (!canonicalId) return
       const passes = lifecycleFilter === 'all' || getDeviceLifecycleStatus(d) === lifecycleFilter
@@ -1382,106 +1726,21 @@ const Devices = () => {
 
       {/* Device detail modal */}
       {detailDevice && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
-          onClick={() => setDetailDevice(null)}
-        >
-          <div
-            className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-gray-200 pb-4 mb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-primary-100">
-                  <QrCode className="w-8 h-8 text-primary-600" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-gray-900 font-mono">{detailDevice.code}</h2>
-                  <p className="text-gray-600">{getDeviceTypeLabel(detailDevice.type)}</p>
-                </div>
-              </div>
-              <button type="button" onClick={() => setDetailDevice(null)} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="space-y-3 text-sm">
-              <div className="flex justify-between"><span className="text-gray-500">Type</span><span className="font-medium">{getDeviceTypeLabel(detailDevice.type)}</span></div>
-              {detailDevice.setId && (() => {
-                const set = deviceSets.find(s => s.id === detailDevice.setId || s.id === Number(detailDevice.setId))
-                return (
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-500">In Set</span>
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border bg-orange-100 text-orange-800 border-orange-200">
-                      <Layers className="w-3 h-3" />
-                      {set ? (set.code || set.name || `Set #${detailDevice.setId}`) : `Set #${detailDevice.setId}`}
-                    </span>
-                  </div>
-                )
-              })()}
-
-              {detailDevice.brand && <div className="flex justify-between"><span className="text-gray-500">Brand</span><span className="font-medium">{detailDevice.brand}</span></div>}
-              {detailDevice.size && <div className="flex justify-between"><span className="text-gray-500">Size</span><span className="font-medium">{detailDevice.size}</span></div>}
-              {detailDevice.model && <div className="flex justify-between"><span className="text-gray-500">Model</span><span className="font-medium">{detailDevice.model}</span></div>}
-              {detailDevice.color && <div className="flex justify-between"><span className="text-gray-500">Color</span><span className="font-medium">{detailDevice.color}</span></div>}
-              {detailDevice.gpsId && <div className="flex justify-between"><span className="text-gray-500">GPS ID</span><span className="font-medium font-mono">{detailDevice.gpsId}</span></div>}
-              {detailDevice.mfgDate && <div className="flex justify-between"><span className="text-gray-500">IN Date</span><span className="font-medium">{typeof detailDevice.mfgDate === 'string' ? detailDevice.mfgDate : new Date(detailDevice.mfgDate).toLocaleDateString('en-IN')}</span></div>}
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500">Health</span>
-                {(() => { const hs = getHealthStyle(detailDevice.healthStatus); return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${hs.badge}`}>{hs.label}</span> })()}
-              </div>
-              {getDeviceLifecycleStatus(detailDevice) === 'deployed' && (detailDevice.state || detailDevice.district || detailDevice.location) && (
-                <div className="space-y-1">
-                  <div className="text-gray-500 text-xs font-medium mb-0.5">Deployment location</div>
-                  {detailDevice.state && <div className="flex justify-between"><span className="text-gray-500">State</span><span className="font-medium">{detailDevice.state}</span></div>}
-                  {detailDevice.district && <div className="flex justify-between"><span className="text-gray-500">District</span><span className="font-medium">{detailDevice.district}</span></div>}
-                  {detailDevice.location && <div className="flex justify-between"><span className="text-gray-500">Site</span><span className="font-medium">{detailDevice.location}</span></div>}
-                </div>
-              )}
-              {getDeviceLifecycleStatus(detailDevice) === 'warehouse' && detailDevice.location && (
-                <div className="flex justify-between"><span className="text-gray-500">Warehouse</span><span className="font-medium">{detailDevice.location}</span></div>
-              )}
-              {detailDevice.clientId ? (
-                <>
-                  <div className="flex justify-between"><span className="text-gray-500">Assigned to</span><span className="font-medium">{getClientById(detailDevice.clientId)?.name ?? '—'}</span></div>
-                  <div className="flex justify-between"><span className="text-gray-500">Subscription</span><span className="font-medium">{detailDevice.subscriptionStart} → {detailDevice.subscriptionEnd}</span></div>
-                  {detailDevice.subscriptionEnd && (
-                    <div className="flex justify-between items-center">
-                      <span className="text-gray-500">Status</span>
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${statusStyles[getSubscriptionStatus(detailDevice.subscriptionEnd).type]}`}>
-                        {getSubscriptionStatus(detailDevice.subscriptionEnd).label}
-                      </span>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="flex justify-between items-center">
-                  <span className="text-gray-500">Assigned to</span>
-                  <span className="text-gray-400">—</span>
-                </div>
-              )}
-            </div>
-            
-            {/* NEW: Show barcode button if barcode exists */}
-            {detailDevice.barcode && (
-              <div className="pt-4 border-t border-gray-200 mt-4">
-                <button
-                  onClick={() => handleViewBarcode(detailDevice)}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  <QrCode className="w-4 h-4" />
-                  View Barcode
-                </button>
-              </div>
-            )}
-            
-            <p className="text-xs text-gray-500 mt-4 pt-4 border-t border-gray-200">
-              Device data is synced with Client and other modules.
-            </p>
-          </div>
-        </div>
+        <DeviceDetailModal
+          device={detailDevice}
+          deviceSets={deviceSets}
+          getClientById={getClientById}
+          getSubscriptionStatus={getSubscriptionStatus}
+          statusStyles={statusStyles}
+          getHealthStyle={getHealthStyle}
+          getDeviceTypeLabel={getDeviceTypeLabel}
+          getDeviceLifecycleStatus={getDeviceLifecycleStatus}
+          onClose={() => setDetailDevice(null)}
+          onViewBarcode={(d) => { setDetailDevice(null); handleViewBarcode(d) }}
+        />
       )}
 
-      {/* Add device modal */}
+            {/* Add device modal */}
       {showAddDevice && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
@@ -1706,7 +1965,54 @@ const Devices = () => {
       )}
       </>
 
-      {/* Add New Product Type Modal */}
+      {/* ── Matching Sets Section (shown when navigated from dashboard with setLifecycle param) ── */}
+      {matchingSets.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mt-2">
+          <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-violet-50 to-white flex items-center justify-between">
+            <div>
+              <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                <Box className="w-4 h-4 text-violet-600" />
+                Matching Sets ({matchingSets.length})
+              </h3>
+              <p className="text-xs text-gray-500 mt-0.5">Sets with the same lifecycle status</p>
+            </div>
+            <button
+              onClick={() => navigate(`/dashboard/makesets?lifecycle=${urlSetLifecycle}`)}
+              className="text-xs text-violet-600 font-medium hover:underline flex items-center gap-1"
+            >
+              View in Make Sets <ArrowRight className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {matchingSets.map(set => (
+              <div
+                key={set.id}
+                onClick={() => navigate(`/dashboard/makesets?lifecycle=${urlSetLifecycle}`)}
+                className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-violet-100 rounded-lg flex items-center justify-center">
+                    <Box className="w-4 h-4 text-violet-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">{set.code}</p>
+                    <p className="text-xs text-gray-500">{set.setTypeName || set.setType}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium
+                    ${set.lifecycleStatus === 'active' || set.lifecycleStatus === 'deployed' ? 'bg-green-100 text-green-700 border-green-200' :
+                      set.lifecycleStatus?.includes('return') ? 'bg-rose-100 text-rose-700 border-rose-200' :
+                      set.lifecycleStatus === 'assigning' ? 'bg-blue-100 text-blue-700 border-blue-200' :
+                      'bg-gray-100 text-gray-600 border-gray-200'}`}>
+                    {set.lifecycleStatus?.replace(/_/g, ' ')}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {showAddTypeModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50" onClick={() => setShowAddTypeModal(false)}>
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6" onClick={(e) => e.stopPropagation()}>

@@ -4,7 +4,11 @@ import dotenv from "dotenv";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import path from "path";
+import { fileURLToPath } from "url";
 import authMiddleware from "./middleware/auth.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Routes
 import deviceRoutes             from "./routes/devices.js";
@@ -34,6 +38,9 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+// ── Static: serve uploaded proof files ───────────────────────────────────────
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get("/", (_req, res) => res.json({ message: "Backend is running 🚀" }));

@@ -92,7 +92,6 @@ export const DEVICE_TYPES = {
   tablet: 'Tablet',
 }
 
-export const DEVICE_CODE_PREFIX = { stand: 'ATV', istand: 'ITV', tablet: 'TAB' }
 
 // getSubscriptionFilterStatus: returns filter bucket for a subscription
 export const getSubscriptionFilterStatus = (startStr, endStr) => {
@@ -174,24 +173,39 @@ const getAuthHeaders = () => {
 }
 
 // ── Unified lifecycle API — all transitions go through POST /lifecycle-requests ──
+
+// Helper: build FormData payload supporting optional proof files
+const buildLifecycleFormData = (fields, files = []) => {
+  const fd = new FormData()
+  Object.entries(fields).forEach(([k, v]) => { if (v !== null && v !== undefined) fd.append(k, String(v)) })
+  files.forEach(f => fd.append('proofFiles', f))
+  return fd
+}
+
+// Auth headers WITHOUT Content-Type — browser sets multipart boundary automatically
+const getAuthHeadersMultipart = () => {
+  const token = localStorage.getItem('token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 const lifecycleApi = {
-  // Submit any step request (ground team = pending, manager = auto-approved)
-  submitStep: (deviceId, toStep, note = null, healthStatus = 'ok', healthNote = null) =>
+  // Submit any step — sends FormData to support proof file attachments
+  submitStep: (deviceId, toStep, note = null, healthStatus = 'ok', healthNote = null, files = []) =>
     fetch(`${API_BASE}/lifecycle-requests`, {
       method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ deviceId, toStep, note, healthStatus, healthNote }),
+      headers: getAuthHeadersMultipart(),
+      body: buildLifecycleFormData({ deviceId, toStep, note, healthStatus, healthNote }, files),
     }).then(async r => {
       const data = await r.json()
       if (!r.ok) throw new Error(data.message || data.error || `Error ${r.status}`)
       return data
     }),
 
-  submitSetStep: (setId, toStep, note = null, healthStatus = 'ok', healthNote = null) =>
+  submitSetStep: (setId, toStep, note = null, healthStatus = 'ok', healthNote = null, files = []) =>
     fetch(`${API_BASE}/lifecycle-requests`, {
       method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ setId, toStep, note, healthStatus, healthNote }),
+      headers: getAuthHeadersMultipart(),
+      body: buildLifecycleFormData({ setId, toStep, note, healthStatus, healthNote }, files),
     }).then(async r => {
       const data = await r.json()
       if (!r.ok) throw new Error(data.message || data.error || `Error ${r.status}`)
@@ -337,7 +351,7 @@ export const InventoryProvider = ({ children }) => {
   // ── Derived: lifecycle counts ─────────────────────────────
   const lifecycleCounts = useMemo(() => ({
     total:           devices.length,
-    warehouse:       devices.filter(d => d.lifecycleStatus === 'available').length,
+    warehouse:       devices.filter(d => getDeviceLifecycleStatus(d) === 'warehouse').length,
     assigning:       devices.filter(d => d.lifecycleStatus === 'assigning').length,
     readyToDeploy:   devices.filter(d => d.lifecycleStatus === 'ready_to_deploy').length,
     inTransit:       devices.filter(d => d.lifecycleStatus === 'in_transit').length,
@@ -357,21 +371,140 @@ export const InventoryProvider = ({ children }) => {
 
   // ── Component inventory (unchanged) ──────────────────────
   const componentInventory = useMemo(() => {
-    const wh = devices.filter(d => (d.lifecycleStatus === 'available' || d.lifecycleStatus === 'warehouse') && !d.setId)
+    // Use getDeviceLifecycleStatus to match Devices page bucket logic exactly.
+    // This includes 'available', 'warehouse', AND 'returned' statuses in the warehouse bucket.
+    const wh = devices.filter(d => getDeviceLifecycleStatus(d) === 'warehouse' && !d.setId)
     const count = (canonicalType) => wh.filter(d =>
       normalizeDeviceType(d.type) === canonicalType ||
       normalizeDeviceType(d.productType) === canonicalType
     ).length
     return {
-      tvs:              count('tv'),
-      tablets:          count('tablet'),
-      aFrameStands:     count('stand'),
-      iFrameStands:     count('istand'),
-      mediaBoxes:       count('mediaBox'),
-      batteries:        count('battery'),
-      fabricationTablet: count('fabrication'),
+      tvs:              count('TV'),
+      tablets:          count('TAB'),
+      aFrameStands:     count('AST'),
+      iFrameStands:     count('IST'),
+      mediaBoxes:       count('MB'),
+      batteries:        count('BAT'),
+      fabricationTablet: count('TST'),
+      mouse:            count('MSE'),
+      charger:          count('charger'),
+      touchTv:          count('TTV'),
     }
   }, [devices])
+
+  // ── Enhanced Dashboard Statistics ────────────────────────
+  const dashboardStats = useMemo(() => {
+    // Use getDeviceLifecycleStatus to match Devices page bucket logic exactly.
+    // This includes 'available', 'warehouse', AND 'returned' statuses in the warehouse bucket.
+    const wh = devices.filter(d => getDeviceLifecycleStatus(d) === 'warehouse' && !d.setId)
+    const count = (canonicalType) => wh.filter(d =>
+      normalizeDeviceType(d.type) === canonicalType ||
+      normalizeDeviceType(d.productType) === canonicalType
+    ).length
+
+    // Materials in stock - all device types with counts
+    const materialsInStock = {
+      tv: count('TV'),
+      tablet: count('TAB'),
+      mediaBox: count('MB'),
+      battery: count('BAT'),
+      aStand: count('AST'),
+      iStand: count('IST'),
+      tabletStand: count('TST'),
+      mouse: count('MSE'),
+      charger: count('charger'),
+      touchTv: count('TTV'),
+    }
+
+    // ── Lifecycle step sets — used for both devices and sets ──
+    const WAREHOUSE_SET_STEPS  = new Set(['available', 'warehouse', 'returned'])
+    const DEPLOYED_STEPS_ALL   = new Set(['active', 'deployed', 'installed', 'under_maintenance'])
+    const OUT_OF_WH_STEPS_ALL  = new Set(['assigning', 'assign_requested', 'assigned', 'ready_to_deploy', 'deploy_requested', 'in_transit', 'received'])
+    const RETURN_STEPS_ALL     = new Set(['return_initiated', 'return_requested', 'return_transit', 'returned'])
+
+    // Helper: count devices (excl. those in sets) + sets with a given lifecycleStatus predicate
+    const countBoth = (devicePred, setPred) =>
+      devices.filter(d => !d.setId && devicePred(d.lifecycleStatus)).length +
+      deviceSets.filter(s => setPred(s.lifecycleStatus)).length
+
+    // Available sets — assembled sets sitting in warehouse
+    const availableSets = {
+      aStand:      deviceSets.filter(s => s.setType === 'aStand'      && WAREHOUSE_SET_STEPS.has(s.lifecycleStatus)).length,
+      iStand:      deviceSets.filter(s => s.setType === 'iStand'      && WAREHOUSE_SET_STEPS.has(s.lifecycleStatus)).length,
+      tabletCombo: deviceSets.filter(s => s.setType === 'tabletCombo' && WAREHOUSE_SET_STEPS.has(s.lifecycleStatus)).length,
+    }
+
+    // Deployed — devices + sets currently installed/active/under maintenance
+    const deployedSets = {
+      total:            countBoth(s => DEPLOYED_STEPS_ALL.has(s), s => DEPLOYED_STEPS_ALL.has(s)),
+      installed:        countBoth(s => s === 'installed',          s => s === 'installed'),
+      active:           countBoth(s => ['active','deployed'].includes(s), s => ['active','deployed'].includes(s)),
+      underMaintenance: countBoth(s => s === 'under_maintenance',  s => s === 'under_maintenance'),
+    }
+
+    // Active — individual devices + sets that are live
+    const activeDevices = countBoth(
+      s => ['active', 'deployed'].includes(s),
+      s => ['active', 'deployed'].includes(s)
+    )
+
+    // Out of warehouse — individual devices + sets in assignment/delivery pipeline
+    const outOfWarehouse = {
+      total:         countBoth(s => OUT_OF_WH_STEPS_ALL.has(s), s => OUT_OF_WH_STEPS_ALL.has(s)),
+      assigning:     countBoth(s => ['assigning','assign_requested','assigned'].includes(s), s => ['assigning','assign_requested','assigned'].includes(s)),
+      readyToDeploy: countBoth(s => ['ready_to_deploy','deploy_requested'].includes(s), s => ['ready_to_deploy','deploy_requested'].includes(s)),
+      inTransit:     countBoth(s => s === 'in_transit',  s => s === 'in_transit'),
+      received:      countBoth(s => s === 'received',    s => s === 'received'),
+    }
+
+    // Return pipeline — individual devices + sets coming back
+    const returnPipeline = {
+      total:           countBoth(s => RETURN_STEPS_ALL.has(s), s => RETURN_STEPS_ALL.has(s)),
+      returnInitiated: countBoth(s => ['return_initiated','return_requested'].includes(s), s => ['return_initiated','return_requested'].includes(s)),
+      returnTransit:   countBoth(s => s === 'return_transit', s => s === 'return_transit'),
+      returned:        countBoth(s => s === 'returned',       s => s === 'returned'),
+    }
+
+    // Devices needing attention
+    const needsAttention = {
+      total: devices.filter(d => ['repair', 'damage'].includes(d.healthStatus)).length,
+      repair: devices.filter(d => d.healthStatus === 'repair').length,
+      damage: devices.filter(d => d.healthStatus === 'damage').length,
+    }
+
+    // Bug 1 fix: Low stock alerts — include zero-stock items (count < 5, was incorrectly count > 0 && count < 5)
+    const lowStockAlerts = Object.entries(materialsInStock)
+      .filter(([_, count]) => count < 5)
+      .map(([type, count]) => ({ type, count }))
+
+    // Health distribution
+    const healthDistribution = {
+      ok: devices.filter(d => d.healthStatus === 'ok').length,
+      repair: devices.filter(d => d.healthStatus === 'repair').length,
+      damage: devices.filter(d => d.healthStatus === 'damage').length,
+    }
+
+    // Location insights
+    const locationInsights = {
+      warehouse: devices.filter(d => getDeviceLifecycleStatus(d) === 'warehouse').length,
+      deployed: deployedSets.total,
+      inTransit: outOfWarehouse.total,
+      returning: returnPipeline.total,
+    }
+
+    return {
+      materialsInStock,
+      availableSets,
+      deployedSets,
+      activeDevices: activeDevices,
+      outOfWarehouse,
+      returnPipeline,
+      needsAttention,
+      lowStockAlerts,
+      healthDistribution,
+      locationInsights,
+    }
+  }, [devices, deviceSets])
 
   // ── SCAN DEVICE — always fetches live from API ────────────
   // Tries device barcode first; if 404, tries set barcode.
@@ -477,14 +610,14 @@ export const InventoryProvider = ({ children }) => {
 
   // ── LIFECYCLE WORKFLOW ACTIONS ────────────────────────────
   // Ground team: creates pending request. Manager/SuperAdmin: auto-approved.
-  const submitLifecycleStep = useCallback(async (deviceId, toStep, note = null, healthStatus = 'ok', healthNote = null) => {
-    const result = await lifecycleApi.submitStep(deviceId, toStep, note, healthStatus, healthNote)
+  const submitLifecycleStep = useCallback(async (deviceId, toStep, note = null, healthStatus = 'ok', healthNote = null, files = []) => {
+    const result = await lifecycleApi.submitStep(deviceId, toStep, note, healthStatus, healthNote, files)
     await refresh()
     return result
   }, [refresh])
 
-  const submitSetLifecycleStep = useCallback(async (setId, toStep, note = null, healthStatus = 'ok', healthNote = null) => {
-    const result = await lifecycleApi.submitSetStep(setId, toStep, note, healthStatus, healthNote)
+  const submitSetLifecycleStep = useCallback(async (setId, toStep, note = null, healthStatus = 'ok', healthNote = null, files = []) => {
+    const result = await lifecycleApi.submitSetStep(setId, toStep, note, healthStatus, healthNote, files)
     await refresh()
     return result
   }, [refresh])
@@ -727,6 +860,7 @@ export const InventoryProvider = ({ children }) => {
     // NEW: derived state
     pendingApprovals,
     lifecycleCounts,
+    dashboardStats,
 
     // Refresh
     refresh,

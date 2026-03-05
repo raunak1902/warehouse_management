@@ -4,11 +4,15 @@ import {
   AlertCircle, RefreshCw, Search, X, User, Layers, Monitor,
   Building2, AlertTriangle, FileText, TrendingUp,
   ArrowRight, CheckCircle2, Truck,
-  Hourglass, Plus, Send, Zap, Heart
+  Hourglass, Plus, Send, Zap, Heart,
+  Paperclip, ImageIcon, Film, Eye,
+  MoreHorizontal, Clipboard, ClipboardCheck
 } from 'lucide-react'
 import { normaliseRole, ROLES } from '../../App'
 import { useInventory } from '../../context/InventoryContext'
-import { lifecycleRequestApi, STEP_META, VALID_NEXT_STEPS } from '../../api/lifecycleRequestApi'
+import { lifecycleRequestApi, STEP_META, VALID_NEXT_STEPS, PROOF_CONFIG, HEALTH_REQUIRES_PROOF, MAX_PROOF_FILES } from '../../api/lifecycleRequestApi'
+import LifecycleTimeline, { TimelineItem, ProofFilesPanel, ProofAttachmentButton } from '../../components/LifecycleTimeline'
+import { ProofUploadPanel, useProofFiles } from '../../components/ProofUpload'
 
 const authHeaders = () => ({
   'Content-Type': 'application/json',
@@ -270,7 +274,7 @@ const Requests = ({ userRole }) => {
   const isGroundTeam = role === ROLES.GROUNDTEAM
   const canApprove   = role === ROLES.SUPERADMIN || role === ROLES.MANAGER
 
-  const { clients, devices, deviceSets } = useInventory()
+  const { clients, devices, deviceSets, refresh: refreshContext } = useInventory()
 
   const [allRequests,      setAllRequests]      = useState([])
   const [summary,          setSummary]          = useState({ total: 0, byUser: {}, byStep: {} })
@@ -331,6 +335,7 @@ const Requests = ({ userRole }) => {
             const clientName = clients ? (clients.find(c => c.id === d.clientId)?.name ?? null) : null
             map[key] = {
               id: d.id, code: d.code, type: d.type, isSet: false,
+              barcode: d.barcode ?? null,
               clientId: d.clientId ?? null, clientName,
               currentStatus: d.lifecycleStatus, healthStatus: d.healthStatus || 'ok',
             }
@@ -338,6 +343,7 @@ const Requests = ({ userRole }) => {
           if (map[key]) {
             map[key].currentStatus = d.lifecycleStatus
             map[key].healthStatus  = d.healthStatus || 'ok'
+            if (d.barcode) map[key].barcode = d.barcode
             if (d.clientId) {
               map[key].clientId = d.clientId
               if (clients) { const c = clients.find(c => c.id === d.clientId); if (c) map[key].clientName = c.name }
@@ -352,6 +358,7 @@ const Requests = ({ userRole }) => {
             const clientName = clients ? (clients.find(c => c.id === s.clientId)?.name ?? null) : null
             map[key] = {
               id: s.id, code: s.code, type: s.setTypeName, isSet: true,
+              barcode: s.barcode ?? null,
               clientId: s.clientId ?? null, clientName,
               currentStatus: s.lifecycleStatus, healthStatus: s.healthStatus || 'ok',
             }
@@ -373,6 +380,13 @@ const Requests = ({ userRole }) => {
       setLoading(false)
     }
   }, [canApprove, clients, devices, deviceSets])
+
+  // ── refreshAll: syncs both local request records AND context devices/sets ──
+  // This fixes the progress bar (which reads currentStatus from context devices)
+  // not updating when only fetchRequests was called.
+  const refreshAll = useCallback(async () => {
+    await Promise.all([fetchRequests(), refreshContext()])
+  }, [fetchRequests, refreshContext])
 
   useEffect(() => { fetchRequests() }, [fetchRequests])
 
@@ -398,7 +412,7 @@ const Requests = ({ userRole }) => {
         groups[key] = { key, deviceId: req.deviceId, setId: req.setId, code: req.deviceCode || req.setCode, type: req.deviceType, isSet: !!req.setId, info: deviceSetMapRef.current[key] || {}, pendingRequests: [], approvedHistory: [] }
       }
       if (req.status === 'pending')                          groups[key].pendingRequests.push(req)
-      else if (req.status === 'approved' || req.status === 'rejected') groups[key].approvedHistory.push(req)
+      else groups[key].approvedHistory.push(req)  // approved, rejected, withdrawn
     })
 
     // Also create groups for devices/sets that are in-progress but have no
@@ -602,7 +616,7 @@ const Requests = ({ userRole }) => {
               onToggleTimeline={() => setExpandedTimeline(expandedTimeline === group.key ? null : group.key)}
               canApprove={canApprove}
               onApprove={(request, action) => setApproveModal({ request, action })}
-              onRequestDone={fetchRequests}
+              onRequestDone={refreshAll}
             />
           ))
         )}
@@ -626,7 +640,7 @@ const Requests = ({ userRole }) => {
           </p>
         </div>
         <button
-          onClick={fetchRequests}
+          onClick={refreshAll}
           className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-gray-200 text-text-secondary hover:bg-gray-50 text-xs font-semibold transition-colors shadow-sm flex-shrink-0"
         >
           <RefreshCw size={13} /> Refresh
@@ -700,7 +714,7 @@ const Requests = ({ userRole }) => {
       {error && (
         <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
           <AlertCircle size={16} /> {error}
-          <button onClick={fetchRequests} className="ml-auto text-xs underline font-semibold">Retry</button>
+          <button onClick={refreshAll} className="ml-auto text-xs underline font-semibold">Retry</button>
         </div>
       )}
       {loading && (
@@ -881,7 +895,7 @@ const Requests = ({ userRole }) => {
           request={approveModal.request}
           action={approveModal.action}
           onClose={() => setApproveModal(null)}
-          onDone={() => { setApproveModal(null); fetchRequests() }}
+          onDone={() => { setApproveModal(null); refreshAll() }}
         />
       )}
     </div>
@@ -918,7 +932,7 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
   // Determine available next steps
   const validNextSteps = (VALID_NEXT_STEPS[currentStatus] || []).filter(s => !BARCODE_ONLY_STEPS.has(s) && s !== 'health_update')
 
-  // Terminal / completed — no button
+  // Terminal / completed — no panel
   const isTerminal = ['returned', 'available', 'lost'].includes(currentStatus) || validNextSteps.length === 0
 
   const [chosenStep,  setChosenStep]  = useState(validNextSteps.length === 1 ? validNextSteps[0] : '')
@@ -927,44 +941,91 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
   const [note,        setNote]        = useState('')
   const [submitting,  setSubmitting]  = useState(false)
   const [done,        setDone]        = useState(false)
+  const [submitError, setSubmitError] = useState(null)
 
-  // Reset panel when group changes (skip on initial mount so the panel
-  // stays open when the card first expands via the Next Step button)
+  // Proof files managed by shared hook
+  const proof = useProofFiles()
+
+  // Reset panel when group changes
   const isMountedRef = React.useRef(false)
   React.useEffect(() => {
     if (!isMountedRef.current) { isMountedRef.current = true; return }
-    setOpen(false); setChosenStep(validNextSteps.length === 1 ? validNextSteps[0] : '')
-    setHealth('ok'); setHealthNote(''); setNote(''); setSubmitting(false); setDone(false)
+    setOpen(false)
+    setChosenStep(validNextSteps.length === 1 ? validNextSteps[0] : '')
+    setHealth('ok'); setHealthNote(''); setNote('')
+    setSubmitting(false); setDone(false); setSubmitError(null)
+    proof.reset()
   }, [group.key])
+
+  // Also reset proof files when step changes (different proof requirements)
+  const handleStepChange = (step) => {
+    setChosenStep(step)
+    proof.reset()
+    setSubmitError(null)
+  }
+
+  // Also reset proof when health changes (health may trigger different proof config)
+  const handleHealthChange = (val) => {
+    setHealth(val)
+    if (val === 'ok') setHealthNote('')
+    proof.reset()
+    setSubmitError(null)
+  }
 
   if (isTerminal) return null
 
-  const isMulti    = validNextSteps.length > 1
-  const stepMeta   = chosenStep ? STEP_META[chosenStep] : null
-  const canSubmit  = chosenStep && (health === 'ok' || healthNote.trim())
+  const isMulti  = validNextSteps.length > 1
+  const stepMeta = chosenStep ? STEP_META[chosenStep] : null
+
+  // ── Proof config logic (mirrors HealthConfirm in BarcodeResultCard) ──────────
+  const stepProofCfg  = chosenStep ? PROOF_CONFIG[chosenStep] : null
+  const healthTrigger = HEALTH_REQUIRES_PROOF.includes(health)
+  const effectiveProof = stepProofCfg
+    ? stepProofCfg
+    : healthTrigger
+    ? {
+        required:   true,
+        accept:     'image/*,video/*,application/pdf',
+        allowVideo: true,
+        allowPdf:   true,
+        hint:       '🩺 Proof required when marking a device as damaged or in need of repair. Attach a photo or document.',
+      }
+    : null
+
+  const proofRequired = !!effectiveProof?.required
+  const proofMissing  = proofRequired && proof.files.length === 0
+  const canSubmit     = chosenStep
+    && (health === 'ok' || healthNote.trim())
+    && !proofMissing
 
   const handleSubmit = async () => {
-    if (!canSubmit) return
+    if (!canSubmit) {
+      if (proofMissing) setSubmitError(`Proof is required for the '${stepMeta?.label ?? chosenStep}' step. Please attach at least one photo, video, or document.`)
+      return
+    }
     setSubmitting(true)
+    setSubmitError(null)
     try {
-      await lifecycleRequestApi.create({
-        ...(deviceId ? { deviceId } : { setId }),
-        toStep:      chosenStep,
-        healthStatus: health,
-        healthNote:  health !== 'ok' ? healthNote.trim() : undefined,
-        note:        note.trim() || undefined,
-      })
+      await lifecycleRequestApi.create(
+        {
+          ...(deviceId ? { deviceId } : { setId }),
+          toStep:       chosenStep,
+          healthStatus: health,
+          healthNote:   health !== 'ok' ? healthNote.trim() : undefined,
+          note:         note.trim() || undefined,
+        },
+        proof.files,
+      )
       setDone(true)
       setTimeout(() => { setOpen(false); setDone(false); onDone() }, 1200)
     } catch (err) {
-      alert(err.message || 'Failed to submit request')
+      setSubmitError(err.message || 'Failed to submit request')
       setSubmitting(false)
     }
   }
 
   return (
     <div className="px-4 pb-4">
-      {/* Inline panel — always shown (visibility controlled by parent via nextStepOpen) */}
       {(() => { return (
         <div className="rounded-xl border-2 border-primary-200 bg-white overflow-hidden shadow-md">
 
@@ -995,12 +1056,13 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
                 <p className="text-[10px] font-extrabold text-text-muted uppercase tracking-widest mb-2">Select Next Step</p>
                 <div className="flex flex-col gap-2">
                   {validNextSteps.map(step => {
-                    const meta = STEP_META[step]
+                    const meta     = STEP_META[step]
                     const selected = chosenStep === step
+                    const needsProof = !!PROOF_CONFIG[step]?.required
                     return (
                       <button
                         key={step}
-                        onClick={() => setChosenStep(step)}
+                        onClick={() => handleStepChange(step)}
                         className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border-2 text-left transition-all
                           ${selected
                             ? `${meta.bgClass} ${meta.borderClass} ${meta.textClass} shadow-sm`
@@ -1009,6 +1071,11 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
                       >
                         <span className="text-lg flex-shrink-0">{meta.emoji}</span>
                         <span className="text-xs font-bold">{meta.label}</span>
+                        {needsProof && (
+                          <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">
+                            <Paperclip size={9} /> Proof
+                          </span>
+                        )}
                         {selected && <CheckCircle2 size={14} className="ml-auto flex-shrink-0" />}
                       </button>
                     )
@@ -1021,12 +1088,17 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
             {!isMulti && stepMeta && (
               <div className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border ${stepMeta.bgClass} ${stepMeta.borderClass}`}>
                 <span className="text-xl">{stepMeta.emoji}</span>
-                <div>
+                <div className="flex-1">
                   <p className={`text-xs font-extrabold ${stepMeta.textClass}`}>{stepMeta.label}</p>
                   <p className="text-[10px] text-text-muted mt-0.5">
                     Requesting transition from <span className="font-bold">{STEP_META[currentStatus]?.label ?? currentStatus}</span>
                   </p>
                 </div>
+                {stepProofCfg?.required && (
+                  <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full flex-shrink-0">
+                    <Paperclip size={9} /> Proof required
+                  </span>
+                )}
               </div>
             )}
 
@@ -1040,7 +1112,7 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
                 {HEALTH_OPTIONS_PANEL.map(opt => (
                   <button
                     key={opt.value}
-                    onClick={() => { setHealth(opt.value); if (opt.value === 'ok') setHealthNote('') }}
+                    onClick={() => handleHealthChange(opt.value)}
                     className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg border-2 text-[11px] font-bold transition-all
                       ${health === opt.value ? opt.cls + ' border-opacity-100 shadow-sm' : 'border-gray-200 bg-gray-50 text-gray-500 hover:border-gray-300'}`}
                   >
@@ -1068,6 +1140,47 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
               </div>
             )}
 
+            {/* ── PROOF UPLOAD ────────────────────────────────────────── */}
+            {effectiveProof && (
+              <div className="border border-gray-200 rounded-xl overflow-hidden">
+                {/* Section header */}
+                <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-200">
+                  <p className="text-[10px] font-extrabold text-text-muted uppercase tracking-widest flex items-center gap-1.5">
+                    <Paperclip size={10} className="text-indigo-500" />
+                    Proof Attachment
+                    <span className="text-rose-500">*</span>
+                    {!stepProofCfg && healthTrigger && (
+                      <span className="text-[9px] text-rose-500 font-normal normal-case ml-1">(required for this health status)</span>
+                    )}
+                  </p>
+                  {proof.files.length > 0 && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-green-700 bg-green-100 border border-green-200 px-1.5 py-0.5 rounded-full">
+                      <CheckCircle2 size={9} />
+                      {proof.files.length}/{MAX_PROOF_FILES} ready
+                    </span>
+                  )}
+                </div>
+                <div className="p-3">
+                  <ProofUploadPanel
+                    proofConfig={effectiveProof}
+                    files={proof.files}
+                    previews={proof.previews}
+                    onAdd={proof.add}
+                    onRemove={proof.remove}
+                    compact={true}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* No-proof steps: small reassurance message */}
+            {!effectiveProof && chosenStep && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+                <CheckCircle2 size={12} className="text-green-600 flex-shrink-0" />
+                <p className="text-[10px] text-green-700 font-medium">No proof attachment required for this step.</p>
+              </div>
+            )}
+
             {/* Optional note */}
             <div>
               <label className="block text-[10px] font-extrabold text-text-muted uppercase tracking-widest mb-1.5">
@@ -1082,6 +1195,17 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-primary-300 focus:border-primary-400 resize-none"
               />
             </div>
+
+            {/* Inline error (replaces browser alert) */}
+            {submitError && (
+              <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-xl">
+                <AlertTriangle size={13} className="text-red-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-red-700 flex-1">{submitError}</p>
+                <button onClick={() => setSubmitError(null)} className="text-red-400 hover:text-red-600 flex-shrink-0">
+                  <X size={13} />
+                </button>
+              </div>
+            )}
 
             {/* Actions */}
             <div className="flex gap-2 pt-1">
@@ -1114,6 +1238,7 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
                 )}
               </button>
             </div>
+
           </div>
         </div>
       )})()}
@@ -1124,6 +1249,78 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEVICE / SET CARD
 // ═══════════════════════════════════════════════════════════════════════════════
+// ── 3-DOT CARD MENU ──────────────────────────────────────────────────────────
+const CardMenu = ({ barcode, deviceCode }) => {
+  const [open,   setOpen]   = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
+  const menuRef             = React.useRef(null)
+
+  React.useEffect(() => {
+    if (!open) return
+    const handler = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const handleCopy = (e) => {
+    e.stopPropagation()
+    const text = barcode || deviceCode || ''
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => { setCopied(false); setOpen(false) }, 1500)
+    })
+  }
+
+  return (
+    <div className="relative flex-shrink-0" ref={menuRef} onClick={e => e.stopPropagation()}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors
+          ${open ? 'bg-gray-200 text-gray-700' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
+        title="More options"
+      >
+        <MoreHorizontal size={15} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-9 w-64 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden"
+          style={{ boxShadow: '0 8px 30px rgba(0,0,0,0.12)' }}>
+          <div className="px-3 py-2 border-b border-gray-100 bg-gray-50">
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Device Info</p>
+          </div>
+          <div className="px-3 py-2.5">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Barcode</p>
+            <div className="flex items-center gap-2 bg-gray-50 rounded-lg border border-gray-200 px-2.5 py-1.5">
+              <code className="text-xs font-mono text-gray-700 flex-1 select-all break-all leading-snug">
+                {barcode || deviceCode || '—'}
+              </code>
+              <button
+                onClick={handleCopy}
+                className={`flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-md transition-all
+                  ${copied ? 'bg-emerald-100 text-emerald-600' : 'text-gray-400 hover:bg-gray-200 hover:text-gray-600'}`}
+                title="Copy barcode"
+              >
+                {copied ? <ClipboardCheck size={14} /> : <Clipboard size={14} />}
+              </button>
+            </div>
+            {copied && (
+              <p className="text-[10px] text-emerald-600 font-semibold mt-1 text-center">✓ Copied to clipboard</p>
+            )}
+          </div>
+          {deviceCode && barcode && deviceCode !== barcode && (
+            <div className="px-3 pb-2.5">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Device Code</p>
+              <div className="flex items-center gap-2 bg-gray-50 rounded-lg border border-gray-200 px-2.5 py-1.5">
+                <code className="text-xs font-mono text-gray-700 flex-1">{deviceCode}</code>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const DeviceSetCard = ({
   group, expanded, timelineExpanded,
   onToggle, onToggleTimeline,
@@ -1240,8 +1437,9 @@ const DeviceSetCard = ({
               )}
             </div>
 
-            {/* Top-right: Next Step button (when no pending) + Chevron */}
+            {/* Top-right: Next Step button + 3-dot menu + Chevron */}
             <div className="flex items-center gap-2 flex-shrink-0 mt-1" onClick={e => e.stopPropagation()}>
+              <CardMenu barcode={info.barcode} deviceCode={code} />
               {!hasPending && (() => {
                 const validSteps = (VALID_NEXT_STEPS[currentStatus] || []).filter(s => s !== 'assigning' && s !== 'health_update')
                 const isTerminal = ['returned', 'available', 'lost'].includes(currentStatus) || validSteps.length === 0
@@ -1385,42 +1583,13 @@ const DeviceSetCard = ({
             </>
           )}
 
-          {/* Timeline toggle */}
-          {approvedHistory.length > 0 && (
-            <div className="px-4 py-3">
-              <button
-                onClick={e => { e.stopPropagation(); onToggleTimeline() }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-primary-700 bg-primary-50 hover:bg-primary-100 border border-primary-200 rounded-lg transition-colors"
-              >
-                <TrendingUp size={13} />
-                {timelineExpanded ? 'Hide' : 'Show'} History
-                <span className="ml-auto bg-primary-200 text-primary-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  {approvedHistory.length} entries
-                </span>
-                {timelineExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-              </button>
-            </div>
-          )}
-
-          {/* Timeline — newest first */}
-          {timelineExpanded && approvedHistory.length > 0 && (
-            <div className="px-4 pb-4">
-              <div className="bg-white rounded-xl border border-gray-200 p-4">
-                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-100">
-                  <div className="w-6 h-6 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
-                    <TrendingUp size={12} className="text-primary-600" />
-                  </div>
-                  <p className="text-xs font-bold text-text-primary">History</p>
-                  <span className="ml-auto text-[10px] font-semibold text-text-muted bg-gray-100 px-2 py-0.5 rounded-full">Latest first</span>
-                </div>
-                <div>
-                  {approvedHistory.map((req, idx) => (
-                    <TimelineItem key={req.id} request={req} isLast={idx === approvedHistory.length - 1} />
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Unified history — fetches all statuses (approved/rejected/withdrawn) */}
+          <div className="px-4 pb-4">
+            <LifecycleTimeline
+              deviceId={isSet ? null : group.deviceId}
+              setId={isSet ? group.setId : null}
+            />
+          </div>
         </div>
       )}
     </div>
@@ -1542,94 +1711,6 @@ const PendingRequestItem = ({ request: req, index, total, canApprove, onApprove 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TIMELINE ITEM
 // ═══════════════════════════════════════════════════════════════════════════════
-const TimelineItem = ({ request: req, isLast }) => {
-  const meta       = STEP_META[req.toStep] || { label: req.toStep, emoji: '📋', bgClass: 'bg-gray-100', textClass: 'text-gray-700', borderClass: 'border-gray-200' }
-  const isRejected = req.status === 'rejected'
-
-  return (
-    <div className="flex gap-3">
-      {/* Spine */}
-      <div className="flex flex-col items-center flex-shrink-0">
-        <div className={`w-7 h-7 rounded-full border-2 border-white shadow flex items-center justify-center text-sm
-          ${isRejected ? 'bg-red-100' : meta.bgClass}`}>
-          {isRejected ? '❌' : meta.emoji}
-        </div>
-        {!isLast && <div className="w-px bg-gradient-to-b from-gray-300 to-transparent flex-1 mt-1 min-h-[14px]" />}
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 pb-4">
-        <div className="flex items-center gap-2">
-          <p className={`text-xs font-bold ${isRejected ? 'text-red-600' : meta.textClass}`}>{meta.label}</p>
-          {isRejected && (
-            <span className="text-[9px] font-extrabold uppercase tracking-wide bg-red-100 text-red-600 border border-red-200 px-1.5 py-0.5 rounded-full">
-              Rejected
-            </span>
-          )}
-        </div>
-
-        {/* Requested by row */}
-        <div className="mt-1.5 flex items-center gap-1.5">
-          <span className="text-[9px] font-extrabold uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">Requested</span>
-          <div className="flex items-center gap-1 text-[10px] text-text-muted">
-            <div className="w-4 h-4 rounded-full bg-gray-200 text-gray-600 text-[8px] font-bold flex items-center justify-center flex-shrink-0">
-              {(req.requestedByName || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2)}
-            </div>
-            <span className="font-semibold text-text-secondary">{req.requestedByName || '—'}</span>
-            <span className="text-gray-300">·</span>
-            <span>{new Date(req.createdAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-          </div>
-        </div>
-
-        {/* Approved / Rejected by row */}
-        <div className="mt-1 flex items-center gap-1.5">
-          <span className={`text-[9px] font-extrabold uppercase tracking-wide w-16 flex-shrink-0 ${isRejected ? 'text-red-400' : 'text-emerald-500'}`}>
-            {isRejected ? 'Rejected' : 'Approved'}
-          </span>
-          <div className="flex items-center gap-1 text-[10px] text-text-muted">
-            {(() => {
-              // For both approved and rejected, the actor name is in approvedByName
-              // (backend now saves approvedById/approvedAt on rejection too)
-              const actorName = req.approvedByName || req.rejectedByName
-              const actorDate = req.approvedAt || req.updatedAt
-              const actorInitials = actorName
-                ? actorName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
-                : '?'
-              const dateStr = actorDate
-                ? new Date(actorDate).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-                : null
-              return (
-                <>
-                  <div className={`w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center flex-shrink-0
-                    ${isRejected ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                    {actorInitials}
-                  </div>
-                  <span className="font-semibold text-text-secondary">{actorName || '—'}</span>
-                  {dateStr && <><span className="text-gray-300">·</span><span>{dateStr}</span></>}
-                  {!dateStr && <span className="italic text-gray-300">date unavailable</span>}
-                </>
-              )
-            })()}
-          </div>
-        </div>
-
-        {/* Rejection reason */}
-        {isRejected && req.rejectionNote && (
-          <div className="mt-1.5 flex gap-1.5 p-2 bg-red-50 border border-red-200 rounded-lg">
-            <XCircle size={11} className="text-red-400 flex-shrink-0 mt-0.5" />
-            <p className="text-[10px] text-red-700 italic">{req.rejectionNote}</p>
-          </div>
-        )}
-
-        {!isRejected && req.note && !req.note.startsWith('{') && (
-          <p className="mt-1.5 text-[10px] text-text-secondary italic bg-gray-50 border-l-2 border-gray-300 pl-2 py-0.5 rounded-r">
-            {req.note}
-          </p>
-        )}
-      </div>
-    </div>
-  )
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // APPROVE / REJECT MODAL
@@ -1637,20 +1718,22 @@ const TimelineItem = ({ request: req, isLast }) => {
 const ApproveModal = ({ request: req, action, onClose, onDone }) => {
   const [rejectionNote, setRejectionNote] = useState('')
   const [loading,       setLoading]       = useState(false)
+  const [submitError,   setSubmitError]   = useState(null)
   const meta       = STEP_META[req.toStep] || { label: req.toStep, emoji: '📋', bgClass: 'bg-gray-100', textClass: 'text-gray-700' }
   const waiting    = waitingDuration(req.createdAt)
   const healthInfo = HEALTH_STYLE[req.healthStatus] || HEALTH_STYLE.ok
   const isApprove  = action === 'approve'
 
   const handleSubmit = async () => {
-    if (!isApprove && !rejectionNote.trim()) { alert('Please provide a rejection reason'); return }
+    if (!isApprove && !rejectionNote.trim()) { setSubmitError('Please provide a rejection reason'); return }
     setLoading(true)
+    setSubmitError(null)
     try {
       if (isApprove) await lifecycleRequestApi.approve(req.id)
       else await lifecycleRequestApi.reject(req.id, rejectionNote)
       onDone()
     } catch (err) {
-      alert(`Failed: ${err.message}`)
+      setSubmitError(`Failed: ${err.message}`)
     } finally {
       setLoading(false)
     }
@@ -1723,6 +1806,26 @@ const ApproveModal = ({ request: req, action, onClose, onDone }) => {
             </div>
           )}
 
+          {/* ── Proof attachments ──────────────────────────────────── */}
+          {req.proofFiles && req.proofFiles.length > 0 && (
+            <div className="rounded-xl border border-gray-200 overflow-hidden">
+              {/* Header bar */}
+              <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-200">
+                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                  <Paperclip size={10} />
+                  Proof Attachments
+                </p>
+                <span className="text-[10px] font-semibold text-gray-400 bg-gray-200 px-1.5 py-0.5 rounded-full">
+                  {req.proofFiles.length} file{req.proofFiles.length > 1 ? 's' : ''}
+                </span>
+              </div>
+              {/* Thumbnails */}
+              <div className="p-3">
+                <ProofFilesPanel proofFiles={req.proofFiles} />
+              </div>
+            </div>
+          )}
+
           {/* Note */}
           {req.note && !req.note.startsWith('{') && (
             <div className="flex gap-2 p-3 bg-blue-50 border border-blue-200 rounded-xl">
@@ -1749,6 +1852,17 @@ const ApproveModal = ({ request: req, action, onClose, onDone }) => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs focus:ring-2 focus:ring-red-400 focus:border-red-400 resize-none"
               />
               <p className="text-[10px] text-text-muted text-right mt-1">{rejectionNote.length}/500</p>
+            </div>
+          )}
+
+          {/* Inline error */}
+          {submitError && (
+            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-xl">
+              <AlertTriangle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-red-700 flex-1">{submitError}</p>
+              <button onClick={() => setSubmitError(null)} className="text-red-400 hover:text-red-600 flex-shrink-0">
+                <X size={14} />
+              </button>
             </div>
           )}
 

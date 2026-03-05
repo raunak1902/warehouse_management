@@ -2,7 +2,8 @@
  * src/components/DeviceTimeline.jsx
  * ───────────────────────────────────
  * Expandable lifecycle timeline panel for a device or set.
- * Shows every approved lifecycle step with health, submitter, approver, and timestamps.
+ * Shows every approved lifecycle step with health, submitter, approver, timestamps,
+ * and proof media thumbnails (images, videos, PDFs).
  *
  * Props:
  *   deviceId   — number | null
@@ -15,19 +16,19 @@ import { useState, useEffect } from 'react'
 import {
   CheckCircle2, XCircle, Clock, User, Shield, AlertTriangle,
   Wrench, Truck, Package, Zap, RotateCcw, ChevronRight,
-  Loader2, RefreshCw, Heart,
+  Loader2, RefreshCw, Heart, ImageIcon, Film, FileText,
+  Paperclip, Eye, X, ChevronLeft, ChevronRight as ChevronRightIcon,
 } from 'lucide-react'
 import { lifecycleRequestApi, STEP_META } from '../api/lifecycleRequestApi'
 
-// ── Health badge styles ────────────────────────────────────────────────────────
+// ── Health badge styles ───────────────────────────────────────────────────────
 const HEALTH_STYLE = {
   ok:      { cls: 'bg-emerald-100 text-emerald-700 border-emerald-200', label: '✓ OK' },
-  repair:  { cls: 'bg-amber-100  text-amber-700  border-amber-200',  label: '🔧 Repair' },
-  damaged: { cls: 'bg-red-100    text-red-700    border-red-200',    label: '⚠ Damaged' },
-  lost:    { cls: 'bg-red-200    text-red-900    border-red-300',    label: '❌ Lost' },
+  repair:  { cls: 'bg-amber-100  text-amber-700  border-amber-200',     label: '🔧 Repair' },
+  damaged: { cls: 'bg-red-100    text-red-700    border-red-200',       label: '⚠ Damaged' },
+  lost:    { cls: 'bg-red-200    text-red-900    border-red-300',       label: '❌ Lost' },
 }
 
-// ── Step icon map ──────────────────────────────────────────────────────────────
 const STEP_ICONS = {
   assigning:         ChevronRight,
   ready_to_deploy:   CheckCircle2,
@@ -41,7 +42,6 @@ const STEP_ICONS = {
   lost:              AlertTriangle,
 }
 
-// ── Step connector color ───────────────────────────────────────────────────────
 const STEP_DOT_COLOR = {
   assigning:         'bg-blue-500',
   ready_to_deploy:   'bg-teal-500',
@@ -63,11 +63,181 @@ const fmt = (dt) =>
       })
     : '—'
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const isImageUrl = (url = '') =>
+  /\.(jpg|jpeg|png|gif|webp|avif|svg)(\?|$)/i.test(url)
+
+const isVideoUrl = (url = '') =>
+  /\.(mp4|mov|webm|avi|mkv|m4v)(\?|$)/i.test(url)
+
+const isPdfUrl = (url = '') =>
+  /\.pdf(\?|$)/i.test(url)
+
+// ── Lightbox ─────────────────────────────────────────────────────────────────
+function Lightbox({ files, startIdx, onClose }) {
+  const [current, setCurrent] = useState(startIdx)
+  const file = files[current]
+  const total = files.length
+
+  const prev = () => setCurrent(i => (i - 1 + total) % total)
+  const next = () => setCurrent(i => (i + 1) % total)
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'Escape') onClose()
+      if (e.key === 'ArrowLeft') prev()
+      if (e.key === 'ArrowRight') next()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div className="relative max-w-4xl w-full" onClick={e => e.stopPropagation()}>
+        {/* Close */}
+        <button
+          onClick={onClose}
+          className="absolute -top-10 right-0 w-8 h-8 flex items-center justify-center text-white/70 hover:text-white"
+        >
+          <X className="w-5 h-5" />
+        </button>
+
+        {/* Counter */}
+        <div className="absolute -top-10 left-0 text-white/60 text-xs">
+          {current + 1} / {total}
+        </div>
+
+        {/* Content */}
+        <div className="rounded-2xl overflow-hidden bg-gray-900 flex items-center justify-center min-h-48 max-h-[80vh]">
+          {isImageUrl(file) ? (
+            <img src={file} alt="" className="max-h-[80vh] max-w-full object-contain" />
+          ) : isVideoUrl(file) ? (
+            <video src={file} controls className="max-h-[80vh] max-w-full" autoPlay />
+          ) : isPdfUrl(file) ? (
+            <div className="flex flex-col items-center justify-center gap-4 p-10 text-white/60">
+              <FileText className="w-16 h-16" />
+              <p className="text-sm">PDF document</p>
+              <a
+                href={file}
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm text-white transition-colors"
+              >
+                Open PDF ↗
+              </a>
+            </div>
+          ) : (
+            <div className="p-10 text-white/40 text-sm">Preview unavailable</div>
+          )}
+        </div>
+
+        {/* Prev / Next */}
+        {total > 1 && (
+          <>
+            <button
+              onClick={prev}
+              className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 bg-black/60 hover:bg-black/80
+                rounded-full flex items-center justify-center text-white transition-colors"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <button
+              onClick={next}
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 bg-black/60 hover:bg-black/80
+                rounded-full flex items-center justify-center text-white transition-colors"
+            >
+              <ChevronRightIcon className="w-5 h-5" />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Proof thumbnails strip ────────────────────────────────────────────────────
+// thumbUrls → small compressed images shown in the grid (fast to load)
+// proofUrls → full-res originals opened in the lightbox
+function ProofStrip({ proofUrls, thumbUrls }) {
+  const [lightboxIdx, setLightboxIdx] = useState(null)
+
+  if (!proofUrls || proofUrls.length === 0) return null
+
+  // Fall back to proofUrls if thumbUrls not provided (older records)
+  const thumbs = (thumbUrls && thumbUrls.length === proofUrls.length) ? thumbUrls : proofUrls
+
+  return (
+    <>
+      <div className="mt-2.5">
+        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5 flex items-center gap-1">
+          <Paperclip className="w-2.5 h-2.5" /> Proof Attachments
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {proofUrls.map((fullUrl, idx) => {
+            const thumbUrl = thumbs[idx]
+            return (
+            <button
+              key={idx}
+              onClick={() => setLightboxIdx(idx)}
+              className="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-200 bg-gray-100
+                hover:ring-2 hover:ring-blue-400 transition-all group flex-shrink-0"
+              title="View proof"
+            >
+              {isImageUrl(fullUrl) ? (
+                <>
+                  {/* Use thumb for grid — tiny file, loads instantly */}
+                  <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                    <Eye className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </>
+              ) : isVideoUrl(fullUrl) ? (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-purple-50 gap-1">
+                  <Film className="w-5 h-5 text-purple-400" />
+                  <span className="text-[8px] text-purple-500 font-medium">Video</span>
+                  <div className="absolute inset-0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                    <Eye className="w-4 h-4 text-purple-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </div>
+              ) : isPdfUrl(fullUrl) ? (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-red-50 gap-1">
+                  <FileText className="w-5 h-5 text-red-400" />
+                  <span className="text-[8px] text-red-500 font-medium">PDF</span>
+                  <div className="absolute inset-0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                    <Eye className="w-4 h-4 text-red-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </div>
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <ImageIcon className="w-5 h-5 text-gray-400" />
+                </div>
+              )}
+            </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {lightboxIdx !== null && (
+        <Lightbox
+          files={proofUrls}
+          startIdx={lightboxIdx}
+          onClose={() => setLightboxIdx(null)}
+        />
+      )}
+    </>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 export default function DeviceTimeline({ deviceId, setId, deviceCode, onClose }) {
-  const [history,  setHistory]  = useState([])
-  const [loading,  setLoading]  = useState(true)
-  const [error,    setError]    = useState(null)
+  const [history, setHistory] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState(null)
 
   const load = async () => {
     setLoading(true)
@@ -86,7 +256,6 @@ export default function DeviceTimeline({ deviceId, setId, deviceCode, onClose })
 
   useEffect(() => { load() }, [deviceId, setId])
 
-  // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
       <TimelineShell deviceCode={deviceCode} onClose={onClose} onRefresh={load}>
@@ -98,7 +267,6 @@ export default function DeviceTimeline({ deviceId, setId, deviceCode, onClose })
     )
   }
 
-  // ── Error ──────────────────────────────────────────────────────────────────
   if (error) {
     return (
       <TimelineShell deviceCode={deviceCode} onClose={onClose} onRefresh={load}>
@@ -111,7 +279,6 @@ export default function DeviceTimeline({ deviceId, setId, deviceCode, onClose })
     )
   }
 
-  // ── Empty ──────────────────────────────────────────────────────────────────
   if (history.length === 0) {
     return (
       <TimelineShell deviceCode={deviceCode} onClose={onClose} onRefresh={load}>
@@ -124,20 +291,23 @@ export default function DeviceTimeline({ deviceId, setId, deviceCode, onClose })
     )
   }
 
-  // ── Timeline ───────────────────────────────────────────────────────────────
   return (
     <TimelineShell deviceCode={deviceCode} onClose={onClose} onRefresh={load}>
       <div className="relative">
-        {/* Vertical connector line */}
         <div className="absolute left-5 top-3 bottom-3 w-0.5 bg-gray-200" />
 
         <div className="space-y-0">
           {history.map((item, idx) => {
-            const meta      = STEP_META[item.toStep] ?? { label: item.toStep, emoji: '📋' }
-            const dotColor  = STEP_DOT_COLOR[item.toStep] ?? 'bg-gray-400'
-            const Icon      = STEP_ICONS[item.toStep] ?? ChevronRight
-            const hs        = HEALTH_STYLE[item.healthStatus] ?? HEALTH_STYLE.ok
-            const isLast    = idx === history.length - 1
+            const meta     = STEP_META[item.toStep] ?? { label: item.toStep, emoji: '📋' }
+            const dotColor = STEP_DOT_COLOR[item.toStep] ?? 'bg-gray-400'
+            const Icon     = STEP_ICONS[item.toStep] ?? ChevronRight
+            const hs       = HEALTH_STYLE[item.healthStatus] ?? HEALTH_STYLE.ok
+            const isLast   = idx === history.length - 1
+
+            // proofUrls = full-res, thumbUrls = compressed 300x300 (for grid)
+            const proofUrls  = Array.isArray(item.proofUrls)  ? item.proofUrls  : []
+            const thumbUrls  = Array.isArray(item.thumbUrls)  ? item.thumbUrls  : []
+            const proofCount = proofUrls.length
 
             return (
               <div key={item.id} className="relative flex gap-4 pb-5">
@@ -152,7 +322,7 @@ export default function DeviceTimeline({ deviceId, setId, deviceCode, onClose })
                 <div className={`flex-1 min-w-0 bg-white rounded-xl border shadow-sm p-3.5
                   ${isLast ? 'border-blue-200 ring-1 ring-blue-100' : 'border-gray-200'}`}>
 
-                  {/* Top row: step label + health + timestamp */}
+                  {/* Top row */}
                   <div className="flex items-start justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-gray-900 text-sm">
@@ -168,13 +338,20 @@ export default function DeviceTimeline({ deviceId, setId, deviceCode, onClose })
                           Auto-approved
                         </span>
                       )}
+                      {/* Proof count badge */}
+                      {proofCount > 0 && (
+                        <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-gray-100 text-gray-600 text-[10px] font-semibold rounded-full">
+                          <Paperclip className="w-2.5 h-2.5" />
+                          {proofCount} proof
+                        </span>
+                      )}
                     </div>
                     <span className="text-[11px] text-gray-400 flex-shrink-0">
                       {fmt(item.approvedAt || item.createdAt)}
                     </span>
                   </div>
 
-                  {/* People row */}
+                  {/* People */}
                   <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
                     <span className="flex items-center gap-1 text-xs text-gray-500">
                       <User className="w-3 h-3" />
@@ -198,7 +375,7 @@ export default function DeviceTimeline({ deviceId, setId, deviceCode, onClose })
                     </span>
                   </div>
 
-                  {/* Health note — highlighted when health is not OK */}
+                  {/* Health note */}
                   {item.healthNote && (
                     <div className="mt-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
                       <p className="text-xs font-semibold text-amber-700 mb-0.5">⚠ Health Note</p>
@@ -212,6 +389,9 @@ export default function DeviceTimeline({ deviceId, setId, deviceCode, onClose })
                       <p className="text-xs text-gray-600">{item.note}</p>
                     </div>
                   )}
+
+                  {/* ── Proof thumbnails ── */}
+                  <ProofStrip proofUrls={proofUrls} thumbUrls={thumbUrls} />
                 </div>
               </div>
             )

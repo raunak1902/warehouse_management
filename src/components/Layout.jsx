@@ -7,6 +7,9 @@ import {
 } from 'lucide-react'
 import { normaliseRole, ROLES } from '../App'
 import { STEP_META } from '../api/lifecycleRequestApi'
+import { useSSENotifications } from '../hooks/useSSENotifications'
+import NotificationToast from './NotificationToast'
+import LoginBriefing from './LoginBriefing'
 
 // ── Notification Bell ─────────────────────────────────────────────────────────
 const API = '/api/lifecycle-requests'
@@ -236,6 +239,22 @@ const Layout = ({ userRole, onLogout }) => {
   const isGroundTeam = role === ROLES.GROUNDTEAM
   const canManage    = isSuperAdmin || isManager   // approve requests, see dashboard
 
+  // ── Real-time SSE notifications (managers + admins only) ───────────────────
+  const { toasts, dismissToast } = useSSENotifications(canManage)
+
+  // ── Login briefing — show once per session when pending requests exist ──────
+  const BRIEFING_KEY = 'edsignage_briefing_shown'
+  const [showBriefing, setShowBriefing] = useState(() => {
+    if (!canManage) return false
+    const alreadyShown = sessionStorage.getItem(BRIEFING_KEY)
+    if (!alreadyShown) {
+      sessionStorage.setItem(BRIEFING_KEY, '1')
+      return true
+    }
+    return false
+  })
+  const userName = (() => { try { return JSON.parse(localStorage.getItem('user'))?.name ?? '' } catch { return '' } })()
+
   useEffect(() => { setSidebarOpen(false) }, [location.pathname])
   useEffect(() => {
     document.body.style.overflow = sidebarOpen ? 'hidden' : ''
@@ -421,6 +440,25 @@ const Layout = ({ userRole, onLogout }) => {
           </div>
         </main>
       </div>
+
+      {/* ── Real-time toast notifications ──────────────────────────────────── */}
+      <NotificationToast toasts={toasts} onDismiss={dismissToast} />
+
+      {/* ── Login briefing modal ─────────────────────────────────────────────── */}
+      {showBriefing && (
+        <LoginBriefing
+          userName={userName}
+          onDismiss={() => setShowBriefing(false)}
+        />
+      )}
+
+      {/* ── Login briefing modal ─────────────────────────────────────────────── */}
+      {showBriefing && (
+        <LoginBriefing
+          userName={userName}
+          onDismiss={() => setShowBriefing(false)}
+        />
+      )}
 
       {/* ── Mobile bottom nav ─────────────────────────────────────────────── */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-gray-200 shadow-lg flex safe-area-bottom">

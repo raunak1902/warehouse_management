@@ -7,19 +7,9 @@ import SuperAdmin from './pages/superadmin/SuperAdmin'
 import Requests from './pages/requests/Requests'
 import Layout from './components/Layout'
 
-// ─── Role constants — single source of truth ─────────────────────────────────
-export const ROLES = {
-  SUPERADMIN: 'superadmin',
-  MANAGER:    'manager',
-  GROUNDTEAM: 'groundteam',
-}
-
-// Normalise role string from backend (removes spaces, lowercases)
-export const normaliseRole = (role) => role?.toLowerCase().replace(/[\s_-]/g, '') ?? ''
-
-// Check if user has one of the given roles
-export const hasRole = (userRole, ...allowed) =>
-  allowed.map(r => r.toLowerCase().replace(/[\s_-]/g, '')).includes(normaliseRole(userRole))
+// ─── Role constants — imported from dedicated config (keeps this file Fast Refresh compatible)
+import { ROLES, normaliseRole, hasRole } from './config/roles.js'
+export { ROLES, normaliseRole, hasRole }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 function App() {

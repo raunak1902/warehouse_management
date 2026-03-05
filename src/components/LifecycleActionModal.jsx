@@ -2,7 +2,7 @@
  * src/components/LifecycleActionModal.jsx
  * ─────────────────────────────────────────
  * Generic modal for requesting any lifecycle step change.
- * Used from: Devices page, Barcode scan result, Requests page.
+ * Includes mandatory proof upload (photo / video / PDF) for all steps except 'assigning'.
  *
  * Props:
  *   device      — Device or DeviceSet object (must have .id, .code, .lifecycleStatus, ._isSet)
@@ -11,14 +11,16 @@
  *   forceStep   — optional: pre-select a specific step (e.g. 'report_issue')
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useCallback } from 'react'
 import {
   X, Shield, AlertTriangle, Wrench, CheckCircle2, Send, Loader2,
   ChevronRight, Layers, Monitor, Info, ArrowRight, Truck, Package,
-  Wrench as WrenchIcon, RotateCcw, Zap, AlertCircle,
+  Wrench as WrenchIcon, RotateCcw, Zap, AlertCircle, Upload,
+  ImageIcon, FileText, Video, Trash2, Eye, Camera, Film,
 } from 'lucide-react'
 import {
   lifecycleRequestApi, STEP_META, VALID_NEXT_STEPS, HEALTH_OPTIONS,
+  PROOF_CONFIG, HEALTH_REQUIRES_PROOF, MAX_PROOF_FILES, MAX_FILE_SIZE_MB,
 } from '../api/lifecycleRequestApi'
 import { normaliseRole } from '../App'
 
@@ -40,13 +42,204 @@ const currentUserRole = () => {
   try { return JSON.parse(localStorage.getItem('user'))?.role ?? '' } catch { return '' }
 }
 
+// ── File type helpers ──────────────────────────────────────────────────────────
+const isImage = (file) => file.type.startsWith('image/')
+const isVideo = (file) => file.type.startsWith('video/')
+const isPdf   = (file) => file.type === 'application/pdf'
+
+const FileTypeIcon = ({ file, className = 'w-5 h-5' }) => {
+  if (isImage(file)) return <ImageIcon className={`${className} text-blue-500`} />
+  if (isVideo(file)) return <Film       className={`${className} text-purple-500`} />
+  if (isPdf(file))   return <FileText   className={`${className} text-red-500`} />
+  return <FileText className={`${className} text-gray-400`} />
+}
+
+const formatBytes = (bytes) => {
+  if (bytes < 1024)       return `${bytes} B`
+  if (bytes < 1048576)    return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1048576).toFixed(1)} MB`
+}
+
+// ── Single file preview card ──────────────────────────────────────────────────
+function FilePreviewCard({ file, preview, onRemove }) {
+  return (
+    <div className="relative group flex items-center gap-3 p-2.5 bg-white rounded-xl border border-gray-200 shadow-sm">
+      {/* Thumbnail */}
+      <div className="w-14 h-14 flex-shrink-0 rounded-lg overflow-hidden bg-gray-100 flex items-center justify-center">
+        {isImage(file) && preview ? (
+          <img src={preview} alt="" className="w-full h-full object-cover" />
+        ) : isVideo(file) && preview ? (
+          <video src={preview} className="w-full h-full object-cover" muted />
+        ) : (
+          <FileTypeIcon file={file} className="w-7 h-7" />
+        )}
+      </div>
+
+      {/* Info */}
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold text-gray-800 truncate">{file.name}</p>
+        <div className="flex items-center gap-2 mt-0.5">
+          <span className="text-[10px] text-gray-400">{formatBytes(file.size)}</span>
+          {isImage(file) && <span className="text-[10px] text-blue-500 font-medium">Image</span>}
+          {isVideo(file) && <span className="text-[10px] text-purple-500 font-medium">Video</span>}
+          {isPdf(file)   && <span className="text-[10px] text-red-500 font-medium">PDF</span>}
+        </div>
+      </div>
+
+      {/* Remove button */}
+      <button
+        onClick={onRemove}
+        className="flex-shrink-0 w-7 h-7 flex items-center justify-center text-gray-300
+          hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+        title="Remove"
+      >
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  )
+}
+
+// ── Proof Upload Section ──────────────────────────────────────────────────────
+function ProofUploadSection({ proofConfig, files, previews, onAdd, onRemove, isHealthTriggered }) {
+  const inputRef     = useRef(null)
+  const remaining    = MAX_PROOF_FILES - files.length
+  const isFull       = remaining === 0
+
+  const handleFiles = useCallback((incoming) => {
+    const list    = Array.from(incoming)
+    const allowed = list.slice(0, remaining)
+    const oversized = allowed.filter(f => f.size > MAX_FILE_SIZE_MB * 1024 * 1024)
+    if (oversized.length > 0) {
+      alert(`Some files exceed the ${MAX_FILE_SIZE_MB} MB limit and were skipped.`)
+    }
+    const valid = allowed.filter(f => f.size <= MAX_FILE_SIZE_MB * 1024 * 1024)
+    if (valid.length > 0) onAdd(valid)
+  }, [remaining, onAdd])
+
+  const onInputChange = (e) => {
+    if (e.target.files?.length) handleFiles(e.target.files)
+    e.target.value = ''
+  }
+
+  // Drag-and-drop
+  const onDrop = useCallback((e) => {
+    e.preventDefault()
+    if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files)
+  }, [handleFiles])
+
+  const onDragOver = (e) => e.preventDefault()
+
+  return (
+    <div className="space-y-3">
+      {/* Section header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+            {isHealthTriggered ? '🩺' : '📎'} {proofConfig.label}
+            <span className="text-red-500 text-base leading-none">*</span>
+          </p>
+          {isHealthTriggered && (
+            <p className="text-[10px] text-red-500 font-medium mt-0.5">
+              Required because of the health status selected
+            </p>
+          )}
+        </div>
+        <span className="text-[10px] text-gray-400 font-medium">
+          {files.length}/{MAX_PROOF_FILES} files
+        </span>
+      </div>
+
+      {/* Context hint */}
+      <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-xl">
+        <span className="text-base leading-none flex-shrink-0 mt-0.5">💡</span>
+        <p className="text-xs text-blue-700 leading-relaxed">{proofConfig.hint}</p>
+      </div>
+
+      {/* Accepted types pill row */}
+      <div className="flex flex-wrap gap-1.5">
+        <span className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">
+          <Camera className="w-2.5 h-2.5" /> Photos
+        </span>
+        {proofConfig.allowVideo && (
+          <span className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full">
+            <Film className="w-2.5 h-2.5" /> Videos
+          </span>
+        )}
+        {proofConfig.allowPdf && (
+          <span className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 bg-red-100 text-red-700 rounded-full">
+            <FileText className="w-2.5 h-2.5" /> PDF
+          </span>
+        )}
+        <span className="text-[10px] text-gray-400 self-center">· Max {MAX_FILE_SIZE_MB} MB each</span>
+      </div>
+
+      {/* Existing file previews */}
+      {files.length > 0 && (
+        <div className="space-y-2">
+          {files.map((file, idx) => (
+            <FilePreviewCard
+              key={idx}
+              file={file}
+              preview={previews[idx]}
+              onRemove={() => onRemove(idx)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Drop zone / add button */}
+      {!isFull && (
+        <div
+          onDrop={onDrop}
+          onDragOver={onDragOver}
+          onClick={() => inputRef.current?.click()}
+          className="flex flex-col items-center justify-center gap-2 p-5 border-2 border-dashed
+            border-gray-300 rounded-xl cursor-pointer hover:border-blue-400 hover:bg-blue-50/50
+            transition-all group"
+        >
+          <div className="w-10 h-10 rounded-full bg-gray-100 group-hover:bg-blue-100 flex items-center justify-center transition-colors">
+            <Upload className="w-5 h-5 text-gray-400 group-hover:text-blue-500 transition-colors" />
+          </div>
+          <div className="text-center">
+            <p className="text-xs font-semibold text-gray-600 group-hover:text-blue-700">
+              {files.length === 0 ? 'Tap to upload or drag files here' : `Add more (${remaining} remaining)`}
+            </p>
+            <p className="text-[10px] text-gray-400 mt-0.5">
+              {proofConfig.allowVideo && proofConfig.allowPdf
+                ? 'Images · Videos · PDFs'
+                : proofConfig.allowVideo
+                ? 'Images · Videos'
+                : 'Images only'}
+            </p>
+          </div>
+
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept={proofConfig.accept}
+            capture={proofConfig.capture}
+            className="hidden"
+            onChange={onInputChange}
+          />
+        </div>
+      )}
+
+      {isFull && (
+        <p className="text-center text-xs text-gray-400 py-1">
+          Maximum {MAX_PROOF_FILES} files reached. Remove one to add another.
+        </p>
+      )}
+    </div>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) => {
   const isSet       = !!device?._isSet
   const isManager   = ['manager', 'superadmin'].includes(normaliseRole(currentUserRole()))
   const currentStep = device?.lifecycleStatus ?? 'available'
 
-  // Available next steps for this device
   const availableSteps = useMemo(() => {
     if (forceStep) return [forceStep]
     return VALID_NEXT_STEPS[currentStep] ?? []
@@ -56,18 +249,81 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
   const [healthStatus,   setHealthStatus]   = useState('ok')
   const [healthNote,     setHealthNote]     = useState('')
   const [note,           setNote]           = useState('')
+  const [proofFiles,     setProofFiles]     = useState([])
+  const [proofPreviews,  setProofPreviews]  = useState([])
   const [submitting,     setSubmitting]     = useState(false)
   const [submitted,      setSubmitted]      = useState(false)
   const [autoApproved,   setAutoApproved]   = useState(false)
   const [error,          setError]          = useState(null)
 
-  const selectedMeta   = selectedStep ? STEP_META[selectedStep] : null
+  const selectedMeta    = selectedStep ? STEP_META[selectedStep] : null
   const needsHealthNote = healthStatus !== 'ok'
 
-  const canSubmit =
-    selectedStep &&
-    (!needsHealthNote || healthNote.trim().length > 0)
+  // ── Proof logic ──────────────────────────────────────────────────────────────
+  const stepProofConfig      = selectedStep ? PROOF_CONFIG[selectedStep] : null
+  const healthTriggerProof   = HEALTH_REQUIRES_PROOF.includes(healthStatus)
 
+  // Effective proof config: use step config, or fabricate one when health triggers it
+  const effectiveProofConfig = useMemo(() => {
+    if (stepProofConfig) return stepProofConfig
+    if (healthTriggerProof) {
+      return {
+        required:   true,
+        accept:     'image/*,video/*,application/pdf',
+        capture:    'environment',
+        allowVideo: true,
+        allowPdf:   true,
+        label:      'Health Condition Evidence',
+        hint:       '🩺 Proof is required when marking a device as damaged, in need of repair, or lost. Attach a photo, video, or any supporting document.',
+      }
+    }
+    return null
+  }, [stepProofConfig, healthTriggerProof])
+
+  const proofRequired = !!effectiveProofConfig?.required
+  const proofMissing  = proofRequired && proofFiles.length === 0
+
+  const canSubmit =
+    !!selectedStep &&
+    (!needsHealthNote || healthNote.trim().length > 0) &&
+    !proofMissing
+
+  // ── File management ──────────────────────────────────────────────────────────
+  const addFiles = useCallback((incoming) => {
+    setProofFiles(prev => {
+      const next = [...prev, ...incoming].slice(0, MAX_PROOF_FILES)
+      // Generate previews for new ones
+      const startIdx = prev.length
+      next.slice(startIdx).forEach((file, i) => {
+        if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+          const url = URL.createObjectURL(file)
+          setProofPreviews(pp => {
+            const updated = [...pp]
+            updated[startIdx + i] = url
+            return updated
+          })
+        }
+      })
+      return next
+    })
+  }, [])
+
+  const removeFile = useCallback((idx) => {
+    setProofFiles(prev => prev.filter((_, i) => i !== idx))
+    setProofPreviews(prev => {
+      const updated = prev.filter((_, i) => i !== idx)
+      return updated
+    })
+  }, [])
+
+  // Reset files when step changes (different proof requirements)
+  const handleStepChange = (step) => {
+    setSelectedStep(step)
+    setProofFiles([])
+    setProofPreviews([])
+  }
+
+  // ── Submit ───────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!canSubmit) return
     setSubmitting(true)
@@ -80,7 +336,7 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
         note:         note.trim() || undefined,
         ...(isSet ? { setId: device.id } : { deviceId: device.id }),
       }
-      const res = await lifecycleRequestApi.create(body)
+      const res = await lifecycleRequestApi.create(body, proofFiles)
       setAutoApproved(!!res.autoApproved)
       setSubmitted(true)
     } catch (err) {
@@ -102,6 +358,19 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
               : <Send className="w-10 h-10 text-blue-600" />
             }
           </div>
+
+          {proofFiles.length > 0 && (
+            <div className="flex items-center justify-center gap-1 mb-3">
+              <span className="text-xs text-gray-400">
+                {proofFiles.length} proof file{proofFiles.length > 1 ? 's' : ''} attached
+              </span>
+              {proofFiles.map((f, i) => (
+                <span key={i} className="text-xs">
+                  {isImage(f) ? '📷' : isVideo(f) ? '🎥' : '📄'}
+                </span>
+              ))}
+            </div>
+          )}
 
           {autoApproved ? (
             <>
@@ -146,7 +415,7 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden">
 
         {/* Header */}
-        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-5 rounded-t-3xl">
+        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-5 rounded-t-3xl flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center">
@@ -170,7 +439,6 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
             </button>
           </div>
 
-          {/* Current status pill */}
           <div className="mt-4 flex items-center gap-2">
             <span className="text-slate-400 text-xs">Current:</span>
             <span className="px-2 py-0.5 bg-white/10 text-white text-xs rounded-full font-medium">
@@ -209,7 +477,7 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
                       return (
                         <button
                           key={step}
-                          onClick={() => setSelectedStep(step)}
+                          onClick={() => handleStepChange(step)}
                           className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 text-left transition-all
                             ${selectedStep === step
                               ? 'border-blue-500 bg-blue-50'
@@ -236,7 +504,7 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
                 </div>
               )}
 
-              {/* Single step — just show it as info */}
+              {/* Single step info */}
               {availableSteps.length === 1 && selectedStep && (
                 <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-xl border border-blue-200">
                   <span className="text-2xl">{selectedMeta?.emoji}</span>
@@ -256,7 +524,13 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
                   {HEALTH_OPTIONS.map(opt => (
                     <button
                       key={opt.value}
-                      onClick={() => { setHealthStatus(opt.value); if (opt.value === 'ok') setHealthNote('') }}
+                      onClick={() => {
+                        setHealthStatus(opt.value)
+                        if (opt.value === 'ok') setHealthNote('')
+                        // Reset proof files if proof config changes
+                        setProofFiles([])
+                        setProofPreviews([])
+                      }}
                       className={`p-3 rounded-xl border-2 text-left transition-all
                         ${healthStatus === opt.value
                           ? opt.value === 'ok'      ? 'border-emerald-500 bg-emerald-50'
@@ -278,7 +552,7 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
                   ))}
                 </div>
 
-                {/* Mandatory note when health is not OK */}
+                {/* Mandatory health note */}
                 {needsHealthNote && (
                   <div className="mt-3">
                     <label className="block text-xs font-semibold text-red-600 mb-1">
@@ -298,6 +572,30 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
                   </div>
                 )}
               </div>
+
+              {/* ── PROOF UPLOAD ──────────────────────────────────────────── */}
+              {effectiveProofConfig && (
+                <div className="border-t border-gray-100 pt-5">
+                  <ProofUploadSection
+                    proofConfig={effectiveProofConfig}
+                    files={proofFiles}
+                    previews={proofPreviews}
+                    onAdd={addFiles}
+                    onRemove={removeFile}
+                    isHealthTriggered={!stepProofConfig && healthTriggerProof}
+                  />
+                </div>
+              )}
+
+              {/* Proof missing warning (shown only after user tries) */}
+              {proofRequired && proofFiles.length === 0 && (
+                <div className="flex items-start gap-2 p-3 bg-orange-50 border border-orange-200 rounded-xl">
+                  <AlertTriangle className="w-4 h-4 text-orange-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-orange-700">
+                    Proof upload is <strong>mandatory</strong> for this step. Please attach at least one photo, video, or document.
+                  </p>
+                </div>
+              )}
 
               {/* Optional note */}
               <div>
@@ -337,29 +635,48 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
 
         {/* Footer */}
         {availableSteps.length > 0 && (
-          <div className="flex-shrink-0 border-t border-gray-100 p-4 flex gap-3">
-            <button
-              onClick={onClose}
-              className="px-5 py-3 border-2 border-gray-200 text-gray-600 rounded-xl font-medium text-sm hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={!canSubmit || submitting}
-              className="flex-1 flex items-center justify-center gap-2 py-3
-                bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl
-                font-semibold text-sm hover:from-blue-700 hover:to-indigo-700
-                disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-lg"
-            >
-              {submitting ? (
-                <><Loader2 className="w-4 h-4 animate-spin" />{isManager ? 'Applying…' : 'Sending…'}</>
-              ) : isManager ? (
-                <><CheckCircle2 className="w-4 h-4" />Apply Now</>
-              ) : (
-                <><Send className="w-4 h-4" />Send Request</>
-              )}
-            </button>
+          <div className="flex-shrink-0 border-t border-gray-100 p-4 space-y-2">
+            {/* Proof file count badge */}
+            {proofFiles.length > 0 && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-200 rounded-lg">
+                <CheckCircle2 className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
+                <p className="text-xs text-green-700 font-medium">
+                  {proofFiles.length} proof file{proofFiles.length > 1 ? 's' : ''} ready to upload
+                </p>
+                <div className="flex gap-1 ml-auto">
+                  {proofFiles.map((f, i) => (
+                    <span key={i} className="text-sm">
+                      {isImage(f) ? '📷' : isVideo(f) ? '🎥' : '📄'}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={onClose}
+                className="px-5 py-3 border-2 border-gray-200 text-gray-600 rounded-xl font-medium text-sm hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={!canSubmit || submitting}
+                className="flex-1 flex items-center justify-center gap-2 py-3
+                  bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl
+                  font-semibold text-sm hover:from-blue-700 hover:to-indigo-700
+                  disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-lg"
+              >
+                {submitting ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" />{isManager ? 'Applying…' : 'Sending…'}</>
+                ) : isManager ? (
+                  <><CheckCircle2 className="w-4 h-4" />Apply Now</>
+                ) : (
+                  <><Send className="w-4 h-4" />Send Request</>
+                )}
+              </button>
+            </div>
           </div>
         )}
       </div>

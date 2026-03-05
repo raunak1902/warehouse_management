@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Layers, Plus, Search, X, ChevronRight, Package, Monitor, Smartphone,
   LayoutGrid, Tv, Battery, Check, AlertTriangle, Trash2, RefreshCw,
@@ -159,6 +160,9 @@ const computeTip = (config, getAvailableByType) => {
 const Makesets = () => {
   const { devices, refreshDevices } = useInventory()
 
+  const [searchParams] = useSearchParams()
+  const urlLifecycle = searchParams.get('lifecycle') // e.g. 'return_initiated,return_transit'
+
   const [sets, setSets] = useState([])
   const [setsLoading, setSetsLoading] = useState(true)
   const [setsError, setSetsError] = useState('')
@@ -167,7 +171,8 @@ const Makesets = () => {
   const allSetTypes = useMemo(() => ({ ...BUILTIN_SET_TYPES, ...customSetTypes }), [customSetTypes])
 
   const [search, setSearch] = useState('')
-  const [filterType, setFilterType] = useState('all')
+  const urlFilterType = searchParams.get('filterType')
+  const [filterType, setFilterType] = useState(urlFilterType || 'all')
   const [filterHealth, setFilterHealth] = useState('all')
   const [showTipsPanel, setShowTipsPanel] = useState(true)
 
@@ -228,14 +233,18 @@ const Makesets = () => {
   }, [allSetTypes, getAvailableByType])
 
   // ── Filtered sets list
-  const filteredSets = useMemo(() => sets.filter(s => {
-    const q = search.toLowerCase()
-    return (
-      (!q || s.code?.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q) || s.barcode?.toLowerCase().includes(q) || s.setTypeName?.toLowerCase().includes(q)) &&
-      (filterType === 'all' || s.setType === filterType) &&
-      (filterHealth === 'all' || s.healthStatus === filterHealth)
-    )
-  }), [sets, search, filterType, filterHealth])
+  const filteredSets = useMemo(() => {
+    const lifecycleSteps = urlLifecycle ? urlLifecycle.split(',') : null
+    return sets.filter(s => {
+      const q = search.toLowerCase()
+      return (
+        (!q || s.code?.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q) || s.barcode?.toLowerCase().includes(q) || s.setTypeName?.toLowerCase().includes(q)) &&
+        (filterType === 'all' || s.setType === filterType) &&
+        (filterHealth === 'all' || s.healthStatus === filterHealth) &&
+        (!lifecycleSteps || lifecycleSteps.includes(s.lifecycleStatus))
+      )
+    })
+  }, [sets, search, filterType, filterHealth, urlLifecycle])
 
   const WAREHOUSE_SET_STEPS = new Set(['available', 'warehouse', 'returned'])
   const DEPLOYED_SET_STEPS  = new Set(['active', 'deployed', 'under_maintenance'])

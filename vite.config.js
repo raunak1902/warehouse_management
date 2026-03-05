@@ -9,16 +9,18 @@ export default defineConfig({
     port: 5174,
     strictPort: false,
     open: true,
-    // Fix WebSocket HMR connection when using basicSsl (https)
+
     hmr: {
       protocol: 'wss',
-      host: 'localhost',
+      host: true,   // ✅ fixed
       port: 5174,
       overlay: false,
     },
+
     watch: {
       ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**']
     },
+
     proxy: {
       '/api': {
         target: 'http://localhost:5000',
@@ -30,8 +32,16 @@ export default defineConfig({
         target: 'http://localhost:5000',
         changeOrigin: true,
         secure: false,
+      },
+      '/uploads': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false,
       }
     }
   },
-  build: { sourcemap: false }
+
+  build: {
+    sourcemap: false
+  }
 })

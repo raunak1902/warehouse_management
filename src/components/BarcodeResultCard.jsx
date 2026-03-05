@@ -1,12 +1,23 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import {
   Download, Printer, Copy, Check, X, MapPin, Activity,
   ChevronDown, ChevronUp, Clock, AlertTriangle, CheckCircle2,
-  ArrowRight, RotateCcw, Truck, Package, MoreVertical
+  ArrowRight, RotateCcw, Truck, Package, MoreVertical, Paperclip,
 } from 'lucide-react'
 import { useInventory, LIFECYCLE, LIFECYCLE_LABELS, LIFECYCLE_COLORS, HEALTH_COLORS } from '../context/InventoryContext'
+import { PROOF_CONFIG, HEALTH_REQUIRES_PROOF, MAX_PROOF_FILES, MAX_FILE_SIZE_MB } from '../api/lifecycleRequestApi'
+import {
+  CameraModal, ProofFileCard, ProofUploadPanel,
+  isImage, isVideo, isPdf,
+} from './ProofUpload'
 import AssignToClientModal from './AssignToClientModal'
+import LifecycleTimeline from './LifecycleTimeline'
+
+// Steps that require proof (for the 📎 badge on buttons)
+const STEPS_NEEDING_PROOF = new Set(
+  Object.entries(PROOF_CONFIG).filter(([, v]) => v?.required).map(([k]) => k)
+)
 
 // ─────────────────────────────────────────────────────────────
 // LIFECYCLE STATUS BADGE
@@ -15,7 +26,6 @@ const StatusBadge = ({ status }) => {
   const colors = LIFECYCLE_COLORS[status] || LIFECYCLE_COLORS.warehouse
   const label  = LIFECYCLE_LABELS[status]  || status
   const isPending = status?.includes('_requested')
-
   return (
     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${colors.bg} ${colors.text}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${colors.dot} ${isPending ? 'animate-pulse' : ''}`} />
@@ -38,9 +48,7 @@ const HealthBadge = ({ current }) => {
 }
 
 // ─────────────────────────────────────────────────────────────
-// HEALTH CONFIRM STEP
-// Shown before every lifecycle request submission.
-// User must actively confirm or update health before proceeding.
+// HEALTH OPTIONS for HealthConfirm selector
 // ─────────────────────────────────────────────────────────────
 const HEALTH_OPTIONS = [
   { value: 'ok',     label: 'Healthy',      dot: 'bg-green-500',  bg: 'border-green-200 bg-green-50',  text: 'text-green-800' },
@@ -48,26 +56,87 @@ const HEALTH_OPTIONS = [
   { value: 'damage', label: 'Damaged',      dot: 'bg-red-500',    bg: 'border-red-200 bg-red-50',      text: 'text-red-800'   },
 ]
 
-const HealthConfirm = ({ currentHealth, stepLabel, onConfirm, onCancel, busy }) => {
-  const [health, setHealth]   = useState(currentHealth || 'ok')
-  const [note, setNote]       = useState('')
 
-  const needsNote = health !== 'ok'
-  const canSubmit = !needsNote || note.trim().length > 0
+const HealthConfirm = ({ currentHealth, stepLabel, toStep, onConfirm, onCancel, busy }) => {
+  const [health,       setHealth]       = useState(currentHealth || 'ok')
+  const [note,         setNote]         = useState('')
+  const [proofFiles,   setProofFiles]   = useState([])
+  const [proofPreviews,setProofPreviews]= useState([])
+  const [submitError,  setSubmitError]  = useState(null)
+
+  const needsNote   = health !== 'ok'
+
+  // Proof config: step-specific OR health-triggered
+  const stepProofCfg    = toStep ? PROOF_CONFIG[toStep] : null
+  const healthTrigger   = HEALTH_REQUIRES_PROOF.includes(health)
+  const effectiveProof  = useMemo(() => {
+    if (stepProofCfg) return stepProofCfg
+    if (healthTrigger) return {
+      required:   true,
+      accept:     'image/*,video/*,application/pdf',
+      allowVideo: true,
+      allowPdf:   true,
+      label:      'Health Condition Evidence',
+      hint:       '🩺 Proof is required when marking a device as damaged or in need of repair. Attach a photo or supporting document.',
+    }
+    return null
+  }, [stepProofCfg, healthTrigger])
+
+  const proofRequired = !!effectiveProof?.required
+  const proofMissing  = proofRequired && proofFiles.length === 0
+  const canSubmit     = (!needsNote || note.trim().length > 0) && !proofMissing
+
+  // Reset proof when health changes (proof config may change)
+  const handleHealthChange = (val) => {
+    setHealth(val)
+    setProofFiles([])
+    setProofPreviews([])
+    setSubmitError(null)
+  }
+
+  const addFiles = useCallback((incoming) => {
+    setProofFiles(prev => {
+      const next = [...prev, ...incoming].slice(0, MAX_PROOF_FILES)
+      const startIdx = prev.length
+      next.slice(startIdx).forEach((file, i) => {
+        if (isImage(file) || isVideo(file)) {
+          const url = URL.createObjectURL(file)
+          setProofPreviews(pp => { const u = [...pp]; u[startIdx + i] = url; return u })
+        }
+      })
+      return next
+    })
+  }, [])
+
+  const removeFile = useCallback((idx) => {
+    setProofFiles(p => p.filter((_, i) => i !== idx))
+    setProofPreviews(p => p.filter((_, i) => i !== idx))
+  }, [])
+
+  const handleConfirm = () => {
+    if (!canSubmit) {
+      if (proofMissing) setSubmitError('Please attach at least one proof file before submitting.')
+      return
+    }
+    setSubmitError(null)
+    onConfirm(health, needsNote ? note.trim() : null, proofFiles)
+  }
 
   return (
     <div className="space-y-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-gray-800">Confirm device health before submitting</p>
-        <span className="text-xs text-gray-400 font-medium">→ {stepLabel}</span>
+        <p className="text-sm font-semibold text-gray-800">Confirm health &amp; attach proof</p>
+        <span className="text-xs font-medium px-2 py-0.5 bg-gray-200 text-gray-600 rounded-full">→ {stepLabel}</span>
       </div>
 
       {/* Health selector */}
       <div className="grid grid-cols-3 gap-2">
         {HEALTH_OPTIONS.map(opt => (
-          <button key={opt.value} onClick={() => setHealth(opt.value)}
+          <button key={opt.value} onClick={() => handleHealthChange(opt.value)}
             className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg border-2 text-xs font-semibold transition-all
-              ${health === opt.value ? opt.bg + ' border-2 ' + opt.text + ' ring-2 ring-offset-1 ' + opt.dot.replace('bg-', 'ring-')
+              ${health === opt.value
+                ? opt.bg + ' ' + opt.text + ' ring-2 ring-offset-1 ' + opt.dot.replace('bg-', 'ring-')
                 : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>
             <span className={`w-2.5 h-2.5 rounded-full ${opt.dot}`} />
             {opt.label}
@@ -75,11 +144,11 @@ const HealthConfirm = ({ currentHealth, stepLabel, onConfirm, onCancel, busy }) 
         ))}
       </div>
 
-      {/* Note — required if health is not ok */}
+      {/* Health note (required if not ok) */}
       {needsNote && (
         <div>
           <p className="text-xs text-amber-700 font-medium mb-1">
-            ⚠ Health note required for {health === 'repair' ? 'Needs Repair' : 'Damaged'} status:
+            ⚠ Note required for {health === 'repair' ? 'Needs Repair' : 'Damaged'} status:
           </p>
           <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
             placeholder="Describe the issue…"
@@ -87,14 +156,67 @@ const HealthConfirm = ({ currentHealth, stepLabel, onConfirm, onCancel, busy }) 
         </div>
       )}
 
-      <div className="flex gap-2">
-        <button onClick={() => onConfirm(health, needsNote ? note.trim() : null)}
+      {/* ── PROOF UPLOAD ─────────────────────────────────────── */}
+      {effectiveProof && (
+        <div className="border-t border-gray-200 pt-3 space-y-2">
+          <p className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+            <Paperclip className="w-3.5 h-3.5 text-indigo-500" />
+            {effectiveProof.label}
+            <span className="text-red-500">*</span>
+            {!stepProofCfg && healthTrigger && (
+              <span className="text-[10px] text-red-500 font-normal ml-1">(required for this health status)</span>
+            )}
+          </p>
+          <ProofUploadPanel
+            proofConfig={effectiveProof}
+            files={proofFiles}
+            previews={proofPreviews}
+            onAdd={addFiles}
+            onRemove={removeFile}
+          />
+        </div>
+      )}
+
+      {/* No-proof hint for steps that don't need it */}
+      {!effectiveProof && (
+        <div className="flex items-center gap-2 p-2 bg-green-50 border border-green-200 rounded-lg">
+          <CheckCircle2 className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
+          <p className="text-xs text-green-700">No proof required for this step.</p>
+        </div>
+      )}
+
+      {/* Inline error (replaces browser alert) */}
+      {submitError && (
+        <div className="flex items-start gap-2 p-2.5 bg-red-50 border border-red-200 rounded-lg">
+          <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-red-700">{submitError}</p>
+        </div>
+      )}
+
+      {/* Proof files ready badge */}
+      {proofFiles.length > 0 && (
+        <div className="flex items-center gap-2 px-2.5 py-1.5 bg-green-50 border border-green-200 rounded-lg">
+          <CheckCircle2 className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
+          <p className="text-xs text-green-700 font-medium">
+            {proofFiles.length} proof file{proofFiles.length > 1 ? 's' : ''} ready
+          </p>
+          <div className="flex gap-0.5 ml-auto text-sm">
+            {proofFiles.map((f, i) => (
+              <span key={i}>{isImage(f) ? '📷' : isVideo(f) ? '🎥' : '📄'}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex gap-2 pt-1">
+        <button onClick={handleConfirm}
           disabled={!canSubmit || busy}
-          className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
+          className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
           {busy ? 'Submitting…' : 'Confirm & Submit Request'}
         </button>
         <button onClick={onCancel} disabled={busy}
-          className="px-4 py-2 border border-gray-200 rounded-lg text-sm hover:bg-gray-50">
+          className="px-4 py-2.5 border border-gray-200 rounded-lg text-sm hover:bg-gray-50">
           Cancel
         </button>
       </div>
@@ -210,6 +332,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
 
   const [pending, setPending]             = useState(undefined)
   const [busy, setBusy]                   = useState(false)
+  const [runError, setRunError]           = useState(null)
   const [showAssignModal, setShowAssignModal] = useState(false)
   const [note, setNote]                   = useState('')
   const [showNote, setShowNote]           = useState(false)
@@ -227,11 +350,11 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
     setHealthStep({ toStep, stepLabel, extraNote })
   }
 
-  const confirmHealth = (health, healthNote) => {
+  const confirmHealth = (health, healthNote, proofFiles = []) => {
     if (!healthStep) return
     const { toStep, extraNote } = healthStep
     setHealthStep(null)
-    run(() => submitLifecycleStep(device.id, toStep, extraNote, health, healthNote))
+    run(() => submitLifecycleStep(device.id, toStep, extraNote, health, healthNote, proofFiles))
   }
 
   // Fetch pending request on mount and whenever device changes
@@ -277,6 +400,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
 
   const run = async (fn) => {
     setBusy(true)
+    setRunError(null)
     try {
       const result = await fn()
       if (result && result.status === 'pending') {
@@ -299,7 +423,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
         }
       }
     } catch (e) {
-      alert(e.message || 'Request failed')
+      setRunError(e.message || 'Request failed')
       setBusy(false)
     } finally {
       setBusy(false)
@@ -319,15 +443,13 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
       <HealthConfirm
         currentHealth={device.healthStatus}
         stepLabel={healthStep.stepLabel}
+        toStep={healthStep.toStep}
         onConfirm={confirmHealth}
         onCancel={() => setHealthStep(null)}
         busy={busy}
       />
     )
   }
-
-  // Still loading the pending request — show a neutral spinner so we never
-  // flash the wrong fallback UI before the fetch completes.
   if (pending === undefined) {
     return (
       <div className="flex items-center justify-center gap-2 py-4 text-sm text-gray-400">
@@ -357,10 +479,23 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
 
   // ── No pending request (confirmed null) — show the appropriate action button ──
 
+  const errorBanner = runError ? (
+    <div className="flex items-start gap-2 p-2.5 mb-2 bg-red-50 border border-red-200 rounded-xl">
+      <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <p className="text-xs text-red-700">{runError}</p>
+      </div>
+      <button onClick={() => setRunError(null)} className="text-red-400 hover:text-red-600 flex-shrink-0">
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  ) : null
+
   // Available / Warehouse → open full 5-step assignment modal
   if (status === 'available' || status === 'warehouse' || status === 'returned') {
     return (
       <>
+        {errorBanner}
         <button onClick={() => setShowAssignModal(true)}
           className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700">
           <ArrowRight className="w-4 h-4" />Request Assignment to Client
@@ -380,13 +515,14 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
   if (status === 'assigning' || status === 'assign_requested' || status === 'assigned') {
     return (
       <div className="space-y-2">
+        {errorBanner}
         <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800">
           <CheckCircle2 className="w-4 h-4 inline mr-1 text-blue-600" />
           Assigned to <strong>{device.client?.name || 'client'}</strong>. Mark as ready to deploy when packed.
         </div>
         <button onClick={() => askHealth('ready_to_deploy', 'Ready to Deploy')} disabled={busy}
           className="w-full flex items-center justify-center gap-2 py-3 bg-teal-600 text-white rounded-xl font-semibold text-sm hover:bg-teal-700">
-          <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Ready to Deploy'}
+          <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Ready to Deploy'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
       </div>
     )
@@ -402,7 +538,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
         </div>
         <button onClick={() => askHealth('in_transit', 'In Transit')} disabled={busy}
           className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 text-white rounded-xl font-semibold text-sm hover:bg-amber-600">
-          <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark In Transit'}
+          <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark In Transit'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
       </div>
     )
@@ -417,7 +553,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
         </div>
         <button onClick={() => askHealth('received', 'Received at Site')} disabled={busy}
           className="w-full flex items-center justify-center gap-2 py-3 bg-purple-600 text-white rounded-xl font-semibold text-sm hover:bg-purple-700">
-          <Package className="w-4 h-4" />{busy ? 'Submitting…' : 'Confirm Received at Site'}
+          <Package className="w-4 h-4" />{busy ? 'Submitting…' : 'Confirm Received at Site'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
       </div>
     )
@@ -432,7 +568,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
         </div>
         <button onClick={() => askHealth('installed', 'Installed')} disabled={busy}
           className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 text-white rounded-xl font-semibold text-sm hover:bg-indigo-700">
-          <CheckCircle2 className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Installed'}
+          <CheckCircle2 className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Installed'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
       </div>
     )
@@ -447,7 +583,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
         </div>
         <button onClick={() => askHealth('active', 'Active / Live')} disabled={busy}
           className="w-full flex items-center justify-center gap-2 py-3 bg-green-600 text-white rounded-xl font-semibold text-sm hover:bg-green-700">
-          <CheckCircle2 className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Active / Live'}
+          <CheckCircle2 className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Active / Live'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
       </div>
     )
@@ -476,7 +612,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
       <div className="flex gap-2">
         <button onClick={() => askHealth('under_maintenance', 'Under Maintenance')} disabled={busy}
           className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-orange-100 text-orange-700 rounded-xl text-sm font-semibold hover:bg-orange-200">
-          <AlertTriangle className="w-4 h-4" />{busy ? '…' : 'Under Maintenance'}
+          <AlertTriangle className="w-4 h-4" />{busy ? '…' : 'Under Maintenance'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
         <button onClick={() => setShowNote(true)}
           className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-100 text-rose-700 rounded-xl text-sm font-semibold hover:bg-rose-200">
@@ -511,7 +647,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
         <div className="flex gap-2">
           <button onClick={() => askHealth('active', 'Active / Live')} disabled={busy}
             className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700">
-            <CheckCircle2 className="w-4 h-4" />{busy ? '…' : 'Mark Active Again'}
+            <CheckCircle2 className="w-4 h-4" />{busy ? '…' : 'Mark Active Again'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
           </button>
           <button onClick={() => setShowNote(true)}
             className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-100 text-rose-700 rounded-xl text-sm font-semibold hover:bg-rose-200">
@@ -527,7 +663,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
     return (
       <button onClick={() => askHealth('return_transit', 'Return In Transit')} disabled={busy}
         className="w-full flex items-center justify-center gap-2 py-3 bg-pink-600 text-white rounded-xl font-semibold text-sm hover:bg-pink-700 disabled:opacity-50">
-        <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Device Picked Up — Now In Transit'}
+        <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Device Picked Up — Now In Transit'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
       </button>
     )
   }
@@ -537,7 +673,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
     return (
       <button onClick={() => askHealth('returned', 'Returned to Warehouse')} disabled={busy}
         className="w-full flex items-center justify-center gap-2 py-3 bg-slate-600 text-white rounded-xl font-semibold text-sm hover:bg-slate-700 disabled:opacity-50">
-        <Package className="w-4 h-4" />{busy ? 'Submitting…' : 'Confirm Received at Warehouse'}
+        <Package className="w-4 h-4" />{busy ? 'Submitting…' : 'Confirm Received at Warehouse'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
       </button>
     )
   }
@@ -578,6 +714,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
 
   const [pending, setPending]               = useState(undefined)
   const [busy, setBusy]                     = useState(false)
+  const [runError, setRunError]             = useState(null)
   const [showAssignModal, setShowAssignModal] = useState(false)
   const [note, setNote]                     = useState('')
   const [showNote, setShowNote]             = useState(false)
@@ -588,11 +725,11 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
   const askHealth = (toStep, stepLabel, extraNote = null) =>
     setHealthStep({ toStep, stepLabel, extraNote })
 
-  const confirmHealth = (health, healthNote) => {
+  const confirmHealth = (health, healthNote, proofFiles = []) => {
     if (!healthStep) return
     const { toStep, extraNote } = healthStep
     setHealthStep(null)
-    run(() => submitSetLifecycleStep(device.id, toStep, extraNote, health, healthNote))
+    run(() => submitSetLifecycleStep(device.id, toStep, extraNote, health, healthNote, proofFiles))
   }
 
   useEffect(() => {
@@ -622,6 +759,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
 
   const run = async (fn) => {
     setBusy(true)
+    setRunError(null)
     try {
       const result = await fn()
       if (result && result.status === 'pending') {
@@ -636,7 +774,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
         }
       }
     } catch (e) {
-      alert(e.message || 'Request failed')
+      setRunError(e.message || 'Request failed')
       setBusy(false)
     } finally {
       setBusy(false)
@@ -652,6 +790,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
       <HealthConfirm
         currentHealth={device.healthStatus}
         stepLabel={healthStep.stepLabel}
+        toStep={healthStep.toStep}
         onConfirm={confirmHealth}
         onCancel={() => setHealthStep(null)}
         busy={busy}
@@ -686,9 +825,21 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
   }
 
   // Available / Warehouse → open full 5-step assignment modal
+
+  const errorBanner = runError ? (
+    <div className="flex items-start gap-2 p-2.5 mb-2 bg-red-50 border border-red-200 rounded-xl">
+      <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+      <p className="text-xs text-red-700 flex-1">{runError}</p>
+      <button onClick={() => setRunError(null)} className="text-red-400 hover:text-red-600 flex-shrink-0">
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  ) : null
+
   if (status === 'available' || status === 'warehouse' || status === 'returned') {
     return (
       <>
+        {errorBanner}
         <button onClick={() => setShowAssignModal(true)}
           className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700">
           <ArrowRight className="w-4 h-4" />Assign Set to Client
@@ -707,13 +858,14 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
   if (status === 'assigning' || status === 'assign_requested' || status === 'assigned') {
     return (
       <div className="space-y-2">
+        {errorBanner}
         <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800">
           <CheckCircle2 className="w-4 h-4 inline mr-1 text-blue-600" />
           Set assigned to <strong>{device.client?.name || 'client'}</strong>. Mark as ready to deploy when packed.
         </div>
         <button onClick={() => askHealth('ready_to_deploy', 'Ready to Deploy')} disabled={busy}
           className="w-full flex items-center justify-center gap-2 py-3 bg-teal-600 text-white rounded-xl font-semibold text-sm hover:bg-teal-700">
-          <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Ready to Deploy'}
+          <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Ready to Deploy'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
       </div>
     )
@@ -728,7 +880,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
         </div>
         <button onClick={() => askHealth('in_transit', 'In Transit')} disabled={busy}
           className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 text-white rounded-xl font-semibold text-sm hover:bg-amber-600">
-          <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark In Transit'}
+          <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark In Transit'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
       </div>
     )
@@ -742,7 +894,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
         </div>
         <button onClick={() => askHealth('received', 'Received at Site')} disabled={busy}
           className="w-full flex items-center justify-center gap-2 py-3 bg-purple-600 text-white rounded-xl font-semibold text-sm hover:bg-purple-700">
-          <Package className="w-4 h-4" />{busy ? 'Submitting…' : 'Confirm Received at Site'}
+          <Package className="w-4 h-4" />{busy ? 'Submitting…' : 'Confirm Received at Site'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
       </div>
     )
@@ -756,7 +908,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
         </div>
         <button onClick={() => askHealth('installed', 'Installed')} disabled={busy}
           className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 text-white rounded-xl font-semibold text-sm hover:bg-indigo-700">
-          <CheckCircle2 className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Installed'}
+          <CheckCircle2 className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Installed'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
       </div>
     )
@@ -770,7 +922,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
         </div>
         <button onClick={() => askHealth('active', 'Active / Live')} disabled={busy}
           className="w-full flex items-center justify-center gap-2 py-3 bg-green-600 text-white rounded-xl font-semibold text-sm hover:bg-green-700">
-          <CheckCircle2 className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Active / Live'}
+          <CheckCircle2 className="w-4 h-4" />{busy ? 'Submitting…' : 'Mark Active / Live'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
       </div>
     )
@@ -798,7 +950,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
       <div className="flex gap-2">
         <button onClick={() => askHealth('under_maintenance', 'Under Maintenance')} disabled={busy}
           className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-orange-100 text-orange-700 rounded-xl text-sm font-semibold hover:bg-orange-200">
-          <AlertTriangle className="w-4 h-4" />{busy ? '…' : 'Under Maintenance'}
+          <AlertTriangle className="w-4 h-4" />{busy ? '…' : 'Under Maintenance'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
         <button onClick={() => setShowNote(true)}
           className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-100 text-rose-700 rounded-xl text-sm font-semibold hover:bg-rose-200">
@@ -832,7 +984,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
         <div className="flex gap-2">
           <button onClick={() => askHealth('active', 'Active / Live')} disabled={busy}
             className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700">
-            <CheckCircle2 className="w-4 h-4" />{busy ? '…' : 'Mark Active Again'}
+            <CheckCircle2 className="w-4 h-4" />{busy ? '…' : 'Mark Active Again'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
           </button>
           <button onClick={() => setShowNote(true)}
             className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-100 text-rose-700 rounded-xl text-sm font-semibold hover:bg-rose-200">
@@ -847,7 +999,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
     return (
       <button onClick={() => askHealth('return_transit', 'Return In Transit')} disabled={busy}
         className="w-full flex items-center justify-center gap-2 py-3 bg-pink-600 text-white rounded-xl font-semibold text-sm hover:bg-pink-700 disabled:opacity-50">
-        <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Set Picked Up — Now In Transit'}
+        <Truck className="w-4 h-4" />{busy ? 'Submitting…' : 'Set Picked Up — Now In Transit'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
       </button>
     )
   }
@@ -856,7 +1008,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
     return (
       <button onClick={() => askHealth('returned', 'Returned to Warehouse')} disabled={busy}
         className="w-full flex items-center justify-center gap-2 py-3 bg-slate-600 text-white rounded-xl font-semibold text-sm hover:bg-slate-700 disabled:opacity-50">
-        <Package className="w-4 h-4" />{busy ? 'Submitting…' : 'Confirm Set Received at Warehouse'}
+        <Package className="w-4 h-4" />{busy ? 'Submitting…' : 'Confirm Set Received at Warehouse'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
       </button>
     )
   }
@@ -901,6 +1053,7 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
 
   const [pending, setPending]       = useState(undefined)
   const [busy, setBusy]             = useState(false)
+  const [runError, setRunError]     = useState(null)
   const [showHealthReq, setShowHealthReq] = useState(false)
   const [newHealth, setNewHealth]   = useState(device.healthStatus || 'ok')
   const [healthNote, setHealthNote] = useState('')
@@ -932,6 +1085,7 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
 
   const run = async (fn) => {
     setBusy(true)
+    setRunError(null)
     try {
       const result = await fn()
       if (result && result.status === 'pending') {
@@ -946,7 +1100,7 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
         }
       }
     } catch (e) {
-      alert(e.message || 'Request failed')
+      setRunError(e.message || 'Request failed')
       setBusy(false)
     } finally {
       setBusy(false)
@@ -959,11 +1113,11 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
 
   const handleSubmitHealthRequest = () => {
     if (newHealth === device.healthStatus) {
-      alert('Please select a different health status.')
+      setRunError('Please select a different health status.')
       return
     }
     if (newHealth !== 'ok' && !healthNote.trim()) {
-      alert('Please provide a note describing the issue.')
+      setRunError('Please provide a note describing the issue.')
       return
     }
     setShowHealthReq(false)
@@ -977,6 +1131,17 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
         <p className="font-semibold text-blue-900 mb-0.5">Part of a Device Set</p>
         <p className="text-blue-700 text-xs">This device is part of a set. Lifecycle is managed through the set.</p>
       </div>
+
+      {/* Inline error */}
+      {runError && (
+        <div className="flex items-start gap-2 p-2.5 bg-red-50 border border-red-200 rounded-xl">
+          <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-red-700 flex-1">{runError}</p>
+          <button onClick={() => setRunError(null)} className="text-red-400 hover:text-red-600 flex-shrink-0">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Pending health request or health change button */}
       {pending === undefined ? (
@@ -1042,147 +1207,10 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
 }
 
 // ─────────────────────────────────────────────────────────────
-// DEVICE HISTORY
-// ─────────────────────────────────────────────────────────────
-// ── Step emoji map (mirrors Requests page STEP_META) ─────────────────────────
-const STEP_EMOJI = {
-  assigning: '🔗', ready_to_deploy: '✅', in_transit: '🚚',
-  received: '📦', installed: '🔧', active: '🟢',
-  under_maintenance: '🛠', return_initiated: '↩️', return_transit: '🚛',
-  returned: '🏭', lost: '❌', health_update: '🩺',
-  // legacy
-  warehouse: '🏭', available: '🏭', assigning_to_client: '🔗',
-}
-
-const DeviceHistoryLog = ({ history }) => {
-  const [open, setOpen] = useState(false)
-  if (!history || history.length === 0) return null
-
-  const fmt = (dt) => dt
-    ? new Date(dt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-    : '—'
-
-  // Parse the LR# and any extra detail out of the note string
-  // e.g. "[LR#120] → In Transit | Health: repair | Note: cracked"
-  //      "[LR#120] Request withdrawn — rolled back to in_transit"
-  const parseLRNote = (note) => {
-    if (!note) return { lrId: null, isWithdrawn: false, extraNote: null }
-    const lrMatch = note.match(/\[LR#(\d+)\]/)
-    const lrId = lrMatch ? lrMatch[1] : null
-    const isWithdrawn = note.includes('withdrawn')
-    // Extract health note if present
-    const noteMatch = note.match(/\| Note: (.+)$/)
-    const extraNote = noteMatch ? noteMatch[1].trim() : null
-    return { lrId, isWithdrawn, extraNote }
-  }
-
-  return (
-    <div className="border-t border-gray-100 pt-3">
-      {/* Toggle button — styled like Requests page "Show History" */}
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-primary-700 bg-primary-50 hover:bg-primary-100 border border-primary-200 rounded-lg transition-colors"
-      >
-        {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-        {open ? 'Hide' : 'Show'} History
-        <span className="ml-auto bg-primary-200 text-primary-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
-          {history.length} events
-        </span>
-      </button>
-
-      {open && (
-        <div className="mt-2 bg-white rounded-xl border border-gray-200 p-4">
-          {/* Header row */}
-          <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-100">
-            <div className="w-6 h-6 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
-              <Activity className="w-3.5 h-3.5 text-primary-600" />
-            </div>
-            <p className="text-xs font-bold text-text-primary">History</p>
-            <span className="ml-auto text-[10px] font-semibold text-text-muted bg-gray-100 px-2 py-0.5 rounded-full">Latest first</span>
-          </div>
-
-          {/* Timeline items */}
-          <div>
-            {history.map((h, i) => {
-              const from        = h.fromStatus ?? h.fromStep ?? ''
-              const to          = h.toStatus   ?? h.toStep   ?? ''
-              const at          = h.changedAt  ?? h.approvedAt ?? null
-              const isLast      = i === history.length - 1
-              const isWithdrawn = h.note?.includes('withdrawn') ?? false
-              const { lrId, extraNote } = parseLRNote(h.note)
-              const emoji       = STEP_EMOJI[to] ?? '📋'
-              const toLabel     = LIFECYCLE_LABELS[to] || to || '—'
-              const fromLabel   = LIFECYCLE_LABELS[from] || from || '—'
-
-              return (
-                <div key={h.id || i} className="flex gap-3">
-                  {/* Spine + icon */}
-                  <div className="flex flex-col items-center flex-shrink-0">
-                    <div className={`w-7 h-7 rounded-full border-2 border-white shadow flex items-center justify-center text-sm
-                      ${isWithdrawn ? 'bg-gray-100' : 'bg-primary-50'}`}>
-                      {isWithdrawn ? '↩' : emoji}
-                    </div>
-                    {!isLast && (
-                      <div className="w-px bg-gradient-to-b from-gray-300 to-transparent flex-1 mt-1 min-h-[14px]" />
-                    )}
-                  </div>
-
-                  {/* Content */}
-                  <div className="flex-1 pb-4">
-                    {/* Step label + LR ref */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-xs font-bold text-text-primary">{toLabel}</p>
-                      {lrId && (
-                        <span className="text-[9px] font-extrabold uppercase tracking-wide bg-primary-50 text-primary-600 border border-primary-200 px-1.5 py-0.5 rounded-full">
-                          LR#{lrId}
-                        </span>
-                      )}
-                      {isWithdrawn && (
-                        <span className="text-[9px] font-extrabold uppercase tracking-wide bg-gray-100 text-gray-600 border border-gray-200 px-1.5 py-0.5 rounded-full">
-                          Withdrawn
-                        </span>
-                      )}
-                    </div>
-
-                    {/* From → To */}
-                    <div className="mt-1 flex items-center gap-1.5">
-                      <span className="text-[9px] font-extrabold uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">From</span>
-                      <div className="flex items-center gap-1 text-[10px] text-text-muted">
-                        <span className="font-semibold text-text-secondary">{fromLabel}</span>
-                        <ArrowRight className="w-2.5 h-2.5 text-gray-300 flex-shrink-0" />
-                        <span className="font-semibold text-text-secondary">{toLabel}</span>
-                      </div>
-                    </div>
-
-                    {/* Timestamp */}
-                    <div className="mt-1 flex items-center gap-1.5">
-                      <span className="text-[9px] font-extrabold uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">When</span>
-                      <span className="text-[10px] text-text-muted">{fmt(at)}</span>
-                    </div>
-
-                    {/* Extra note (health note etc) */}
-                    {extraNote && (
-                      <div className="mt-1.5 flex gap-1.5 p-2 bg-amber-50 border border-amber-200 rounded-lg">
-                        <AlertTriangle className="w-2.5 h-2.5 text-amber-500 flex-shrink-0 mt-0.5" />
-                        <p className="text-[10px] text-amber-800 italic">{extraNote}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────
 const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) => {
-  const { scanDevice } = useInventory()
+  const { scanDevice, refresh: refreshContext } = useInventory()
   const [device, setDevice] = useState(initialDevice)
   const [copied, setCopied] = useState(false)
   const [showMore, setShowMore] = useState(false)
@@ -1209,17 +1237,25 @@ const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) 
   // the polling useEffect in ActionButton from re-firing when device state updates.
   const handleActionDone = useCallback(async () => {
     try {
-      const fresh = await scanDevice(device.barcode)
+      // Refresh both: the local card (scan fresh device) AND the global context
+      // (so Devices page list, counts, progress bars all update immediately)
+      const [fresh] = await Promise.all([
+        scanDevice(device.barcode),
+        refreshContext(),
+      ])
       setDevice(fresh)
       onDeviceUpdated && onDeviceUpdated(fresh)
     } catch {
       // silently ignore — stale data is better than a crash
     }
-  }, [scanDevice, device.barcode, onDeviceUpdated])
+  }, [scanDevice, refreshContext, device.barcode, onDeviceUpdated])
 
   const handleManualRefresh = async () => {
     try {
-      const fresh = await scanDevice(device.barcode)
+      const [fresh] = await Promise.all([
+        scanDevice(device.barcode),
+        refreshContext(),
+      ])
       setDevice(fresh)
       onDeviceUpdated && onDeviceUpdated(fresh)
     } catch {
@@ -1436,7 +1472,11 @@ const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) 
           )}
 
           {/* History */}
-          {device.history && <DeviceHistoryLog history={device.history} />}
+          {/* Unified lifecycle history — same view as Requests page */}
+          <LifecycleTimeline
+            deviceId={device._isSet ? null : device.id}
+            setId={device._isSet ? device.id : null}
+          />
 
         </div>
       </div>
