@@ -7,6 +7,26 @@ import { requirePermission, requireAnyPermission } from "../middleware/Permissio
 const router = express.Router();
 const prisma = new PrismaClient();
 
+// ── Sync set health to worst component ────────────────────────────────────────
+const HEALTH_RANK_DEV = { ok: 0, repair: 1, damaged: 2 }
+async function syncSetHealthForDevice(deviceId) {
+  const device = await prisma.device.findUnique({ where: { id: deviceId }, select: { setId: true } })
+  if (!device?.setId) return
+  const members = await prisma.device.findMany({
+    where: { setId: device.setId },
+    select: { healthStatus: true },
+  })
+  if (!members.length) return
+  const worst = members.reduce((acc, m) => {
+    const r = HEALTH_RANK_DEV[m.healthStatus] ?? 0
+    return r > (HEALTH_RANK_DEV[acc] ?? 0) ? m.healthStatus : acc
+  }, 'ok')
+  await prisma.deviceSet.update({
+    where: { id: device.setId },
+    data: { healthStatus: worst, updatedAt: new Date() },
+  })
+}
+
 // ==========================================
 // LIFECYCLE STATUS CONSTANTS
 // ==========================================
@@ -779,7 +799,8 @@ router.put("/:id", authMiddleware, requirePermission("Devices", "update"), async
   try {
     const { id } = req.params
     const { code, barcode, type, brand, size, model, color, gpsId, mfgDate, inDate,
-            lifecycleStatus, location, state, district, pinpoint, clientId, healthStatus } = req.body
+            lifecycleStatus, location, state, district, pinpoint, clientId, healthStatus,
+            subscriptionEndDate } = req.body
 
     const existingDevice = await prisma.device.findUnique({ where: { id: parseInt(id) } })
     if (!existingDevice) return res.status(404).json({ error: "Device not found" })
@@ -817,6 +838,9 @@ router.put("/:id", authMiddleware, requirePermission("Devices", "update"), async
         district: district !== undefined ? district : existingDevice.district,
         pinpoint: pinpoint !== undefined ? pinpoint : existingDevice.pinpoint,
         clientId: clientId !== undefined ? (clientId ? parseInt(clientId) : null) : existingDevice.clientId,
+        ...(subscriptionEndDate !== undefined && {
+          subscriptionEndDate: subscriptionEndDate ? new Date(subscriptionEndDate) : null
+        }),
       },
       include: DEVICE_INCLUDE,
     })
@@ -824,6 +848,11 @@ router.put("/:id", authMiddleware, requirePermission("Devices", "update"), async
     // Log if lifecycle changed via PUT (manual admin override)
     if (lifecycleStatus && lifecycleStatus !== prevStatus) {
       await logHistory(parseInt(id), prevStatus, lifecycleStatus, req.user?.userId || null, "Manual update via admin")
+    }
+
+    // If health changed and device belongs to a set, re-sync set health
+    if (healthStatus !== undefined && healthStatus !== existingDevice.healthStatus && existingDevice.setId) {
+      await syncSetHealthForDevice(parseInt(id))
     }
 
     res.json(updatedDevice)

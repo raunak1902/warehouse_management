@@ -128,12 +128,24 @@ export const VALID_NEXT_STEPS = {
   lost:              [],
 }
 
+// ── Canonical health option values used across the entire app ─────────────────
+// IMPORTANT: Always use these exact values. Never use 'damaged' — use 'damage'.
+// 'lost' is a terminal state — once set, no further health updates are allowed.
 export const HEALTH_OPTIONS = [
-  { value: 'ok',      label: '✓ Good Condition',  sub: 'Working perfectly' },
-  { value: 'repair',  label: '🔧 Needs Repair',   sub: 'Requires maintenance' },
-  { value: 'damaged', label: '⚠ Damaged',         sub: 'Physical or functional damage' },
-  { value: 'lost',    label: '❌ Lost',            sub: 'Cannot be located' },
+  { value: 'ok',     label: 'Good Condition', sub: 'Working perfectly',              dot: 'bg-emerald-500', cls: 'border-emerald-300 bg-emerald-50  text-emerald-800' },
+  { value: 'repair', label: 'Needs Repair',   sub: 'Requires maintenance',           dot: 'bg-amber-400',   cls: 'border-amber-300  bg-amber-50    text-amber-800'   },
+  { value: 'damage', label: 'Damaged',        sub: 'Physical or functional damage',  dot: 'bg-red-500',     cls: 'border-red-300    bg-red-50      text-red-800'     },
+  { value: 'lost',   label: 'Lost',           sub: 'Cannot be located — terminal',   dot: 'bg-gray-500',    cls: 'border-gray-300   bg-gray-100    text-gray-700'    },
 ]
+
+// Returns true if proof + note are required for the given health transition.
+// Rule: proof is needed for repair/damage/lost, AND when returning to 'ok'
+// from a previously damaged/repair state (clearance proof).
+export const healthNeedsProof = (toHealth, fromHealth) => {
+  if (['repair', 'damage', 'lost'].includes(toHealth)) return true
+  if (toHealth === 'ok' && ['repair', 'damage'].includes(fromHealth)) return true
+  return false
+}
 
 // ── Proof upload config per step ──────────────────────────────────────────────
 
@@ -241,8 +253,8 @@ export const PROOF_CONFIG = {
   },
 }
 
-/** Health values that auto-trigger proof requirement on any step */
-export const HEALTH_REQUIRES_PROOF = ['repair', 'damaged', 'lost']
+/** @deprecated Use healthNeedsProof(toHealth, fromHealth) instead for full transition-aware logic */
+export const HEALTH_REQUIRES_PROOF = ['repair', 'damage', 'lost']
 
 export const MAX_PROOF_FILES  = 3
 export const MAX_FILE_SIZE_MB = 50

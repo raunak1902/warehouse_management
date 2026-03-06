@@ -3,21 +3,34 @@ import { QRCodeSVG } from 'qrcode.react'
 import {
   Download, Printer, Copy, Check, X, MapPin, Activity,
   ChevronDown, ChevronUp, Clock, AlertTriangle, CheckCircle2,
-  ArrowRight, RotateCcw, Truck, Package, MoreVertical, Paperclip,
+  ArrowRight, RotateCcw, Truck, Package, MoreVertical, Paperclip, Zap,
 } from 'lucide-react'
 import { useInventory, LIFECYCLE, LIFECYCLE_LABELS, LIFECYCLE_COLORS, HEALTH_COLORS } from '../context/InventoryContext'
-import { PROOF_CONFIG, HEALTH_REQUIRES_PROOF, MAX_PROOF_FILES, MAX_FILE_SIZE_MB } from '../api/lifecycleRequestApi'
+import { PROOF_CONFIG, HEALTH_REQUIRES_PROOF, HEALTH_OPTIONS, healthNeedsProof, MAX_PROOF_FILES, MAX_FILE_SIZE_MB } from '../api/lifecycleRequestApi'
+import { lifecycleRequestApi } from '../api/lifecycleRequestApi'
 import {
   CameraModal, ProofFileCard, ProofUploadPanel,
-  isImage, isVideo, isPdf,
+  isImage, isVideo, isPdf, useProofFiles,
 } from './ProofUpload'
 import AssignToClientModal from './AssignToClientModal'
 import LifecycleTimeline from './LifecycleTimeline'
+import HealthUpdateModal, { LostHealthBanner } from './HealthUpdateModal'
 
 // Steps that require proof (for the 📎 badge on buttons)
 const STEPS_NEEDING_PROOF = new Set(
   Object.entries(PROOF_CONFIG).filter(([, v]) => v?.required).map(([k]) => k)
 )
+
+// Button pulse animation styles for return button
+const buttonPulseStyles = `
+  @keyframes button-pulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
+    50% { transform: scale(1.02); box-shadow: 0 0 15px rgba(239, 68, 68, 0.4); }
+  }
+  .animate-button-pulse {
+    animation: button-pulse 1.5s ease-in-out infinite;
+  }
+`
 
 // ─────────────────────────────────────────────────────────────
 // LIFECYCLE STATUS BADGE
@@ -48,14 +61,8 @@ const HealthBadge = ({ current }) => {
 }
 
 // ─────────────────────────────────────────────────────────────
-// HEALTH OPTIONS for HealthConfirm selector
+// HEALTH OPTIONS — imported from lifecycleRequestApi (canonical)
 // ─────────────────────────────────────────────────────────────
-const HEALTH_OPTIONS = [
-  { value: 'ok',     label: 'Healthy',      dot: 'bg-green-500',  bg: 'border-green-200 bg-green-50',  text: 'text-green-800' },
-  { value: 'repair', label: 'Needs Repair', dot: 'bg-amber-400',  bg: 'border-amber-200 bg-amber-50',  text: 'text-amber-800' },
-  { value: 'damage', label: 'Damaged',      dot: 'bg-red-500',    bg: 'border-red-200 bg-red-50',      text: 'text-red-800'   },
-]
-
 
 const HealthConfirm = ({ currentHealth, stepLabel, toStep, onConfirm, onCancel, busy }) => {
   const [health,       setHealth]       = useState(currentHealth || 'ok')
@@ -81,7 +88,6 @@ const HealthConfirm = ({ currentHealth, stepLabel, toStep, onConfirm, onCancel, 
     }
     return null
   }, [stepProofCfg, healthTrigger])
-
   const proofRequired = !!effectiveProof?.required
   const proofMissing  = proofRequired && proofFiles.length === 0
   const canSubmit     = (!needsNote || note.trim().length > 0) && !proofMissing
@@ -132,11 +138,11 @@ const HealthConfirm = ({ currentHealth, stepLabel, toStep, onConfirm, onCancel, 
 
       {/* Health selector */}
       <div className="grid grid-cols-3 gap-2">
-        {HEALTH_OPTIONS.map(opt => (
+        {HEALTH_OPTIONS.filter(o => o.value !== 'lost').map(opt => (
           <button key={opt.value} onClick={() => handleHealthChange(opt.value)}
             className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg border-2 text-xs font-semibold transition-all
               ${health === opt.value
-                ? opt.bg + ' ' + opt.text + ' ring-2 ring-offset-1 ' + opt.dot.replace('bg-', 'ring-')
+                ? opt.cls + ' ring-2 ring-offset-1 ' + opt.dot.replace('bg-', 'ring-')
                 : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>
             <span className={`w-2.5 h-2.5 rounded-full ${opt.dot}`} />
             {opt.label}
@@ -280,7 +286,7 @@ const PendingBanner = ({ pending, currentUserId, isManager, onWithdraw, onApprov
 
       {/* Health warning — shown to everyone if health is not ok */}
       {healthWarning && (
-        <div className={`mx-3 mt-2 px-3 py-2 rounded-lg border text-xs font-medium flex items-start gap-2 ${healthOpt?.bg} ${healthOpt?.text}`}>
+        <div className={`mx-3 mt-2 px-3 py-2 rounded-lg border text-xs font-medium flex items-start gap-2 ${healthOpt?.cls || 'bg-gray-50 border-gray-200 text-gray-700'}`}>
           <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           <div>
             <span className="font-bold">Health: {healthOpt?.label}</span>
@@ -338,6 +344,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
   const [showNote, setShowNote]           = useState(false)
   // healthStep: null = not showing, otherwise { toStep, label, extraNote }
   const [healthStep, setHealthStep]       = useState(null)
+  const [showHealthModal, setShowHealthModal] = useState(false)
   // Keep onAction in a ref so the polling interval always calls the latest version
   // without needing it as a useEffect dependency (which would cause spurious re-fires).
   const onActionRef = useRef(onAction)
@@ -437,43 +444,77 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
   const handleApprove  = (requestId) => run(() => approveLifecycleRequest(requestId))
   const handleReject   = (requestId, rejNote) => run(() => rejectLifecycleRequest(requestId, rejNote))
 
-  // If health confirmation is in progress, show it
+  // Health modal — rendered as overlay above everything
+  const healthModal = showHealthModal && (
+    <HealthUpdateModal
+      device={device}
+      isManager={isManager}
+      onClose={() => setShowHealthModal(false)}
+      onDone={() => { setShowHealthModal(false); onAction && onAction() }}
+    />
+  )
+
+  // Health report button — shows locked banner if device is lost, button otherwise
+  const isLost = device.healthStatus === 'lost'
+  const healthReportBtn = isLost ? (
+    <LostHealthBanner />
+  ) : (
+    <button
+      type="button"
+      onClick={() => setShowHealthModal(true)}
+      className="w-full flex items-center justify-center gap-2 py-2.5 bg-cyan-50 border border-cyan-200 text-cyan-800 rounded-xl text-sm font-semibold hover:bg-cyan-100 transition-colors"
+    >
+      🩺 Report Health Status
+    </button>
+  )
+
+  // If health confirmation is in progress, show it (no health btn — user is mid-flow)
   if (healthStep) {
     return (
-      <HealthConfirm
-        currentHealth={device.healthStatus}
-        stepLabel={healthStep.stepLabel}
-        toStep={healthStep.toStep}
-        onConfirm={confirmHealth}
-        onCancel={() => setHealthStep(null)}
-        busy={busy}
-      />
+      <>
+        <HealthConfirm
+          currentHealth={device.healthStatus}
+          stepLabel={healthStep.stepLabel}
+          toStep={healthStep.toStep}
+          onConfirm={confirmHealth}
+          onCancel={() => setHealthStep(null)}
+          busy={busy}
+        />
+        {healthModal}
+      </>
     )
   }
   if (pending === undefined) {
     return (
-      <div className="flex items-center justify-center gap-2 py-4 text-sm text-gray-400">
-        <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
-        </svg>
-        Loading status…
-      </div>
+      <>
+        <div className="flex items-center justify-center gap-2 py-4 text-sm text-gray-400">
+          <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+          Loading status…
+        </div>
+        {healthModal}
+      </>
     )
   }
 
   // If there is a pending request — show banner instead of action button
   if (pending) {
     return (
-      <PendingBanner
-        pending={pending}
-        currentUserId={currentUserId}
-        isManager={isManager}
-        onWithdraw={handleWithdraw}
-        onApprove={handleApprove}
-        onReject={handleReject}
-        busy={busy}
-      />
+      <>
+        <PendingBanner
+          pending={pending}
+          currentUserId={currentUserId}
+          isManager={isManager}
+          onWithdraw={handleWithdraw}
+          onApprove={handleApprove}
+          onReject={handleReject}
+          busy={busy}
+        />
+        {healthReportBtn}
+        {healthModal}
+      </>
     )
   }
 
@@ -491,6 +532,9 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
     </div>
   ) : null
 
+  // Helper: render the right action for the current lifecycle status
+  // Result is wrapped below with the always-visible health report button.
+  const getStatusContent = () => {
   // Available / Warehouse → open full 5-step assignment modal
   if (status === 'available' || status === 'warehouse' || status === 'returned') {
     return (
@@ -615,7 +659,7 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
           <AlertTriangle className="w-4 h-4" />{busy ? '…' : 'Under Maintenance'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
         <button onClick={() => setShowNote(true)}
-          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-100 text-rose-700 rounded-xl text-sm font-semibold hover:bg-rose-200">
+          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-100 text-rose-700 rounded-xl text-sm font-semibold hover:bg-rose-200 animate-button-pulse">
           <RotateCcw className="w-4 h-4" />Request Return
         </button>
       </div>
@@ -697,6 +741,22 @@ const ActionButton = ({ device, currentUserId, isManager, onAction }) => {
   }
 
   return null
+  } // end getStatusContent
+
+  // Always render: status action + health report button below + modal overlay
+  return (
+    <div className="space-y-2">
+      {getStatusContent()}
+      <button
+        type="button"
+        onClick={() => setShowHealthModal(true)}
+        className="w-full flex items-center justify-center gap-2 py-2.5 bg-cyan-50 border border-cyan-200 text-cyan-800 rounded-xl text-sm font-semibold hover:bg-cyan-100 transition-colors"
+      >
+        🩺 Report Health Status
+      </button>
+      {healthModal}
+    </div>
+  )
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -953,7 +1013,7 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
           <AlertTriangle className="w-4 h-4" />{busy ? '…' : 'Under Maintenance'} <span className="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><Paperclip className="w-2.5 h-2.5" />Proof</span>
         </button>
         <button onClick={() => setShowNote(true)}
-          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-100 text-rose-700 rounded-xl text-sm font-semibold hover:bg-rose-200">
+          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-rose-100 text-rose-700 rounded-xl text-sm font-semibold hover:bg-rose-200 animate-button-pulse">
           <RotateCcw className="w-4 h-4" />Request Return
         </button>
       </div>
@@ -1034,29 +1094,27 @@ const SetActionButton = ({ device, currentUserId, isManager, onAction }) => {
 
 // ─────────────────────────────────────────────────────────────
 // DEVICE IN SET BANNER
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BARCODE HEALTH MODAL
+// ─────────────────────────────────────────────────────────────
+// DeviceInSetBanner
 // Shown when a scanned device belongs to a set.
 // No lifecycle actions — only health change request allowed.
+// Lost devices show a locked banner instead.
 // ─────────────────────────────────────────────────────────────
-const HEALTH_REQUEST_OPTIONS = [
-  { value: 'ok',     label: 'Healthy',      dot: 'bg-green-500', bg: 'border-green-200 bg-green-50', text: 'text-green-800' },
-  { value: 'repair', label: 'Needs Repair', dot: 'bg-amber-400', bg: 'border-amber-200 bg-amber-50', text: 'text-amber-800' },
-  { value: 'damage', label: 'Damaged',      dot: 'bg-red-500',   bg: 'border-red-200 bg-red-50',     text: 'text-red-800'   },
-]
-
 const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
-  const { submitLifecycleStep, getPendingRequest,
+  const { getPendingRequest,
           withdrawLifecycleRequest, approveLifecycleRequest,
           rejectLifecycleRequest } = useInventory()
 
   const onActionRef = useRef(onAction)
   useEffect(() => { onActionRef.current = onAction }, [onAction])
 
-  const [pending, setPending]       = useState(undefined)
-  const [busy, setBusy]             = useState(false)
-  const [runError, setRunError]     = useState(null)
-  const [showHealthReq, setShowHealthReq] = useState(false)
-  const [newHealth, setNewHealth]   = useState(device.healthStatus || 'ok')
-  const [healthNote, setHealthNote] = useState('')
+  const [pending, setPending]         = useState(undefined)
+  const [busy, setBusy]               = useState(false)
+  const [runError, setRunError]       = useState(null)
+  const [showHealthModal, setShowHealthModal] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -1095,13 +1153,10 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
         try {
           const fresh = await getPendingRequest(device.id)
           setPending(fresh ?? null)
-        } catch {
-          setPending(null)
-        }
+        } catch { setPending(null) }
       }
     } catch (e) {
       setRunError(e.message || 'Request failed')
-      setBusy(false)
     } finally {
       setBusy(false)
     }
@@ -1111,18 +1166,7 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
   const handleApprove  = (requestId) => run(() => approveLifecycleRequest(requestId))
   const handleReject   = (requestId, rejNote) => run(() => rejectLifecycleRequest(requestId, rejNote))
 
-  const handleSubmitHealthRequest = () => {
-    if (newHealth === device.healthStatus) {
-      setRunError('Please select a different health status.')
-      return
-    }
-    if (newHealth !== 'ok' && !healthNote.trim()) {
-      setRunError('Please provide a note describing the issue.')
-      return
-    }
-    setShowHealthReq(false)
-    run(() => submitLifecycleStep(device.id, 'health_update', null, newHealth, healthNote.trim() || null))
-  }
+  const isLost = device.healthStatus === 'lost'
 
   return (
     <div className="space-y-3">
@@ -1143,8 +1187,10 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
         </div>
       )}
 
-      {/* Pending health request or health change button */}
-      {pending === undefined ? (
+      {/* Lost terminal banner OR pending/health-change button */}
+      {isLost ? (
+        <LostHealthBanner />
+      ) : pending === undefined ? (
         <div className="flex items-center justify-center gap-2 py-3 text-sm text-gray-400">
           <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
@@ -1162,49 +1208,26 @@ const DeviceInSetBanner = ({ device, currentUserId, isManager, onAction }) => {
           onReject={handleReject}
           busy={busy}
         />
-      ) : showHealthReq ? (
-        <div className="space-y-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-gray-800">Request Health Change</p>
-            <span className="text-xs text-gray-400">Current: {HEALTH_REQUEST_OPTIONS.find(o => o.value === device.healthStatus)?.label || device.healthStatus}</span>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            {HEALTH_REQUEST_OPTIONS.map(opt => (
-              <button key={opt.value} onClick={() => setNewHealth(opt.value)}
-                className={`flex flex-col items-center gap-1 py-2 px-1 rounded-lg border-2 text-xs font-semibold transition-all
-                  ${newHealth === opt.value
-                    ? opt.bg + ' ' + opt.text + ' ring-2 ring-offset-1 ' + opt.dot.replace('bg-', 'ring-')
-                    : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>
-                <span className={`w-2.5 h-2.5 rounded-full ${opt.dot}`} />
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          {newHealth !== 'ok' && (
-            <textarea value={healthNote} onChange={e => setHealthNote(e.target.value)} rows={2}
-              placeholder="Describe the issue (required)…"
-              className="w-full px-3 py-2 border border-amber-200 rounded-lg text-sm resize-none bg-white" />
-          )}
-          <div className="flex gap-2">
-            <button onClick={handleSubmitHealthRequest} disabled={busy}
-              className="flex-1 py-2 bg-cyan-600 text-white rounded-lg text-sm font-semibold hover:bg-cyan-700 disabled:opacity-50">
-              {busy ? 'Submitting…' : 'Submit Health Request'}
-            </button>
-            <button onClick={() => setShowHealthReq(false)} disabled={busy}
-              className="px-4 py-2 border border-gray-200 rounded-lg text-sm hover:bg-gray-50">
-              Cancel
-            </button>
-          </div>
-        </div>
       ) : (
-        <button onClick={() => { setNewHealth(device.healthStatus || 'ok'); setHealthNote(''); setShowHealthReq(true) }}
-          className="w-full flex items-center justify-center gap-2 py-2.5 bg-cyan-50 border border-cyan-200 text-cyan-800 rounded-xl text-sm font-semibold hover:bg-cyan-100">
+        <button onClick={() => setShowHealthModal(true)}
+          className="w-full flex items-center justify-center gap-2 py-2.5 bg-cyan-50 border border-cyan-200 text-cyan-800 rounded-xl text-sm font-semibold hover:bg-cyan-100 transition-colors">
           🩺 Request Health Status Change
         </button>
+      )}
+
+      {showHealthModal && (
+        <HealthUpdateModal
+          device={device}
+          isManager={isManager}
+          onClose={() => setShowHealthModal(false)}
+          onDone={() => { setShowHealthModal(false); onAction && onAction() }}
+        />
       )}
     </div>
   )
 }
+
+
 
 // ─────────────────────────────────────────────────────────────
 // MAIN COMPONENT
@@ -1488,6 +1511,7 @@ const BarcodeResultCard = ({ device: initialDevice, onClose, onDeviceUpdated }) 
           #barcode-qr { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
         }
       `}</style>
+      <style>{buttonPulseStyles}</style>
     </div>
   )
 }

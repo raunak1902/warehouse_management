@@ -44,6 +44,11 @@ import {
   History,
   Building2,
   Activity,
+  Pencil,
+  Send,
+  AlertCircle,
+  Paperclip,
+  CheckCircle2,
 } from 'lucide-react'
 import {
   useInventory,
@@ -77,7 +82,9 @@ import BarcodeResultCard from '../../components/BarcodeResultCard'
 import BulkBarcodeGenerator from '../../components/BulkBarcodeGenerator'
 import DeviceTimeline from '../../components/DeviceTimeline'
 import LifecycleActionModal from '../../components/LifecycleActionModal'
-import { lifecycleRequestApi, STEP_META } from '../../api/lifecycleRequestApi'
+import HealthUpdateModal, { LostHealthBanner } from '../../components/HealthUpdateModal'
+import { lifecycleRequestApi, STEP_META, HEALTH_REQUIRES_PROOF, MAX_PROOF_FILES } from '../../api/lifecycleRequestApi'
+import { ProofUploadPanel, useProofFiles } from '../../components/ProofUpload'
 
 // Normalize legacy health status values to canonical ones used throughout the system.
 // Ground team requests may have written 'damaged', 'needs_repair', 'critical' into the DB.
@@ -195,19 +202,12 @@ const DetailRow = ({ label, children }) => (
   </div>
 )
 
-function DeviceDetailModal({ device, deviceSets, getClientById, getSubscriptionStatus, statusStyles, getHealthStyle, getDeviceTypeLabel, getDeviceLifecycleStatus, onClose, onViewBarcode }) {
-  const [history, setHistory]   = useState([])
-  const [histLoading, setHistLoading] = useState(true)
 
-  // Fetch last 3 approved history entries on open
-  useEffect(() => {
-    if (!device?.id) return
-    setHistLoading(true)
-    lifecycleRequestApi.getDeviceHistory(device.id)
-      .then(data => setHistory((data || []).slice(-3).reverse())) // most-recent first, max 3
-      .catch(() => setHistory([]))
-      .finally(() => setHistLoading(false))
-  }, [device?.id])
+// HealthUpdateModal (shared component) is imported from ./HealthUpdateModal
+// — no local HealthReportModal needed here.
+
+function DeviceDetailModal({ device, deviceSets, getClientById, getSubscriptionStatus, statusStyles, getHealthStyle, getDeviceTypeLabel, getDeviceLifecycleStatus, onClose, onViewBarcode }) {
+  const [showHealthReport, setShowHealthReport] = useState(false)
 
   if (!device) return null
 
@@ -279,9 +279,21 @@ function DeviceDetailModal({ device, deviceSets, getClientById, getSubscriptionS
               <span className={`text-xs font-medium ${stepText} opacity-70 flex items-center gap-1`}>
                 <Heart className="w-3 h-3" /> Health
               </span>
-              <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${hs.badge}`}>
-                {hs.label}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${hs.badge}`}>
+                  {hs.label}
+                </span>
+                {device.healthStatus !== 'lost' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowHealthReport(true)}
+                    title="Report health status"
+                    className="w-6 h-6 flex items-center justify-center rounded-lg bg-white/60 hover:bg-white border border-black/10 hover:border-cyan-300 text-gray-400 hover:text-cyan-600 transition-all shadow-sm"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Location — context-sensitive */}
@@ -375,74 +387,6 @@ function DeviceDetailModal({ device, deviceSets, getClientById, getSubscriptionS
             </div>
           </div>
 
-          {/* ── MINI TIMELINE ─────────────────────────────────────── */}
-          <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-widest text-gray-400 mb-2 flex items-center gap-1.5">
-              <History className="w-3 h-3" /> Recent Activity
-            </p>
-
-            {histLoading ? (
-              <div className="flex items-center justify-center py-6 bg-gray-50 rounded-xl">
-                <Loader2 className="w-4 h-4 animate-spin text-gray-400 mr-2" />
-                <span className="text-xs text-gray-400">Loading history…</span>
-              </div>
-            ) : history.length === 0 ? (
-              <div className="flex flex-col items-center py-6 bg-gray-50 rounded-xl">
-                <Clock className="w-7 h-7 text-gray-200 mb-1.5" />
-                <p className="text-xs text-gray-400">No history yet</p>
-              </div>
-            ) : (
-              <div className="relative space-y-0">
-                {/* Vertical connector line */}
-                <div className="absolute left-3.5 top-4 bottom-4 w-px bg-gray-200 z-0" />
-
-                {history.map((item, idx) => {
-                  const meta     = STEP_META[item.toStep] ?? { label: item.toStep, emoji: '📋', textClass: 'text-gray-700', bgClass: 'bg-gray-100', borderClass: 'border-gray-200' }
-                  const isFirst  = idx === 0
-                  const itemHs   = { ok: 'bg-emerald-50 text-emerald-700 border-emerald-200', repair: 'bg-amber-50 text-amber-700 border-amber-200', damage: 'bg-red-50 text-red-700 border-red-200' }[item.healthStatus] || 'bg-gray-50 text-gray-600 border-gray-200'
-                  const healthLabel = { ok: '✓ OK', repair: '🔧 Repair', damage: '⚠ Damage' }[item.healthStatus] || item.healthStatus
-                  return (
-                    <div key={item.id} className="relative flex gap-3 pb-3 last:pb-0">
-                      {/* Dot */}
-                      <div className={`relative z-10 w-7 h-7 flex-shrink-0 rounded-full flex items-center justify-center text-sm shadow-sm
-                        ${isFirst ? `${meta.bgClass} border-2 ${meta.borderClass}` : 'bg-gray-100 border border-gray-200'}`}>
-                        {meta.emoji}
-                      </div>
-
-                      {/* Card */}
-                      <div className={`flex-1 min-w-0 rounded-xl border px-3 py-2 shadow-sm
-                        ${isFirst ? `${meta.bgClass} ${meta.borderClass}` : 'bg-white border-gray-200'}`}>
-                        <div className="flex items-start justify-between gap-2">
-                          <span className={`text-xs font-bold ${isFirst ? meta.textClass : 'text-gray-700'} leading-tight`}>
-                            {meta.label}
-                          </span>
-                          <span className="text-[10px] text-gray-400 flex-shrink-0">
-                            {fmt(item.approvedAt || item.createdAt)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-1 flex-wrap">
-                          {item.requestedByName && (
-                            <span className="text-[10px] text-gray-400 flex items-center gap-0.5">
-                              <User className="w-2.5 h-2.5" /> {item.requestedByName}
-                            </span>
-                          )}
-                          <span className={`inline-flex items-center px-1.5 py-px rounded-full text-[10px] font-semibold border ${itemHs}`}>
-                            {healthLabel}
-                          </span>
-                          {item.healthNote && (
-                            <span className="text-[10px] text-amber-600 font-medium truncate max-w-[120px]" title={item.healthNote}>
-                              ⚠ {item.healthNote}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-
           {/* ── ACTIONS ───────────────────────────────────────────── */}
           {device.barcode && (
             <button
@@ -454,6 +398,19 @@ function DeviceDetailModal({ device, deviceSets, getClientById, getSubscriptionS
           )}
         </div>
       </div>
+
+      {showHealthReport && (
+        <HealthUpdateModal
+          device={device}
+          isManager={(() => {
+            const u = JSON.parse(localStorage.getItem('user') || '{}')
+            const r = (u.role ?? '').toLowerCase().replace(/[\s_-]/g, '')
+            return ['manager', 'superadmin'].includes(r)
+          })()}
+          onClose={() => setShowHealthReport(false)}
+          onDone={() => setShowHealthReport(false)}
+        />
+      )}
     </div>
   )
 }
@@ -480,6 +437,8 @@ const Devices = () => {
     createDeviceSet,
     deleteDeviceSet,
     getAvailableDevicesForComponent,
+    scanDevice,
+    refresh,
   } = useInventory()
 
   // ── Pending lifecycle requests map: deviceId → true ──────────────────────
@@ -813,8 +772,21 @@ const Devices = () => {
   }
 
   // NEW: Handle viewing barcode for existing devices
-  const handleViewBarcode = (device) => {
-    setSelectedDeviceForBarcode(device)
+  const handleViewBarcode = async (device) => {
+    // Always fetch fresh device data from the API before opening the barcode
+    // view — the context array can be stale if health/lifecycle changed since
+    // last refresh, causing the barcode card to show outdated health status.
+    if (device.barcode) {
+      try {
+        const fresh = await scanDevice(device.barcode)
+        setSelectedDeviceForBarcode(fresh)
+      } catch {
+        // Fallback to cached data if fetch fails
+        setSelectedDeviceForBarcode(device)
+      }
+    } else {
+      setSelectedDeviceForBarcode(device)
+    }
     setShowBarcodeModal(true)
   }
 
@@ -1543,8 +1515,8 @@ const Devices = () => {
                         {client ? <span className="flex items-center gap-1 text-gray-700"><User className="w-3.5 h-3.5 text-gray-400" />{client.name}</span> : <span className="text-gray-400">—</span>}
                       </td>
                       <td className="py-3 px-4 text-sm text-gray-700">
-                        {device.subscriptionStart && device.subscriptionEnd ? (
-                          <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5 text-gray-400" />{device.subscriptionStart} → {device.subscriptionEnd}</span>
+                        {device.subscriptionEndDate ? (
+                          <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5 text-gray-400" />{fmtDate(device.subscriptionEndDate)}</span>
                         ) : <span className="text-gray-400">—</span>}
                       </td>
                       <td className="py-3 px-4">

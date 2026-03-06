@@ -22,6 +22,8 @@ import permissionsRouter        from "./routes/Permissions.js";
 
 import lifecycleRequestsRouter  from "./routes/lifecycleRequests.js";
 import notificationsRouter      from "./routes/notifications.js";
+import returnsRouter            from "./routes/returns.js";
+import { startSubscriptionCron } from "./cron/subscriptionReminders.js";
 
 dotenv.config();
 
@@ -96,6 +98,7 @@ app.use("/api/permissions",         permissionsRouter);
 
 app.use("/api/lifecycle-requests",   lifecycleRequestsRouter);
 app.use("/api/notifications",        notificationsRouter);
+app.use("/api/returns",              returnsRouter);
 
 // ── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: "Route not found" }));
@@ -111,7 +114,10 @@ app.use((err, _req, res, _next) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, "0.0.0.0", () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`)
+  startSubscriptionCron()
+});
 
 process.on("SIGINT", async () => {
   await prisma.$disconnect();

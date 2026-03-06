@@ -179,21 +179,16 @@ const NotificationBell = ({ userRole }) => {
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-gray-600 truncate">
-                        {req.deviceCode
-                          ? `${req.deviceCode} · by ${req.requestedByName || 'Ground Team'}`
-                          : req.setCode
-                          ? `${req.setCode} · by ${req.requestedByName || 'Ground Team'}`
-                          : `Request by ${req.requestedByName || 'Ground Team'}`}
-                      </p>
-                      <div className="flex items-center gap-1 mt-1">
-                        <Clock size={10} className="text-gray-300" />
-                        <span className="text-[10px] text-gray-400">{timeAgo(req.createdAt)}</span>
-                        {req.requestedByName && (
-                          <span className="text-[10px] text-gray-400">· {req.requestedByName}</span>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        {req.requestedBy?.name && (
+                          <span className="text-xs text-gray-500 flex items-center gap-1">
+                            <Users size={10} />{req.requestedBy.name}
+                          </span>
                         )}
+                        <span className="text-xs text-gray-400">{timeAgo(req.createdAt)}</span>
                       </div>
                     </div>
+                    <ChevronRight size={14} className="text-gray-300 flex-shrink-0 mt-1" />
                   </div>
                 </button>
               ))
@@ -242,6 +237,40 @@ const Layout = ({ userRole, onLogout }) => {
   // ── Real-time SSE notifications (managers + admins only) ───────────────────
   const { toasts, dismissToast } = useSSENotifications(canManage)
 
+  // ── Subscription urgency badge on Return nav item ────────────────────────────
+  // UPDATED SECTION - Uses new notification count endpoint
+  const [subUrgentCount, setSubUrgentCount] = useState(0)
+  const [subHighlightIds, setSubHighlightIds] = useState({ deviceIds: [], setIds: [] })
+  
+  const fetchSubscriptionCount = useCallback(async () => {
+    if (!canManage) return
+    try {
+      const res = await fetch('/api/returns/notification-count', {
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` }
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setSubUrgentCount(data.count || 0)
+      setSubHighlightIds({ deviceIds: data.deviceIds || [], setIds: data.setIds || [] })
+    } catch (_) {}
+  }, [canManage])
+
+  useEffect(() => {
+    if (!canManage) return
+    fetchSubscriptionCount()
+    // Re-check every 5 minutes
+    const id = setInterval(fetchSubscriptionCount, 5 * 60 * 1000)
+    
+    // Listen for subscription updates (from Return page)
+    const handleUpdate = () => fetchSubscriptionCount()
+    window.addEventListener('subscription-updated', handleUpdate)
+    
+    return () => {
+      clearInterval(id)
+      window.removeEventListener('subscription-updated', handleUpdate)
+    }
+  }, [canManage, fetchSubscriptionCount])
+
   // ── Login briefing — show once per session when pending requests exist ──────
   const BRIEFING_KEY = 'edsignage_briefing_shown'
   const [showBriefing, setShowBriefing] = useState(() => {
@@ -279,7 +308,7 @@ const Layout = ({ userRole, onLogout }) => {
       { path: '/dashboard/delivery',     icon: Truck,      label: 'Delivery' },
       { path: '/dashboard/ground-team',  icon: UsersRound, label: 'Ground Team' },
       { path: '/dashboard/installation', icon: Wrench,     label: 'Installation' },
-      { path: '/dashboard/return',       icon: RotateCcw,  label: 'Return' },
+      { path: '/dashboard/return',       icon: RotateCcw,  label: 'Return', urgentCount: subUrgentCount, highlightIds: subHighlightIds },
     ] : []),
 
     // Ground Team limited nav
@@ -317,26 +346,52 @@ const Layout = ({ userRole, onLogout }) => {
 
   const isActive = (path) => location.pathname === path
 
+  // UPDATED NavLink component - Makes Return badge clickable and adds shake animation
   const NavLink = ({ item, mobile = false }) => {
     const Icon = item.icon
     const active = isActive(item.path)
+    const hasUrgentBadge = item.urgentCount > 0
+
+    const handleClick = (e) => {
+      if (item.path === '/dashboard/return' && hasUrgentBadge) {
+        e.preventDefault()
+        const { deviceIds = [], setIds = [] } = item.highlightIds || {}
+        const parts = [
+          ...deviceIds.map(id => `device-${id}`),
+          ...setIds.map(id => `set-${id}`),
+        ]
+        const highlightParam = parts.length > 0 ? parts.join(',') : 'all'
+        navigate(`/dashboard/return?highlight=${highlightParam}`)
+        if (mobile) setSidebarOpen(false)
+      }
+    }
+
     if (mobile) {
       return (
         <Link
           to={item.path}
+          onClick={handleClick}
           className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
             active ? 'bg-primary-600 text-white font-medium' : 'text-gray-700 hover:bg-gray-100'
           }`}
         >
           <Icon size={20} className={active ? 'text-white' : 'text-gray-500'} />
-          <span className="text-sm font-medium">{item.label}</span>
+          <span className="text-sm font-medium flex-1">{item.label}</span>
+          {hasUrgentBadge && !active && (
+            <span className={`text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full
+              ${item.urgentCount > 0 ? 'animate-shake' : ''}`}>
+              {item.urgentCount}
+            </span>
+          )}
           {active && <ChevronRight size={16} className="ml-auto text-white/70" />}
         </Link>
       )
     }
+    
     return (
       <Link
         to={item.path}
+        onClick={handleClick}
         className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm ${
           active
             ? 'bg-gradient-to-r from-primary-50 to-primary-100 text-primary-700 font-medium shadow-sm'
@@ -344,7 +399,13 @@ const Layout = ({ userRole, onLogout }) => {
         }`}
       >
         <Icon size={20} className={active ? 'text-primary-600' : ''} />
-        <span>{item.label}</span>
+        <span className="flex-1">{item.label}</span>
+        {hasUrgentBadge && !active && (
+          <span className={`text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full ml-auto
+            ${item.urgentCount > 0 ? 'animate-shake' : ''}`}>
+            {item.urgentCount}
+          </span>
+        )}
         {active && <ChevronRight size={14} className="ml-auto text-primary-400" />}
       </Link>
     )
@@ -443,14 +504,6 @@ const Layout = ({ userRole, onLogout }) => {
 
       {/* ── Real-time toast notifications ──────────────────────────────────── */}
       <NotificationToast toasts={toasts} onDismiss={dismissToast} />
-
-      {/* ── Login briefing modal ─────────────────────────────────────────────── */}
-      {showBriefing && (
-        <LoginBriefing
-          userName={userName}
-          onDismiss={() => setShowBriefing(false)}
-        />
-      )}
 
       {/* ── Login briefing modal ─────────────────────────────────────────────── */}
       {showBriefing && (

@@ -91,6 +91,7 @@ model Device {
   assignedAt        DateTime?
   barcode           String             @unique
   deployedAt        DateTime?
+  subscriptionEndDate DateTime?
   rejectionNote     String?
   requestedAt       DateTime?
   requestedById     Int?
@@ -128,6 +129,7 @@ model DeviceSet {
   rejectionNote     String?
   requestedAt       DateTime?
   requestedById     Int?
+  subscriptionEndDate DateTime?
   components        Device[]
   client            Client?            @relation(fields: [clientId], references: [id])
   lifecycleRequests LifecycleRequest[] @relation("SetRequests")
@@ -274,4 +276,23 @@ model ProofFile {
   request     LifecycleRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
   @@index([requestId])
+}
+
+model SubscriptionReminder {
+  id           Int       @id @default(autoincrement())
+  deviceId     Int?
+  setId        Int?
+  reminderDate DateTime  @default(now())
+  reminderType String    // "7day" | "2day" | "expired"
+  sent         Boolean   @default(false)
+  sentAt       DateTime?
+  attended     Boolean   @default(false)
+  attendedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([deviceId])
+  @@index([setId])
+  @@index([attended])
+  @@unique([deviceId, reminderType], name: "unique_device_reminder")
+  @@unique([setId, reminderType],    name: "unique_set_reminder")
 }

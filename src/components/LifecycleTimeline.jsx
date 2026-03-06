@@ -6,14 +6,15 @@
  *   - Requests.jsx (expanded card history)
  *
  * Shows ALL request statuses: approved, rejected, pending, withdrawn
- * Includes proof file thumbnails + lightbox on each row.
+ * Each entry shows a clear before → after transition for both
+ * lifecycle step changes and health status updates.
  */
 
 import React, { useState, useEffect } from 'react'
 import {
   ChevronDown, ChevronUp, XCircle, FileText,
   Paperclip, ImageIcon, Film, Eye, X,
-  CheckCircle, Clock, RotateCcw, AlertTriangle,
+  AlertTriangle, ArrowRight,
 } from 'lucide-react'
 import { STEP_META } from '../api/lifecycleRequestApi'
 
@@ -23,7 +24,6 @@ const authHeaders = () => ({
 })
 
 // ── Fetch all history for a device or set ─────────────────────────────────────
-// Returns approved + rejected + withdrawn (pending excluded — still in flight)
 export async function fetchFullHistory(deviceId, setId) {
   const url = deviceId
     ? `${API_BASE}/lifecycle-requests/device/${deviceId}/history`
@@ -31,6 +31,54 @@ export async function fetchFullHistory(deviceId, setId) {
   const res = await fetch(url, { headers: authHeaders() })
   if (!res.ok) throw new Error('Failed to load history')
   return res.json()
+}
+
+// ── Health display config (handles both 'damage' and legacy 'damaged') ─────────
+const HEALTH_DISPLAY = {
+  ok:      { label: 'Healthy',      dot: 'bg-emerald-500', chip: 'bg-emerald-50  border-emerald-200 text-emerald-700' },
+  repair:  { label: 'Needs Repair', dot: 'bg-amber-400',   chip: 'bg-amber-50    border-amber-200   text-amber-700'   },
+  damage:  { label: 'Damaged',      dot: 'bg-red-500',     chip: 'bg-red-50      border-red-200     text-red-700'     },
+  damaged: { label: 'Damaged',      dot: 'bg-red-500',     chip: 'bg-red-50      border-red-200     text-red-700'     },
+  lost:    { label: 'Lost',         dot: 'bg-gray-400',    chip: 'bg-gray-100    border-gray-300    text-gray-600'    },
+}
+
+const HealthChip = ({ value }) => {
+  const d = HEALTH_DISPLAY[value] || HEALTH_DISPLAY.ok
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${d.chip}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${d.dot}`} />
+      {d.label}
+    </span>
+  )
+}
+
+// ── Lifecycle step chip ───────────────────────────────────────────────────────
+const StepChip = ({ step }) => {
+  const meta = STEP_META[step]
+  if (!meta) return <span className="text-[10px] text-gray-400 italic">{step || '—'}</span>
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${meta.bgClass} ${meta.borderClass} ${meta.textClass}`}>
+      <span className="text-[11px] leading-none">{meta.emoji}</span>
+      {meta.label}
+    </span>
+  )
+}
+
+// ── Transition row: chip → arrow → chip ──────────────────────────────────────
+const TransitionRow = ({ from, to, type }) => {
+  const isHealth = type === 'health'
+  return (
+    <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+      <span className="text-[9px] font-extrabold uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">
+        {isHealth ? 'Health' : 'Step'}
+      </span>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {isHealth ? <HealthChip value={from} /> : <StepChip step={from} />}
+        <ArrowRight size={11} className="text-gray-400 flex-shrink-0" />
+        {isHealth ? <HealthChip value={to} /> : <StepChip step={to} />}
+      </div>
+    </div>
+  )
 }
 
 // ── Proof files panel ─────────────────────────────────────────────────────────
@@ -42,7 +90,6 @@ export const ProofFilesPanel = ({ proofFiles }) => {
   const isPdf = url => /\.pdf($|\?)/i.test(url)
 
   if (!proofFiles || proofFiles.length === 0) return null
-
   const file = lightboxIdx !== null ? proofFiles[lightboxIdx] : null
 
   return (
@@ -62,8 +109,7 @@ export const ProofFilesPanel = ({ proofFiles }) => {
               {isImg(fullUrl) ? (
                 <>
                   <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors
-                    flex items-center justify-center">
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
                     <Eye size={12} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                   </div>
                 </>
@@ -85,8 +131,7 @@ export const ProofFilesPanel = ({ proofFiles }) => {
                 </div>
               )}
               {pf.sizeKb && (
-                <span className="absolute bottom-0.5 right-0.5 text-[7px] bg-black/50 text-white
-                  px-1 py-px rounded font-medium leading-none">
+                <span className="absolute bottom-0.5 right-0.5 text-[7px] bg-black/50 text-white px-1 py-px rounded font-medium leading-none">
                   {pf.sizeKb >= 1024 ? `${(pf.sizeKb/1024).toFixed(1)}M` : `${pf.sizeKb}K`}
                 </span>
               )}
@@ -97,22 +142,14 @@ export const ProofFilesPanel = ({ proofFiles }) => {
 
       {/* Lightbox */}
       {lightboxIdx !== null && file && (
-        <div
-          className="fixed inset-0 bg-black/90 z-[9999] flex items-center justify-center p-4"
-          onClick={() => setLightboxIdx(null)}
-        >
+        <div className="fixed inset-0 bg-black/90 z-[9999] flex items-center justify-center p-4" onClick={() => setLightboxIdx(null)}>
           <div className="relative max-w-3xl w-full" onClick={e => e.stopPropagation()}>
-            <button
-              onClick={() => setLightboxIdx(null)}
-              className="absolute -top-9 right-0 w-8 h-8 flex items-center justify-center text-white/70 hover:text-white"
-            >
+            <button onClick={() => setLightboxIdx(null)} className="absolute -top-9 right-0 w-8 h-8 flex items-center justify-center text-white/70 hover:text-white">
               <X size={18} />
             </button>
             <div className="absolute -top-9 left-0 flex items-center gap-2">
               <span className="text-white/60 text-xs">{lightboxIdx + 1} / {proofFiles.length}</span>
-              {file.fileName && (
-                <span className="text-white/50 text-xs truncate max-w-48">{file.fileName}</span>
-              )}
+              {file.fileName && <span className="text-white/50 text-xs truncate max-w-48">{file.fileName}</span>}
             </div>
             <div className="rounded-2xl overflow-hidden bg-gray-900 flex items-center justify-center min-h-40 max-h-[80vh]">
               {isImg(file.url) ? (
@@ -123,8 +160,7 @@ export const ProofFilesPanel = ({ proofFiles }) => {
                 <div className="flex flex-col items-center gap-4 p-10 text-white/60">
                   <FileText size={56} />
                   <p className="text-sm">{file.fileName || 'PDF Document'}</p>
-                  <a href={file.url} target="_blank" rel="noreferrer"
-                    className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm text-white transition-colors">
+                  <a href={file.url} target="_blank" rel="noreferrer" className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm text-white transition-colors">
                     Open PDF ↗
                   </a>
                 </div>
@@ -134,14 +170,8 @@ export const ProofFilesPanel = ({ proofFiles }) => {
             </div>
             {proofFiles.length > 1 && (
               <>
-                <button
-                  onClick={() => setLightboxIdx(i => (i - 1 + proofFiles.length) % proofFiles.length)}
-                  className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 bg-black/60 hover:bg-black/80 rounded-full flex items-center justify-center text-white text-lg"
-                >‹</button>
-                <button
-                  onClick={() => setLightboxIdx(i => (i + 1) % proofFiles.length)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 bg-black/60 hover:bg-black/80 rounded-full flex items-center justify-center text-white text-lg"
-                >›</button>
+                <button onClick={() => setLightboxIdx(i => (i - 1 + proofFiles.length) % proofFiles.length)} className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 bg-black/60 hover:bg-black/80 rounded-full flex items-center justify-center text-white text-lg">‹</button>
+                <button onClick={() => setLightboxIdx(i => (i + 1) % proofFiles.length)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 bg-black/60 hover:bg-black/80 rounded-full flex items-center justify-center text-white text-lg">›</button>
               </>
             )}
           </div>
@@ -155,26 +185,18 @@ export const ProofFilesPanel = ({ proofFiles }) => {
 export const ProofAttachmentButton = ({ proofFiles }) => {
   const [open, setOpen] = useState(false)
   if (!proofFiles || proofFiles.length === 0) return null
-
   return (
     <div className="mt-2">
       <button
         onClick={() => setOpen(o => !o)}
         className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-bold transition-all
-          ${open
-            ? 'bg-blue-100 border-blue-300 text-blue-700'
-            : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600'
-          }`}
+          ${open ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600'}`}
       >
         <Paperclip size={10} />
         {open ? 'Hide' : 'View'} Attachment{proofFiles.length > 1 ? 's' : ''} ({proofFiles.length})
         {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
       </button>
-      {open && (
-        <div className="mt-2">
-          <ProofFilesPanel proofFiles={proofFiles} />
-        </div>
-      )}
+      {open && <div className="mt-2"><ProofFilesPanel proofFiles={proofFiles} /></div>}
     </div>
   )
 }
@@ -202,14 +224,15 @@ const dotBg = (status, metaBg) => {
 }
 
 // ── Single timeline row ───────────────────────────────────────────────────────
-export const TimelineItem = ({ request: req, isLast }) => {
-  const meta       = STEP_META[req.toStep] || { label: req.toStep, emoji: '📋', bgClass: 'bg-gray-100', textClass: 'text-gray-700', borderClass: 'border-gray-200' }
-  const status     = req.status || 'approved'
-  const badge      = STATUS_BADGE[status] || STATUS_BADGE.approved
-  const isRejected = status === 'rejected'
-  const isWithdrawn= status === 'withdrawn'
-  const isPending  = status === 'pending'
-  const hasProof   = req.proofFiles && req.proofFiles.length > 0
+// previousHealth: derived by caller — healthStatus of the next-older health_update entry
+export const TimelineItem = ({ request: req, previousHealth, isLast }) => {
+  const meta        = STEP_META[req.toStep] || { label: req.toStep, emoji: '📋', bgClass: 'bg-gray-100', textClass: 'text-gray-700', borderClass: 'border-gray-200' }
+  const status      = req.status || 'approved'
+  const badge       = STATUS_BADGE[status] || STATUS_BADGE.approved
+  const isRejected  = status === 'rejected'
+  const isWithdrawn = status === 'withdrawn'
+  const hasProof    = req.proofFiles && req.proofFiles.length > 0
+  const isHealth    = req.toStep === 'health_update'
 
   const fmt = dt => dt
     ? new Date(dt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -219,12 +242,21 @@ export const TimelineItem = ({ request: req, isLast }) => {
     ? name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
     : '?'
 
+  // Health transition: previousHealth (caller-derived) → req.healthStatus
+  const prevH = previousHealth || 'ok'
+  const showHealthTransition = isHealth && req.healthStatus
+
+  // Lifecycle step transition: req.fromStep (from backend) → req.toStep
+  const showLifecycleTransition = !isHealth && req.fromStep && req.toStep
+
+  // Show health alongside lifecycle step if health was flagged as non-ok
+  const showHealthAnnotation = !isHealth && req.healthStatus && req.healthStatus !== 'ok'
+
   return (
     <div className="flex gap-3">
       {/* Spine + dot */}
       <div className="flex flex-col items-center flex-shrink-0">
-        <div className={`w-7 h-7 rounded-full border-2 border-white shadow flex items-center justify-center text-sm
-          ${dotBg(status, meta.bgClass)}`}>
+        <div className={`w-7 h-7 rounded-full border-2 border-white shadow flex items-center justify-center text-sm ${dotBg(status, meta.bgClass)}`}>
           {dotIcon(status, meta.emoji)}
         </div>
         {!isLast && <div className="w-px bg-gradient-to-b from-gray-300 to-transparent flex-1 mt-1 min-h-[14px]" />}
@@ -232,6 +264,7 @@ export const TimelineItem = ({ request: req, isLast }) => {
 
       {/* Content */}
       <div className="flex-1 pb-4">
+
         {/* Step label + status badge */}
         <div className="flex items-center gap-2 flex-wrap">
           <p className={`text-xs font-bold ${isRejected ? 'text-red-600' : isWithdrawn ? 'text-gray-400' : meta.textClass}`}>
@@ -272,6 +305,26 @@ export const TimelineItem = ({ request: req, isLast }) => {
                 <><span className="text-gray-300">·</span><span>{fmt(req.approvedAt)}</span></>
               )}
             </div>
+          </div>
+        )}
+
+        {/* ── TRANSITION ROWS ── */}
+
+        {/* Health update: before → after health chips */}
+        {showHealthTransition && (
+          <TransitionRow from={prevH} to={req.healthStatus} type="health" />
+        )}
+
+        {/* Lifecycle step: fromStep → toStep chips */}
+        {showLifecycleTransition && (
+          <TransitionRow from={req.fromStep} to={req.toStep} type="lifecycle" />
+        )}
+
+        {/* Health annotation on lifecycle steps when health is non-ok */}
+        {showHealthAnnotation && (
+          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+            <span className="text-[9px] font-extrabold uppercase tracking-wide text-gray-400 w-16 flex-shrink-0">Health</span>
+            <HealthChip value={req.healthStatus} />
           </div>
         )}
 
@@ -324,6 +377,25 @@ const LifecycleTimeline = ({ deviceId, setId, initialHistory }) => {
 
   const count = history?.length ?? 0
 
+  // ── Derive previousHealth for each health_update entry ──────────────────────
+  // History is newest-first (index 0 = newest). For entry at index i,
+  // "before" health = healthStatus of the closest older health_update (index > i).
+  // Fallback: 'ok' — the system default for all new devices.
+  const enriched = React.useMemo(() => {
+    if (!history) return []
+    return history.map((req, i) => {
+      if (req.toStep !== 'health_update') return { req, previousHealth: null }
+      let prev = 'ok'
+      for (let j = i + 1; j < history.length; j++) {
+        if (history[j].toStep === 'health_update' && history[j].healthStatus) {
+          prev = history[j].healthStatus
+          break
+        }
+      }
+      return { req, previousHealth: prev }
+    })
+  }, [history])
+
   return (
     <div className="border-t border-gray-100 pt-3">
       <button
@@ -359,21 +431,20 @@ const LifecycleTimeline = ({ deviceId, setId, initialHistory }) => {
             </div>
           )}
 
-          {error && (
-            <p className="text-xs text-red-500 text-center py-4">{error}</p>
-          )}
+          {error && <p className="text-xs text-red-500 text-center py-4">{error}</p>}
 
           {!loading && !error && history?.length === 0 && (
             <p className="text-xs text-gray-400 text-center py-4">No history yet</p>
           )}
 
-          {!loading && !error && history && history.length > 0 && (
+          {!loading && !error && enriched.length > 0 && (
             <div>
-              {history.map((req, idx) => (
+              {enriched.map(({ req, previousHealth }, idx) => (
                 <TimelineItem
                   key={req.id}
                   request={req}
-                  isLast={idx === history.length - 1}
+                  previousHealth={previousHealth}
+                  isLast={idx === enriched.length - 1}
                 />
               ))}
             </div>

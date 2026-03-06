@@ -102,6 +102,7 @@ async function shape(r) {
   return {
     id:              r.id,
     toStep:          r.toStep,
+    fromStep:        r.fromStep,
     stepLabel:       STEP_META[r.toStep]?.label ?? r.toStep,
     deviceId:        r.deviceId,
     setId:           r.setId,
@@ -160,13 +161,15 @@ async function applyApproval(tx, req, approverId) {
     : { lifecycleStatus: req.toStep, healthStatus: req.healthStatus, updatedAt: now }
 
   if (req.toStep === 'returned') {
-    update.clientId  = null
+    update.client    = { disconnect: true }
     update.deployedAt = null
+    update.subscriptionEndDate = null
   }
   if (req.toStep === 'assigning' && req.note) {
     try {
       const meta = JSON.parse(req.note)
-      if (meta.clientId) update.clientId = parseInt(meta.clientId)
+      if (meta.clientId) update.client = { connect: { id: parseInt(meta.clientId) } }
+      if (meta.subscriptionEnd) update.subscriptionEndDate = new Date(meta.subscriptionEnd)
     } catch (_) {}
   }
   if (req.toStep === 'active') update.deployedAt = now
@@ -196,13 +199,17 @@ async function applyApproval(tx, req, approverId) {
 
   if (req.setId) {
     const setUpdate = {
-      lifecycleStatus: req.toStep,
+      ...(isHealthUpdate ? {} : { lifecycleStatus: req.toStep }),
       healthStatus:    req.healthStatus,
       updatedAt:       now,
     }
-    if (req.toStep === 'returned') { setUpdate.clientId = null }
+    if (req.toStep === 'returned') { setUpdate.client = { disconnect: true }; setUpdate.subscriptionEndDate = null }
     if (req.toStep === 'assigning' && req.note) {
-      try { const m = JSON.parse(req.note); if (m.clientId) setUpdate.clientId = parseInt(m.clientId) } catch (_) {}
+      try {
+        const m = JSON.parse(req.note)
+        if (m.clientId) setUpdate.client = { connect: { id: parseInt(m.clientId) } }
+        if (m.subscriptionEnd) setUpdate.subscriptionEndDate = new Date(m.subscriptionEnd)
+      } catch (_) {}
     }
     await tx.deviceSet.update({ where: { id: req.setId }, data: setUpdate })
 
@@ -210,21 +217,34 @@ async function applyApproval(tx, req, approverId) {
       where: { id: req.setId },
       select: { clientId: true, state: true, district: true, location: true },
     })
-    const memberUpdate = { lifecycleStatus: req.toStep, updatedAt: now }
-    if (updatedSet) {
-      memberUpdate.clientId = updatedSet.clientId ?? null
-      if (['active', 'installed', 'received', 'under_maintenance'].includes(req.toStep)) {
-        memberUpdate.state    = updatedSet.state    ?? null
-        memberUpdate.district = updatedSet.district ?? null
-        memberUpdate.location = updatedSet.location ?? null
-      } else if (req.toStep === 'returned') {
-        memberUpdate.clientId = null
-        memberUpdate.state    = null
-        memberUpdate.district = null
-        memberUpdate.location = null
+    if (!isHealthUpdate) {
+      // Lifecycle step change — cascade status + location + clientId to all members
+      const memberUpdate = { lifecycleStatus: req.toStep, updatedAt: now }
+      let memberClientId = updatedSet ? (updatedSet.clientId ?? null) : undefined
+      if (updatedSet) {
+        if (['active', 'installed', 'received', 'under_maintenance'].includes(req.toStep)) {
+          memberUpdate.state    = updatedSet.state    ?? null
+          memberUpdate.district = updatedSet.district ?? null
+          memberUpdate.location = updatedSet.location ?? null
+        } else if (req.toStep === 'returned') {
+          memberClientId        = null
+          memberUpdate.state    = null
+          memberUpdate.district = null
+          memberUpdate.location = null
+        }
+      }
+      await tx.device.updateMany({ where: { setId: req.setId }, data: memberUpdate })
+      // Update clientId via raw query — Prisma generated client may not expose scalar FK
+      if (memberClientId !== undefined) {
+        if (memberClientId === null) {
+          await tx.$executeRaw`UPDATE "Device" SET "clientId" = NULL WHERE "setId" = ${req.setId}`
+        } else {
+          await tx.$executeRaw`UPDATE "Device" SET "clientId" = ${memberClientId} WHERE "setId" = ${req.setId}`
+        }
       }
     }
-    await tx.device.updateMany({ where: { setId: req.setId }, data: memberUpdate })
+    // Always re-derive set health from the worst component after any change
+    await syncSetHealth(tx, req.setId)
   }
 
   await tx.lifecycleRequest.update({

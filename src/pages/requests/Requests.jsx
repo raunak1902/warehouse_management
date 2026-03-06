@@ -284,7 +284,7 @@ const Requests = ({ userRole }) => {
   const [expandedTimeline, setExpandedTimeline] = useState(null)
   const [approveModal,     setApproveModal]     = useState(null)
 
-  const [activeTab,        setActiveTab]        = useState('all')  // 'all' | 'deployments' | 'returns' | 'completed'
+  const [activeTab,        setActiveTab]        = useState('all')  // 'all' | 'deployments' | 'returns' | 'health' | 'completed'
   const [globalSearch,     setGlobalSearch]     = useState('')
   const [globalFilterClient, setGlobalFilterClient] = useState('')
 
@@ -504,6 +504,17 @@ const Requests = ({ userRole }) => {
     [groupedRequests]
   )
 
+  // Health-only groups: devices/sets whose ONLY requests are health_update steps.
+  // Lifecycle steps that happen to carry a healthStatus stay in deploy/return.
+  const healthGroups = useMemo(() => {
+    return groupedRequests
+      .filter(g => {
+        const allReqs = [...g.pendingRequests, ...g.approvedHistory]
+        return allReqs.length > 0 && allReqs.every(r => r.toStep === 'health_update')
+      })
+      .sort(sortByPendingThenDate)
+  }, [groupedRequests])
+
   // Filtered variants
   const applyFilter = (groups, search, clientFilter) =>
     groups.filter(g => {
@@ -516,16 +527,17 @@ const Requests = ({ userRole }) => {
 
   const filteredDeployGroups    = useMemo(() => applyFilter(deployGroups,    globalSearch, globalFilterClient), [deployGroups,    globalSearch, globalFilterClient])
   const filteredReturnGroups    = useMemo(() => applyFilter(returnGroups,    globalSearch, globalFilterClient), [returnGroups,    globalSearch, globalFilterClient])
+  const filteredHealthGroups    = useMemo(() => applyFilter(healthGroups,    globalSearch, globalFilterClient), [healthGroups,    globalSearch, globalFilterClient])
   const filteredCompletedGroups = useMemo(() => applyFilter(completedGroups, globalSearch, globalFilterClient), [completedGroups, globalSearch, globalFilterClient])
 
   // All groups that have at least one pending request — merged across deploy+return,
   // sorted most urgent first. Used by the "All" tab to surface pending items at the top.
   const allPendingGroups = useMemo(() => {
-    const combined = [...filteredDeployGroups, ...filteredReturnGroups]
+    const combined = [...filteredDeployGroups, ...filteredReturnGroups, ...filteredHealthGroups]
     return combined
       .filter(g => g.pendingRequests.length > 0)
       .sort(sortByPendingThenDate)
-  }, [filteredDeployGroups, filteredReturnGroups])
+  }, [filteredDeployGroups, filteredReturnGroups, filteredHealthGroups])
 
   const counts = useMemo(() => ({
     pending:         allRequests.filter(r => r.status === 'pending').length,
@@ -535,8 +547,10 @@ const Requests = ({ userRole }) => {
     deployPending:   deployGroups.reduce((n, g) => n + g.pendingRequests.length, 0),
     returnActive:    returnGroups.length,
     returnPending:   returnGroups.reduce((n, g) => n + g.pendingRequests.length, 0),
+    healthActive:    healthGroups.length,
+    healthPending:   healthGroups.reduce((n, g) => n + g.pendingRequests.length, 0),
     completed:       completedGroups.length,
-  }), [allRequests, deployGroups, returnGroups, completedGroups])
+  }), [allRequests, deployGroups, returnGroups, healthGroups, completedGroups])
 
   // ── Tab definitions ────────────────────────────────────────────────────────
   const tabs = [
@@ -565,6 +579,14 @@ const Requests = ({ userRole }) => {
       accentBadge: 'bg-white/25 text-white',
     },
     {
+      key: 'health',
+      label: 'Health',
+      icon: <Heart size={13} />,
+      pending: counts.healthPending,
+      accentActive: 'bg-cyan-600 text-white border-cyan-600',
+      accentBadge: 'bg-white/25 text-white',
+    },
+    {
       key: 'completed',
       label: 'Completed',
       icon: <CheckCircle2 size={13} />,
@@ -575,7 +597,7 @@ const Requests = ({ userRole }) => {
   ]
 
   // ── Section renderer (reusable) ─────────────────────────────────────────────
-  const renderSection = ({ icon, title, subtitle, pendingCount, accentIcon, emptyIcon, emptyMsg, groups }) => (
+  const renderSection = ({ icon, title, subtitle, pendingCount, accentIcon, emptyIcon, emptyMsg, groups, hideNextStep = false }) => (
     <section>
       {/* Static section header */}
       <div className="flex items-center gap-2.5 mb-3">
@@ -617,6 +639,7 @@ const Requests = ({ userRole }) => {
               canApprove={canApprove}
               onApprove={(request, action) => setApproveModal({ request, action })}
               onRequestDone={refreshAll}
+              hideNextStep={hideNextStep}
             />
           ))
         )}
@@ -648,7 +671,7 @@ const Requests = ({ userRole }) => {
       </div>
 
       {/* ── Stats Bar ───────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
         {/* Deployments tile — blue accent */}
         <div className="bg-white rounded-xl border border-blue-200 p-3 flex items-center gap-3 shadow-sm relative overflow-hidden" style={{ borderTop: '3px solid #60a5fa' }}>
           <div className="absolute inset-0 bg-gradient-to-br from-blue-50/50 to-transparent pointer-events-none rounded-xl" />
@@ -679,6 +702,20 @@ const Requests = ({ userRole }) => {
         </div>
         <StatTile label="Approved" value={counts.approved} icon={CheckCircle2} accent={{ bg: 'bg-emerald-50', icon: 'text-emerald-600', border: 'border-emerald-100', subText: 'text-emerald-500' }} />
         <StatTile label="Rejected" value={counts.rejected} icon={XCircle}     accent={{ bg: 'bg-red-50',     icon: 'text-red-500',     border: 'border-red-100',     subText: 'text-red-400'     }} />
+        {/* Health tile — cyan accent */}
+        <div className="bg-white rounded-xl border border-cyan-200 p-3 flex items-center gap-3 shadow-sm relative overflow-hidden col-span-2 sm:col-span-1" style={{ borderTop: '3px solid #22d3ee' }}>
+          <div className="absolute inset-0 bg-gradient-to-br from-cyan-50/50 to-transparent pointer-events-none rounded-xl" />
+          <div className="w-9 h-9 rounded-lg bg-cyan-50 flex items-center justify-center flex-shrink-0 relative z-10">
+            <Heart size={16} className="text-cyan-600" />
+          </div>
+          <div className="min-w-0 relative z-10">
+            <p className="text-xl font-bold text-text-primary leading-none">{counts.healthActive}</p>
+            <p className="text-[11px] text-text-secondary mt-0.5 font-medium">Health Changes</p>
+            {counts.healthPending > 0 && (
+              <p className="text-[10px] font-bold text-amber-500 mt-0.5">{counts.healthPending} pending</p>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ── Pending-by-user strip (managers only) ───────────────────────── */}
@@ -834,6 +871,24 @@ const Requests = ({ userRole }) => {
                   groups: filteredReturnGroups,
                 })}
 
+                {/* Health section in All tab — only shown when there are health-only requests */}
+                {filteredHealthGroups.length > 0 && (
+                  <>
+                    <div className="border-t border-dashed border-gray-200" />
+                    {renderSection({
+                      icon: <Heart size={15} className="text-cyan-600" />,
+                      title: 'Health Change Requests',
+                      subtitle: `${counts.healthActive} device${counts.healthActive !== 1 ? 's' : ''}`,
+                      pendingCount: counts.healthPending,
+                      accentIcon: 'bg-cyan-100',
+                      emptyIcon: <Heart size={20} className="text-cyan-300" />,
+                      emptyMsg: 'No health change requests',
+                      groups: filteredHealthGroups,
+                      hideNextStep: true,
+                    })}
+                  </>
+                )}
+
                 <div className="border-t border-dashed border-gray-200" />
 
                 {renderSection({
@@ -873,6 +928,19 @@ const Requests = ({ userRole }) => {
               groups: filteredReturnGroups,
             })}
 
+            {/* HEALTH tab */}
+            {activeTab === 'health' && renderSection({
+              icon: <Heart size={15} className="text-cyan-600" />,
+              title: 'Health Change Requests',
+              subtitle: `${counts.healthActive} device${counts.healthActive !== 1 ? 's' : ''} with standalone health updates`,
+              pendingCount: counts.healthPending,
+              accentIcon: 'bg-cyan-100',
+              emptyIcon: <Heart size={20} className="text-cyan-300" />,
+              emptyMsg: 'No standalone health change requests',
+              groups: filteredHealthGroups,
+              hideNextStep: true,
+            })}
+
             {/* COMPLETED tab */}
             {activeTab === 'completed' && renderSection({
               icon: <CheckCircle2 size={15} className="text-emerald-600" />,
@@ -898,6 +966,7 @@ const Requests = ({ userRole }) => {
           onDone={() => { setApproveModal(null); refreshAll() }}
         />
       )}
+
     </div>
   )
 }
@@ -1324,7 +1393,8 @@ const CardMenu = ({ barcode, deviceCode }) => {
 const DeviceSetCard = ({
   group, expanded, timelineExpanded,
   onToggle, onToggleTimeline,
-  canApprove, onApprove, onRequestDone
+  canApprove, onApprove, onRequestDone,
+  hideNextStep = false
 }) => {
   const { code, type, isSet, info, pendingRequests, approvedHistory } = group
   const currentStatus = info.currentStatus || 'assigning'
@@ -1437,10 +1507,11 @@ const DeviceSetCard = ({
               )}
             </div>
 
-            {/* Top-right: Next Step button + 3-dot menu + Chevron */}
+            {/* Top-right: Health Report + Next Step button + 3-dot menu + Chevron */}
             <div className="flex items-center gap-2 flex-shrink-0 mt-1" onClick={e => e.stopPropagation()}>
               <CardMenu barcode={info.barcode} deviceCode={code} />
-              {!hasPending && (() => {
+
+              {!hasPending && !hideNextStep && (() => {
                 const validSteps = (VALID_NEXT_STEPS[currentStatus] || []).filter(s => s !== 'assigning' && s !== 'health_update')
                 const isTerminal = ['returned', 'available', 'lost'].includes(currentStatus) || validSteps.length === 0
                 if (isTerminal) return null
@@ -1563,7 +1634,7 @@ const DeviceSetCard = ({
           )}
 
           {/* All caught up + Next Step panel */}
-          {pendingRequests.length === 0 && (
+          {pendingRequests.length === 0 && !hideNextStep && (
             <>
               <div className="px-4 py-3 flex items-center gap-2 text-xs font-semibold text-emerald-700 border-b border-gray-100">
                 <CheckCircle2 size={14} className="text-emerald-500" />
@@ -1903,5 +1974,6 @@ const ApproveModal = ({ request: req, action, onClose, onDone }) => {
     </div>
   )
 }
+
 
 export default Requests

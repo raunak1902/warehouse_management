@@ -51,7 +51,17 @@ function ToastCard({ toast, onDismiss }) {
   const remainingRef                  = useRef(AUTO_DISMISS_MS)
   const lastTickRef                   = useRef(Date.now())
 
-  const meta   = STEP_META[toast.toStep] ?? { label: toast.stepLabel ?? toast.toStep, emoji: '📋', color: 'slate' }
+  // Subscription reminder toasts come from the cron with _type set
+  const isSubReminder = toast._type === 'subscription_reminder'
+  const subReminderMeta = isSubReminder ? {
+    emoji: toast.reminderType === 'expired' ? '🚨' : toast.reminderType === '2day' ? '🔴' : '⚠️',
+    label: toast.reminderType === 'expired' ? 'Subscription Expired'
+         : toast.reminderType === '2day'    ? 'Expiring in 2 Days'
+         :                                    'Expiring in 7 Days',
+    color: toast.reminderType === 'expired' ? 'red' : toast.reminderType === '2day' ? 'orange' : 'amber',
+  } : null
+
+  const meta   = isSubReminder ? subReminderMeta : (STEP_META[toast.toStep] ?? { label: toast.stepLabel ?? toast.toStep, emoji: '📋', color: 'slate' })
   const colors = STEP_COLORS[meta.color] ?? STEP_COLORS.slate
 
   // ── Countdown bar ──────────────────────────────────────────────────────────
@@ -184,18 +194,34 @@ function ToastCard({ toast, onDismiss }) {
 
       {/* ── Body ── */}
       <div className="px-4 py-2.5 space-y-2">
-        {/* Who + when */}
-        <div className="flex items-center justify-between text-xs text-gray-500">
-          <div className="flex items-center gap-1">
-            <User size={11} />
-            <span className="font-medium text-gray-700">{toast.requestedByName}</span>
-            <span className="text-gray-400">· Ground Team</span>
+        {/* Who + when — or subscription details */}
+        {isSubReminder ? (
+          <div className="text-xs text-gray-500 space-y-0.5">
+            <div className="flex items-center gap-1">
+              <Package size={11} />
+              <span className="font-medium text-gray-700">{toast.deviceCode ?? toast.setCode}</span>
+              {toast.clientName && <span className="text-gray-400">· {toast.clientName}</span>}
+            </div>
+            {toast.subscriptionEndDate && (
+              <div className="flex items-center gap-1 text-gray-400">
+                <Clock size={11} />
+                <span>Sub ends {new Date(toast.subscriptionEndDate).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' })}</span>
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-1">
-            <Clock size={11} />
-            <span>{timeAgo(toast.createdAt)}</span>
+        ) : (
+          <div className="flex items-center justify-between text-xs text-gray-500">
+            <div className="flex items-center gap-1">
+              <User size={11} />
+              <span className="font-medium text-gray-700">{toast.requestedByName}</span>
+              <span className="text-gray-400">· Ground Team</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Clock size={11} />
+              <span>{timeAgo(toast.createdAt)}</span>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Note */}
         {toast.note && (
@@ -257,7 +283,7 @@ function ToastCard({ toast, onDismiss }) {
       </div>
 
       {/* ── Action buttons ── */}
-      {actionState === 'idle' && !rejectMode && (
+      {actionState === 'idle' && !rejectMode && !isSubReminder && (
         <div className="px-4 pb-3 flex gap-2">
           <button
             onClick={handleApprove}
@@ -282,6 +308,20 @@ function ToastCard({ toast, onDismiss }) {
             title="View all requests"
           >
             <ExternalLink size={13} />
+          </button>
+        </div>
+      )}
+
+      {actionState === 'idle' && !rejectMode && isSubReminder && (
+        <div className="px-4 pb-3">
+          <button
+            onClick={() => { handleDismiss(); navigate('/dashboard/return') }}
+            className="w-full flex items-center justify-center gap-2 text-xs font-semibold
+              bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200
+              py-2 rounded-lg transition-colors"
+          >
+            <ExternalLink size={13} />
+            View Returns Page
           </button>
         </div>
       )}

@@ -81,6 +81,7 @@ export const HEALTH_COLORS = {
   ok:     { bg: 'bg-green-100', text: 'text-green-700', dot: 'bg-green-500', label: 'Healthy' },
   repair: { bg: 'bg-amber-100', text: 'text-amber-700', dot: 'bg-amber-400', label: 'Needs Repair' },
   damage: { bg: 'bg-red-100',   text: 'text-red-700',   dot: 'bg-red-500',   label: 'Damaged' },
+  lost:   { bg: 'bg-gray-100',  text: 'text-gray-600',  dot: 'bg-gray-400',  label: 'Lost' },
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -6,6 +6,24 @@ import { requirePermission } from "../middleware/Permissions.js"
 const router = express.Router()
 const prisma = new PrismaClient()
 
+// ── Sync set health to worst component ────────────────────────────────────────
+const HEALTH_RANK = { ok: 0, repair: 1, damaged: 2 }
+async function syncSetHealth(tx, setId) {
+  const members = await tx.device.findMany({
+    where: { setId },
+    select: { healthStatus: true },
+  })
+  if (!members.length) return
+  const worst = members.reduce((acc, m) => {
+    const r = HEALTH_RANK[m.healthStatus] ?? 0
+    return r > (HEALTH_RANK[acc] ?? 0) ? m.healthStatus : acc
+  }, 'ok')
+  await tx.deviceSet.update({
+    where: { id: setId },
+    data: { healthStatus: worst, updatedAt: new Date() },
+  })
+}
+
 const generateSetBarcode = (setType) => {
   const prefix = 'EDSG'
   const typeCode = (setType || 'SET').toUpperCase().slice(0, 4)
@@ -108,7 +126,7 @@ router.post('/', authMiddleware, requirePermission('Sets', 'create'), async (req
 router.put('/:id', authMiddleware, requirePermission('Sets', 'update'), async (req, res) => {
   try {
     const { id } = req.params
-    const { lifecycleStatus, healthStatus, location, state, district, clientId, notes, componentHealthUpdates } = req.body
+    const { lifecycleStatus, healthStatus, location, state, district, clientId, notes, componentHealthUpdates, subscriptionEndDate } = req.body
     const existing = await prisma.deviceSet.findUnique({ where: { id: parseInt(id) } })
     if (!existing) return res.status(404).json({ error: 'Set not found' })
     const updated = await prisma.$transaction(async (tx) => {
@@ -122,6 +140,9 @@ router.put('/:id', authMiddleware, requirePermission('Sets', 'update'), async (r
           ...(district !== undefined && { district }),
           ...(notes !== undefined && { notes }),
           ...(clientId !== undefined && { clientId: clientId ? parseInt(clientId) : null }),
+          ...(subscriptionEndDate !== undefined && {
+            subscriptionEndDate: subscriptionEndDate ? new Date(subscriptionEndDate) : null
+          }),
         },
         include: INCLUDE_SET,
       })
@@ -129,6 +150,8 @@ router.put('/:id', authMiddleware, requirePermission('Sets', 'update'), async (r
         for (const { deviceId, healthStatus: dHealth } of componentHealthUpdates) {
           await tx.device.update({ where: { id: parseInt(deviceId) }, data: { healthStatus: dHealth } })
         }
+        // Re-derive set health from worst component after individual updates
+        await syncSetHealth(tx, parseInt(id))
       }
       return set
     })

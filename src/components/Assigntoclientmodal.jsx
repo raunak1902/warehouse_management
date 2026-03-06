@@ -171,16 +171,14 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
       const data = await res.json()
       if (!res.ok) throw new Error(data.message || data.error || `Error ${res.status}`)
 
-      // Save location + subscription dates directly to the device record
+      // Save location + subscription dates directly to the device/set record
       // so they're available immediately regardless of approval status
       if (!isSet) {
         const deviceUpdates = {}
         if (form.state)    deviceUpdates.state    = form.state
         if (form.district) deviceUpdates.district = form.district
         if (form.site)     deviceUpdates.location = form.site
-        // subscriptionStart = today, subscriptionEnd = computed return date
-        deviceUpdates.subscriptionStart = new Date().toISOString().split('T')[0]
-        if (subscriptionEnd) deviceUpdates.subscriptionEnd = subscriptionEnd.toISOString().split('T')[0]
+        if (subscriptionEnd) deviceUpdates.subscriptionEndDate = subscriptionEnd.toISOString()
 
         if (Object.keys(deviceUpdates).length > 0) {
           try {
@@ -190,6 +188,17 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
               body: JSON.stringify(deviceUpdates),
             })
           } catch (_) { /* non-critical — lifecycle request already submitted */ }
+        }
+      } else {
+        // For sets, save subscriptionEndDate directly
+        if (subscriptionEnd) {
+          try {
+            await fetch(`/api/sets/${device.id}`, {
+              method: 'PUT',
+              headers: authHeaders(),
+              body: JSON.stringify({ subscriptionEndDate: subscriptionEnd.toISOString() }),
+            })
+          } catch (_) { /* non-critical */ }
         }
       }
 
