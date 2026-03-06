@@ -1,29 +1,68 @@
-# Logs
-logs
+# ── Dependencies ──────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ── Environment Variables ──────────────────────────────────────
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+backend/.env
+
+# ── Prisma ────────────────────────────────────────────────────
+/generated/prisma
+
+# ── Uploaded / Proof Files ────────────────────────────────────
+uploads/
+backend/uploads/
+backend/public/uploads/
+public/uploads/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.mp4
+*.mov
+*.avi
+*.webm
+*.pdf
+
+# ── Build Output ──────────────────────────────────────────────
+dist/
+build/
+.vite/
+
+# ── Logs ──────────────────────────────────────────────────────
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+# ── OS Files ──────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor / IDE ──────────────────────────────────────────────
+.vscode/
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
-# Environment variables
-.env
-.env.local
-.env.production
+# ── Misc ──────────────────────────────────────────────────────
+.cache/
+.temp/
+*.tmp
+
+# Database backups & dumps
+*.dump
+*.db
+*.sqlite
+*.sqlite3
+backend/backup_*.sql
