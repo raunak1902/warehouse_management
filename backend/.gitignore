@@ -1,5 +1,8 @@
-node_modules
-# Keep environment variables out of version control
+# Dependencies
+node_modules/
+
+# Environment variables
 .env
 
-/generated/prisma
+# Uploaded proof files
+uploads/
