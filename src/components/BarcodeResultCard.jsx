@@ -13,7 +13,7 @@ import {
   CameraModal, ProofFileCard, ProofUploadPanel,
   isImage, isVideo, isPdf, useProofFiles,
 } from './ProofUpload'
-import AssignToClientModal from './AssignToClientModal'
+import AssignToClientModal from "./Assigntoclientmodal"
 import LifecycleTimeline from './LifecycleTimeline'
 import HealthUpdateModal, { LostHealthBanner } from './HealthUpdateModal'
 import SetActionButton from './SetActionButton'
