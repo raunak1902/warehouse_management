@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Shield } from "lucide-react";
 import axios from "axios";
 
+const API_URL = import.meta.env.VITE_API_URL || "";
+
 const Login = ({ onLogin }) => {
   const [formData, setFormData] = useState({
     email: "",
@@ -17,8 +19,7 @@ const Login = ({ onLogin }) => {
 
     try {
       const response = await axios.post(
-        `/login`
-,
+        `${API_URL}/login`,
         {
           email: formData.email,
           password: formData.password,
@@ -27,14 +28,9 @@ const Login = ({ onLogin }) => {
 
       const { token, user } = response.data;
 
-      // Save token
       localStorage.setItem("token", token);
-
-        // Save user
-        localStorage.setItem("user", JSON.stringify(user));
-
-        // Pass role to parent
-        onLogin(user.role);
+      localStorage.setItem("user", JSON.stringify(user));
+      onLogin(user.role);
 
     } catch (err) {
       setError(
@@ -109,7 +105,5 @@ const Login = ({ onLogin }) => {
     </div>
   );
 };
-
-console.log("API URL:", import.meta.env.VITE_API_URL);
 
 export default Login;

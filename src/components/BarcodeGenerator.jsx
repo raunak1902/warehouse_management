@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Download, Printer, Copy, Check, X, UserPlus } from 'lucide-react'
-import AssignToClientModal from './AssignToClientModal'
+import AssignToClientModal from './Assigntoclientmodal'
 
 const BarcodeGenerator = ({ device, onClose }) => {
   const [copied, setCopied] = useState(false)
