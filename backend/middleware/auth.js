@@ -20,8 +20,8 @@ const authMiddleware = (req, res, next) => {
 };
 
 export const isManagerOrAbove = (req, res, next) => {
-  const role = req.user?.role?.toLowerCase();
-  if (!["superadmin", "manager"].includes(role)) {
+  const role = req.user?.role?.toUpperCase();
+  if (!["SUPER_ADMIN", "ADMIN", "MANAGER"].includes(role)) {
     return res.status(403).json({ message: "Access denied" });
   }
   next();
@@ -30,8 +30,8 @@ export const isManagerOrAbove = (req, res, next) => {
 export default authMiddleware; // ✅ THIS LINE MUST EXIST
 
 export const isSuperAdmin = (req, res, next) => {
-  const role = req.user?.role?.toLowerCase();
-  if (role !== "superadmin") {
+  const role = req.user?.role?.toUpperCase();
+  if (role !== "SUPER_ADMIN") {
     return res.status(403).json({ message: "Access denied: SuperAdmin only" });
   }
   next();
