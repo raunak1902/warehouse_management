@@ -180,8 +180,26 @@ export async function syncPermissions() {
     }
     console.log(`[INIT] ✅ Permissions synced: ${Object.keys(permissionMap).length}`);
 
-    // 2. UPSERT ALL ROLES
+    // 2. UPSERT ALL ROLES + DELETE STALE ONES
     console.log("[INIT] 👥 Syncing roles...");
+
+    // Delete roles not in ROLE_LIST that have no users assigned
+    const staleRoles = await prisma.role.findMany({
+      where: { name: { notIn: ROLE_LIST } },
+      include: { _count: { select: { users: true } } },
+    });
+
+    for (const stale of staleRoles) {
+      if (stale._count.users === 0) {
+        // Remove role permissions first, then the role
+        await prisma.rolePermission.deleteMany({ where: { roleId: stale.id } });
+        await prisma.role.delete({ where: { id: stale.id } });
+        console.log(`[INIT] 🗑️  Removed stale role: ${stale.name}`);
+      } else {
+        console.warn(`[INIT] ⚠️  Skipped deleting role "${stale.name}" — ${stale._count.users} user(s) still assigned`);
+      }
+    }
+
     const roleMap = {};
     for (const roleName of ROLE_LIST) {
       const role = await prisma.role.upsert({
