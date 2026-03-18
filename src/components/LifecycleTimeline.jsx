@@ -17,8 +17,9 @@ import {
   AlertTriangle, ArrowRight,
 } from 'lucide-react'
 import { STEP_META } from '../api/lifecycleRequestApi'
+import { API_URL } from '../config/api'
 
-const API_BASE = '/api'
+const API_BASE = `${API_URL}/api`
 const authHeaders = () => ({
   Authorization: `Bearer ${localStorage.getItem('token')}`,
 })

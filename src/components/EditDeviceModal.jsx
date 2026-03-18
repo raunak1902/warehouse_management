@@ -11,6 +11,7 @@ import { useState, useMemo } from 'react'
 import { Pencil, X, Save, RefreshCw, AlertCircle, Send, CheckCircle, Tag, Ruler, Box, Palette, Hash } from 'lucide-react'
 import { useCatalogue } from '../context/CatalogueContext'
 import { inventoryRequestApi } from '../api/inventoryRequestApi'
+import { API_URL } from '../config/api'
 
 const authHdr = () => ({
   'Content-Type': 'application/json',
@@ -80,7 +81,7 @@ export default function EditDeviceModal({ device, isManager, onSuccess, onClose 
     if (!hasChanges) { setError('No changes made'); return }
     setSaving(true); setError('')
     try {
-      const r = await fetch(`/api/devices/${device.id}`, {
+      const r = await fetch(`${API_URL}/api/devices/${device.id}`, {
         method: 'PUT',
         headers: authHdr(),
         body: JSON.stringify(proposedChanges),

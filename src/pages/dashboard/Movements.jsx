@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import BarcodeResultCard from '../../components/BarcodeResultCard'
 import SetBarcodeGenerator from '../../components/SetBarcodeGenerator'
+import { API_URL } from '../../config/api'
 
 const authHdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` })
 
@@ -246,12 +247,12 @@ export default function Movements({ userRole }) {
 
   // Fetch warehouse + user lists for filter dropdowns
   useEffect(() => {
-    fetch('/api/warehouses', { headers: authHdr() })
+    fetch(`${API_URL}/api/warehouses`, { headers: authHdr() })
       .then(r => r.ok ? r.json() : [])
       .then(data => setWarehouses(Array.isArray(data) ? data : []))
       .catch(() => {})
 
-    fetch('/api/users', { headers: authHdr() })
+    fetch(`${API_URL}/api/users`, { headers: authHdr() })
       .then(r => r.ok ? r.json() : [])
       .then(data => setUsers(Array.isArray(data) ? data : []))
       .catch(() => {})
@@ -269,7 +270,7 @@ export default function Movements({ userRole }) {
       if (filters.dateTo)      params.set('dateTo',      filters.dateTo)
       if (filters.kind)        params.set('kind',        filters.kind)
 
-      const r = await fetch(`/api/sets/movements?${params}`, { headers: authHdr() })
+      const r = await fetch(`${API_URL}/api/sets/movements?${params}`, { headers: authHdr() })
       if (!r.ok) throw new Error('Failed to load')
       const data = await r.json()
       setRecords(data.records || [])
@@ -298,7 +299,7 @@ export default function Movements({ userRole }) {
   const handleViewDevice = async (deviceSnippet) => {
     if (!deviceSnippet?.id) return
     try {
-      const r = await fetch(`/api/devices/${deviceSnippet.id}`, { headers: authHdr() })
+      const r = await fetch(`${API_URL}/api/devices/${deviceSnippet.id}`, { headers: authHdr() })
       if (r.ok) setViewDevice(await r.json())
     } catch {}
   }
@@ -306,7 +307,7 @@ export default function Movements({ userRole }) {
   const handleViewSet = async (record) => {
     if (record.setId) {
       try {
-        const r = await fetch(`/api/sets/${record.setId}`, { headers: authHdr() })
+        const r = await fetch(`${API_URL}/api/sets/${record.setId}`, { headers: authHdr() })
         if (r.ok) { setViewSet(await r.json()); return }
       } catch {}
     }

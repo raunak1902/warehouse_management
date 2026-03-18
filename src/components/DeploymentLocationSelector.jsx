@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { MapPin, Globe, Link2, AlertCircle, Plus, CheckCircle } from 'lucide-react'
 import indianLocationsData from '../data/indian-locations.json'
+import { API_URL } from '../config/api'
 
 /**
  * DeploymentLocationSelector - Component for selecting client deployment location
@@ -59,7 +60,7 @@ const DeploymentLocationSelector = ({
   const fetchCustomSites = async (stateVal, districtVal) => {
     try {
       const response = await fetch(
-        `/api/custom-locations?state=${encodeURIComponent(stateVal)}&district=${encodeURIComponent(districtVal)}`,
+        `${API_URL}/api/custom-locations?state=${encodeURIComponent(stateVal)}&district=${encodeURIComponent(districtVal)}`,
         {
           headers: {
             Authorization: `Bearer ${localStorage.getItem('token')}`,

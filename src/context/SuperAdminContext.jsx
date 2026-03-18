@@ -1,8 +1,9 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { API_URL } from '../config/api'
 
 const SuperAdminContext = createContext(null)
 
-const API_BASE = '/api'
+const API_BASE = `${API_URL}/api`
 
 const authHeaders = () => ({
   'Content-Type': 'application/json',

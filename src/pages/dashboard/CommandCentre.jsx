@@ -18,6 +18,7 @@ import {
   EyeOff, RotateCcw, Warehouse, MapPin, Building2, ChevronRight,
 } from 'lucide-react'
 import { useCatalogue, ICON_NAMES, COLOR_OPTIONS, getColorClasses } from '../../context/CatalogueContext'
+import { API_URL } from '../../config/api'
 
 // ── Icon map ──────────────────────────────────────────────────────────────────
 const ICON_MAP = {
@@ -1072,7 +1073,7 @@ const WarehousesSection = () => {
   const fetchWarehouses = async () => {
     setLoading(true)
     try {
-      const r = await fetch('/api/warehouses', { headers: authHdr() })
+      const r = await fetch(`${API_URL}/api/warehouses`, { headers: authHdr() })
       const data = await r.json()
       setWarehouses(Array.isArray(data) ? data : [])
     } catch { /* silent */ } finally { setLoading(false) }
@@ -1084,7 +1085,7 @@ const WarehousesSection = () => {
   const fetchZones = async (wid) => {
     setZonesLoading(p => ({ ...p, [wid]: true }))
     try {
-      const r = await fetch(`/api/warehouses/${wid}/zones`, { headers: authHdr() })
+      const r = await fetch(`${API_URL}/api/warehouses/${wid}/zones`, { headers: authHdr() })
       const data = await r.json()
       setZones(p => ({ ...p, [wid]: Array.isArray(data) ? data : [] }))
     } catch { /* silent */ } finally {
@@ -1104,7 +1105,7 @@ const WarehousesSection = () => {
     if (!whForm.name.trim()) { setWhErr('Name is required'); return }
     setWhSaving(true); setWhErr('')
     try {
-      const r = await fetch('/api/warehouses', {
+      const r = await fetch(`${API_URL}/api/warehouses`, {
         method: 'POST',
         headers: authHdr(),
         body: JSON.stringify({ name: whForm.name.trim(), city: whForm.city.trim() }),
@@ -1133,7 +1134,7 @@ const WarehousesSection = () => {
     if (!editingWH.name.trim()) { setEditWHErr('Name is required'); return }
     setEditWHSaving(true); setEditWHErr('')
     try {
-      const r = await fetch(`/api/warehouses/${editingWH.id}`, {
+      const r = await fetch(`${API_URL}/api/warehouses/${editingWH.id}`, {
         method: 'PUT',
         headers: authHdr(),
         body: JSON.stringify({ name: editingWH.name.trim(), city: editingWH.city.trim() }),
@@ -1151,7 +1152,7 @@ const WarehousesSection = () => {
     e.stopPropagation()
     if (!window.confirm('Delete this warehouse? This cannot be undone.')) return
     try {
-      await fetch(`/api/warehouses/${wid}`, { method: 'DELETE', headers: authHdr() })
+      await fetch(`${API_URL}/api/warehouses/${wid}`, { method: 'DELETE', headers: authHdr() })
       setWarehouses(p => p.filter(w => w.id !== wid))
       if (expandedId === wid) setExpandedId(null)
       if (editingWH?.id === wid) setEditingWH(null)
@@ -1164,7 +1165,7 @@ const WarehousesSection = () => {
     if (!name) { setZoneErr(p => ({ ...p, [wid]: 'Zone name is required' })); return }
     setZoneSaving(p => ({ ...p, [wid]: true })); setZoneErr(p => ({ ...p, [wid]: '' }))
     try {
-      const r = await fetch(`/api/warehouses/${wid}/zones`, {
+      const r = await fetch(`${API_URL}/api/warehouses/${wid}/zones`, {
         method: 'POST',
         headers: authHdr(),
         body: JSON.stringify({ name }),
@@ -1192,7 +1193,7 @@ const WarehousesSection = () => {
     setEditZoneSaving(true); setEditZoneErr('')
     try {
       const { warehouseId, zoneId } = editingZone
-      const r = await fetch(`/api/warehouses/${warehouseId}/zones/${zoneId}`, {
+      const r = await fetch(`${API_URL}/api/warehouses/${warehouseId}/zones/${zoneId}`, {
         method: 'PUT',
         headers: authHdr(),
         body: JSON.stringify({ name: editingZone.name.trim() }),
@@ -1212,7 +1213,7 @@ const WarehousesSection = () => {
   // ── Delete zone ─────────────────────────────────────────────────────────────
   const handleDeleteZone = async (wid, zid) => {
     try {
-      await fetch(`/api/warehouses/${wid}/zones/${zid}`, { method: 'DELETE', headers: authHdr() })
+      await fetch(`${API_URL}/api/warehouses/${wid}/zones/${zid}`, { method: 'DELETE', headers: authHdr() })
       setZones(p => ({ ...p, [wid]: (p[wid] || []).filter(z => z.id !== zid) }))
       setWarehouses(p => p.map(w => w.id === wid
         ? { ...w, _count: { ...w._count, zones: Math.max(0, (w._count?.zones || 1) - 1) } }

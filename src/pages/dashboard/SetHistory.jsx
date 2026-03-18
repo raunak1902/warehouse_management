@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { API_URL } from '../../config/api'
 import {
   Layers, ArrowLeft, RefreshCw, Search, X, Trash2,
   Package, MapPin, Calendar, ChevronDown, ChevronUp,
@@ -199,7 +200,7 @@ export default function SetHistory({ userRole }) {
     try {
       const p = new URLSearchParams({ page: pg, pageSize: PAGE_SIZE })
       if (search.trim()) p.set('search', search.trim())
-      const r = await fetch(`/api/sets/history?${p}`, { headers: authHdr() })
+      const r = await fetch(`${API_URL}/api/sets/history?${p}`, { headers: authHdr() })
       if (!r.ok) throw new Error('Failed')
       const json = await r.json()
       
@@ -224,7 +225,7 @@ export default function SetHistory({ userRole }) {
     if (!deleteTarget) return
     setDeleteLoading(true)
     try {
-      const r = await fetch(`/api/sets/history/${deleteTarget.id}`, { method: 'DELETE', headers: authHdr() })
+      const r = await fetch(`${API_URL}/api/sets/history/${deleteTarget.id}`, { method: 'DELETE', headers: authHdr() })
       if (!r.ok) throw new Error('Failed')
       setDeleteTarget(null)
       fetchHistory(page)

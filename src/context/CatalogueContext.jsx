@@ -13,6 +13,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { CUSTOM_TYPES_STORAGE_KEY } from '../config/deviceTypeRegistry'
+import { API_URL } from '../config/api'
 
 const CatalogueContext = createContext(null)
 
@@ -71,7 +72,7 @@ function syncRegistryFromDB(dbProductTypes) {
 
 const API = (path, opts = {}) => {
   const token = localStorage.getItem('token')
-  return fetch(`/api/catalogue${path}`, {
+  return fetch(`${API_URL}/api/catalogue${path}`, {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,

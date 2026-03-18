@@ -18,5 +18,3 @@ export const setApi = {
   updateLocation: async (id, { warehouseId, warehouseZone, warehouseSpecificLocation, notes }) =>
     (await axios.patch(`${API_BASE}/sets/${id}/location`, { warehouseId, warehouseZone, warehouseSpecificLocation, notes }, { headers: getAuthHeaders() })).data,
 }
-
-export default setApi

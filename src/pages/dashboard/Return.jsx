@@ -23,8 +23,9 @@ import {
 import BarcodeResultCard from '../../components/BarcodeResultCard'
 import WarehouseLocationSelector from '../../components/WarehouseLocationSelector'
 import { useInventory } from '../../context/InventoryContext'
+import { API_URL } from '../../config/api'
 
-const BASE = '/api/returns'
+const BASE = `${API_URL}/api/returns`
 const authH = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` })
 
 const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'

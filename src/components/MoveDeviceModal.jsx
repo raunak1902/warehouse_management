@@ -10,6 +10,7 @@
 import { useState } from 'react'
 import { MapPin, X, ArrowRight, Save, RefreshCw, AlertCircle, Building2 } from 'lucide-react'
 import WarehouseLocationSelector from './WarehouseLocationSelector'
+import { API_URL } from '../config/api'
 
 const authHdr = () => ({
   'Content-Type': 'application/json',
@@ -57,7 +58,7 @@ export default function MoveDeviceModal({ device, onSuccess, onClose }) {
     if (!warehouseId) { setError('Please select a warehouse'); return }
     setSaving(true); setError('')
     try {
-      const r = await fetch(`/api/devices/${device.id}/location`, {
+      const r = await fetch(`${API_URL}/api/devices/${device.id}/location`, {
         method: 'PATCH',
         headers: authHdr(),
         body: JSON.stringify({ warehouseId, warehouseZone: zone, warehouseSpecificLocation: specificLocation, notes }),

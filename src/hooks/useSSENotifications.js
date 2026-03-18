@@ -9,8 +9,9 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { API_URL } from '../config/api'
 
-const STREAM_URL   = '/api/notifications/stream'
+const STREAM_URL   = `${API_URL}/api/notifications/stream`
 const AUTO_DISMISS = 5 * 60 * 1000 // 5 minutes — stays until addressed
 const MAX_VISIBLE  = 3      // max toasts stacked on screen
 const RETRY_DELAY  = 5000   // ms before reconnecting after disconnect

@@ -9,8 +9,9 @@ import {
 import { useInventory } from '../context/InventoryContext'
 import { normaliseRole, ROLES } from '../App'
 import DeploymentLocationSelector from './DeploymentLocationSelector'
+import { API_URL } from '../config/api'
 
-const API = '/api/lifecycle-requests'
+const API = `${API_URL}/api/lifecycle-requests`
 const authHeaders = () => ({
   'Content-Type': 'application/json',
   Authorization: `Bearer ${localStorage.getItem('token')}`,
@@ -269,7 +270,7 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
 
         if (Object.keys(deviceUpdates).length > 0) {
           try {
-            await fetch(`/api/devices/${device.id}`, {
+            await fetch(`${API_URL}/api/devices/${device.id}`, {
               method: 'PUT',
               headers: authHeaders(),
               body: JSON.stringify(deviceUpdates),
@@ -289,7 +290,7 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
 
         if (Object.keys(setUpdates).length > 0) {
           try {
-            await fetch(`/api/sets/${device.id}`, {
+            await fetch(`${API_URL}/api/sets/${device.id}`, {
               method: 'PUT',
               headers: authHeaders(),
               body: JSON.stringify(setUpdates),

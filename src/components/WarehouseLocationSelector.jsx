@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Package, MapPin, AlertCircle, Tag } from 'lucide-react'
 import { useCatalogue } from '../context/CatalogueContext'
+import { API_URL } from '../config/api'
 
 /**
  * WarehouseLocationSelector - Reusable component for selecting warehouse location
@@ -54,7 +55,7 @@ const WarehouseLocationSelector = ({
   const fetchWarehouses = async () => {
     try {
       setLoading(true)
-      const response = await fetch('/api/warehouses', {
+      const response = await fetch(`${API_URL}/api/warehouses`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`,
         },
@@ -74,7 +75,7 @@ const WarehouseLocationSelector = ({
 
   const fetchZones = async (whId) => {
     try {
-      const response = await fetch(`/api/warehouses/${whId}/zones`, {
+      const response = await fetch(`${API_URL}/api/warehouses/${whId}/zones`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`,
         },

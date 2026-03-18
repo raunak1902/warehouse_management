@@ -10,6 +10,7 @@ import {
   MapPin, ArrowRight,
 } from 'lucide-react'
 import { lifecycleRequestApi, STEP_META } from '../api/lifecycleRequestApi'
+import { API_URL } from '../config/api'
 
 const HEALTH_STYLE = {
   ok:     { cls: 'bg-emerald-100 text-emerald-700 border-emerald-200', label: '✓ OK' },
@@ -344,10 +345,10 @@ export default function DeviceTimeline({ deviceId, setId, deviceCode, onClose })
       if (deviceId) {
         const [lcData, rawData, locData] = await Promise.all([
           lifecycleRequestApi.getDeviceHistory(deviceId),
-          fetch(`/api/devices/${deviceId}/history`, {
+          fetch(`${API_URL}/api/devices/${deviceId}/history`, {
             headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
           }).then(r => r.ok ? r.json() : []).catch(() => []),
-          fetch(`/api/devices/${deviceId}/location-history`, {
+          fetch(`${API_URL}/api/devices/${deviceId}/location-history`, {
             headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
           }).then(r => r.ok ? r.json() : []).catch(() => []),
         ])

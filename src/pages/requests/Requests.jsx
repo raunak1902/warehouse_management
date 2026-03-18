@@ -18,6 +18,7 @@ import { ProofUploadPanel, useProofFiles } from '../../components/ProofUpload'
 import InventoryRequestPanel from '../../components/InventoryRequestPanel'
 import { inventoryRequestApi } from '../../api/inventoryRequestApi'
 import WarehouseLocationSelector from '../../components/WarehouseLocationSelector'
+import { API_URL } from '../../config/api'
 
 const authHeaders = () => ({
   'Content-Type': 'application/json',
@@ -770,7 +771,7 @@ const Requests = ({ userRole }) => {
 
   useEffect(() => {
     if (!canApprove) return
-    fetch('/api/users', { headers: authHeaders() })
+    fetch(`${API_URL}/api/users`, { headers: authHeaders() })
       .then(r => r.json())
       .then(data => {
         const users = Array.isArray(data) ? data : []

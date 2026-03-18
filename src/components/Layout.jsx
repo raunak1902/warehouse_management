@@ -10,9 +10,10 @@ import { STEP_META } from '../api/lifecycleRequestApi'
 import { useSSENotifications } from '../hooks/useSSENotifications'
 import NotificationToast from './NotificationToast'
 import LoginBriefing from './LoginBriefing'
+import { API_URL } from '../config/api'
 
 // ── Notification Bell ─────────────────────────────────────────────────────────
-const API = '/api/lifecycle-requests'
+const API = `${API_URL}/api/lifecycle-requests`
 const authHeaders = () => ({
   'Content-Type': 'application/json',
   Authorization: `Bearer ${localStorage.getItem('token')}`,
@@ -245,7 +246,7 @@ const Layout = ({ userRole, onLogout }) => {
   const fetchSubscriptionCount = useCallback(async () => {
     if (!canManage) return
     try {
-      const res = await fetch('/api/returns/notification-count', {
+      const res = await fetch(`${API_URL}/api/returns/notification-count`, {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` }
       })
       if (!res.ok) return

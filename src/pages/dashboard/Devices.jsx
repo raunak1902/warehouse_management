@@ -104,6 +104,7 @@ import DeviceTimeline from '../../components/DeviceTimeline'
 import HealthUpdateModal, { LostHealthBanner } from '../../components/HealthUpdateModal'
 import { lifecycleRequestApi, STEP_META, HEALTH_REQUIRES_PROOF, MAX_PROOF_FILES } from '../../api/lifecycleRequestApi'
 import { ProofUploadPanel, useProofFiles } from '../../components/ProofUpload'
+import { API_URL } from '../../config/api'
 import {
   calculateSetHealth,
   getComponentHealthSummary,
@@ -637,7 +638,7 @@ const Devices = ({ userRole } = {}) => {
     if (!devices.length) return
     const token = localStorage.getItem('token')
     const headers = token ? { Authorization: `Bearer ${token}` } : {}
-    fetch('/api/lifecycle-requests?status=pending', { headers })
+    fetch(`${API_URL}/api/lifecycle-requests?status=pending`, { headers })
       .then(r => r.ok ? r.json() : [])
       .then(rows => {
         const ids = new Set(rows.filter(r => r.deviceId).map(r => r.deviceId))
@@ -645,7 +646,7 @@ const Devices = ({ userRole } = {}) => {
       })
       .catch(() => {})
     // Also fetch pending deletion requests so the button count + row badge stay current
-    fetch('/api/deletion-requests?status=pending', { headers })
+    fetch(`${API_URL}/api/deletion-requests?status=pending`, { headers })
       .then(r => r.ok ? r.json() : [])
       .then(rows => {
         const ids = new Set(rows.filter(r => r.entityType === 'device').map(r => r.entityId))
@@ -1188,7 +1189,7 @@ const Devices = ({ userRole } = {}) => {
     const token = localStorage.getItem('token')
     const params = new URLSearchParams({ state: filterState })
     if (filterDistrict) params.set('district', filterDistrict)
-    fetch(`/api/catalogue/pinpoints?${params}`, {
+    fetch(`${API_URL}/api/catalogue/pinpoints?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(r => r.ok ? r.json() : [])
@@ -1204,7 +1205,7 @@ const Devices = ({ userRole } = {}) => {
     const prefix = getCodePrefix(newProductType)
     const t = setTimeout(() => {
       const token = localStorage.getItem('token')
-      fetch(`/api/devices/next-codes?prefix=${prefix}&qty=1`, {
+      fetch(`${API_URL}/api/devices/next-codes?prefix=${prefix}&qty=1`, {
         headers: { Authorization: `Bearer ${token}` },
       })
         .then(r => r.ok ? r.json() : null)
@@ -1224,7 +1225,7 @@ const Devices = ({ userRole } = {}) => {
     const qty = Math.max(1, parseInt(bulkQty) || 1)
     const t = setTimeout(() => {
       const token = localStorage.getItem('token')
-      fetch(`/api/devices/next-codes?prefix=${prefix}&qty=${qty}`, {
+      fetch(`${API_URL}/api/devices/next-codes?prefix=${prefix}&qty=${qty}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
         .then(r => r.ok ? r.json() : null)

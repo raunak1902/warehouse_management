@@ -14,8 +14,9 @@ import {
 } from 'lucide-react'
 import { STEP_META } from '../api/lifecycleRequestApi'
 import { lifecycleRequestApi } from '../api/lifecycleRequestApi'
+import { API_URL } from '../config/api'
 
-const NOTIF_BASE = '/api/notifications'
+const NOTIF_BASE = `${API_URL}/api/notifications`
 const authJsonHeaders = () => ({
   'Content-Type': 'application/json',
   Authorization: `Bearer ${localStorage.getItem('token')}`,

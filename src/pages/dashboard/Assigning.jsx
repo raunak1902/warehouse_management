@@ -9,6 +9,7 @@ import { useInventory, DEVICE_TYPES } from '../../context/InventoryContext'
 import { normaliseRole, ROLES } from '../../App'
 import DeploymentLocationSelector from '../../components/DeploymentLocationSelector'
 import AssignmentHealthCheck from '../../components/AssignmentHealthCheck'
+import { API_URL } from '../../config/api'
 
 // ── Phase 2 flag ──────────────────────────────────────────────────────────────
 // Set to false when bulk assign is ready for ground team.
@@ -196,7 +197,7 @@ const Assigning = ({ userRole }) => {
 
         await Promise.all(
           selectedDeviceObjects.map(device =>
-            fetch('/api/ground-requests', {
+            fetch(`${API_URL}/api/ground-requests`, {
               method: 'POST',
               headers: authHeaders(),
               body: JSON.stringify({
