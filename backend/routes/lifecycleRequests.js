@@ -668,7 +668,7 @@ router.post(
 
       // Notify managers (DB notification + SSE broadcast)
       const managers = await prisma.user.findMany({
-        where: { role: { name: { in: ['Manager', 'SuperAdmin'] } } },
+        where: { role: { name: { in: ['MANAGER', 'SUPER_ADMIN'] } } },
         select: { id: true },
       })
       const meta = STEP_META[toStep]

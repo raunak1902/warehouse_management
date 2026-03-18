@@ -98,7 +98,7 @@ async function executePendingDeletions() {
 
       // DB notification for managers
       const managers = await prisma.user.findMany({
-        where:  { role: { name: { in: ['Manager', 'SuperAdmin'] } } },
+        where:  { role: { name: { in: ['MANAGER', 'SUPER_ADMIN'] } } },
         select: { id: true },
       })
       for (const m of managers) {

@@ -30,7 +30,7 @@ function targetDate(daysFromNow) {
 async function notifyManagers(title, body, meta) {
   try {
     const managers = await prisma.user.findMany({
-      where: { role: { name: { in: ['Manager', 'SuperAdmin'] } } },
+      where: { role: { name: { in: ['MANAGER', 'SUPER_ADMIN'] } } },
       select: { id: true },
     })
     await Promise.all(managers.map(m =>

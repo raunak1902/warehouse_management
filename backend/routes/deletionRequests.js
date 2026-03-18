@@ -41,7 +41,7 @@ async function notifyManagers(prismaClient, payload) {
   // because the Requests page would show it as an approvable lifecycle request
   // and fail when trying to call lifecycleRequest.findUnique with a deletionRequest id.
   const managers = await prismaClient.user.findMany({
-    where:  { role: { name: { in: ['Manager', 'SuperAdmin'] } } },
+    where:  { role: { name: { in: ['MANAGER', 'SUPER_ADMIN'] } } },
     select: { id: true },
   })
   for (const m of managers) {

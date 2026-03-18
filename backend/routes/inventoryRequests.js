@@ -200,6 +200,11 @@ router.post('/', async (req, res) => {
 
     if (!requestType) return res.status(400).json({ error: 'requestType is required' })
 
+    // Warehouse is mandatory for add_device and bulk_add
+    if (['add_device', 'bulk_add'].includes(requestType) && !warehouseId) {
+      return res.status(400).json({ error: 'warehouseId is required — please select a warehouse location' })
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: req.user.userId },
       select: { name: true },
@@ -325,7 +330,7 @@ router.post('/', async (req, res) => {
 
     // Persist manager DB notifications
     const managers = await prisma.user.findMany({
-      where: { role: { name: { in: ['Manager', 'SuperAdmin'] } } },
+      where: { role: { name: { in: ['MANAGER', 'SUPER_ADMIN'] } } },
       select: { id: true },
     })
     for (const m of managers) {

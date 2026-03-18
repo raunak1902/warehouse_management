@@ -50,7 +50,7 @@ function sendEvent(res, eventName, data) {
 export async function broadcastToManagers(payload) {
   try {
     const managers = await prisma.user.findMany({
-      where: { role: { name: { in: ['Manager', 'SuperAdmin'] } } },
+      where: { role: { name: { in: ['MANAGER', 'SUPER_ADMIN'] } } },
       select: { id: true },
     })
     for (const { id } of managers) {
