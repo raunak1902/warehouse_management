@@ -21,7 +21,7 @@ const authMiddleware = (req, res, next) => {
 
 export const isManagerOrAbove = (req, res, next) => {
   const role = req.user?.role?.toUpperCase();
-  if (!["SUPER_ADMIN", "ADMIN", "MANAGER"].includes(role)) {
+  if (!["SUPER_ADMIN", "MANAGER"].includes(role)) {
     return res.status(403).json({ message: "Access denied" });
   }
   next();
