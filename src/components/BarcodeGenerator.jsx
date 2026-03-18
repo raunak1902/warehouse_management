@@ -32,13 +32,41 @@ const BarcodeGenerator = ({ device, onClose }) => {
     const ctx = canvas.getContext('2d')
     const img = new Image()
 
-    canvas.width = 300
-    canvas.height = 300
+    // Increased canvas size to accommodate QR + text labels
+    canvas.width = 400
+    canvas.height = 500
 
     img.onload = () => {
+      // White background
       ctx.fillStyle = 'white'
       ctx.fillRect(0, 0, canvas.width, canvas.height)
-      ctx.drawImage(img, 0, 0, 300, 300)
+      
+      // Draw QR code centered at top
+      const qrSize = 300
+      const qrX = (canvas.width - qrSize) / 2
+      const qrY = 20
+      ctx.drawImage(img, qrX, qrY, qrSize, qrSize)
+      
+      // Add device code below QR (large, bold)
+      ctx.fillStyle = '#000000'
+      ctx.font = 'bold 32px Arial, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText(device.code, canvas.width / 2, qrY + qrSize + 50)
+      
+      // Add separator line
+      ctx.strokeStyle = '#d1d5db'
+      ctx.lineWidth = 2
+      const lineY = qrY + qrSize + 70
+      ctx.beginPath()
+      ctx.moveTo(50, lineY)
+      ctx.lineTo(canvas.width - 50, lineY)
+      ctx.stroke()
+      
+      // Add barcode number below (monospace)
+      ctx.fillStyle = '#374151'
+      ctx.font = '18px "Courier New", monospace'
+      ctx.textAlign = 'center'
+      ctx.fillText(device.barcode, canvas.width / 2, lineY + 35)
       
       const pngFile = canvas.toDataURL('image/png')
       const downloadLink = document.createElement('a')
@@ -69,15 +97,27 @@ const BarcodeGenerator = ({ device, onClose }) => {
 
           {/* QR Code Display */}
           <div className="p-8 space-y-6">
-            {/* QR Code */}
-            <div className="flex justify-center p-6 bg-gray-50 rounded-xl">
-              <QRCodeSVG
-                id="barcode-qr"
-                value={barcodeData}
-                size={200}
-                level="H"
-                includeMargin={true}
-              />
+            {/* QR Code with Labels - Wrapped for printing */}
+            <div className="print-label">
+              <div className="flex justify-center p-6 bg-gray-50 rounded-xl">
+                <QRCodeSVG
+                  id="barcode-qr"
+                  value={barcodeData}
+                  size={200}
+                  level="H"
+                  includeMargin={true}
+                />
+              </div>
+              
+              {/* Device Code - Large Bold */}
+              <div className="mt-4 pt-4 border-t-2 border-gray-300">
+                <p className="text-3xl font-bold text-gray-900 tracking-wide">{device.code}</p>
+              </div>
+              
+              {/* Barcode Number - Monospace */}
+              <div className="mt-3">
+                <p className="text-base font-mono text-gray-700 tracking-wider">{device.barcode}</p>
+              </div>
             </div>
 
             {/* Device Info */}
@@ -169,15 +209,16 @@ const BarcodeGenerator = ({ device, onClose }) => {
             body * {
               visibility: hidden;
             }
-            #barcode-qr,
-            #barcode-qr * {
+            .print-label,
+            .print-label * {
               visibility: visible;
             }
-            #barcode-qr {
+            .print-label {
               position: absolute;
               left: 50%;
               top: 50%;
               transform: translate(-50%, -50%);
+              text-align: center;
             }
           }
         `}</style>

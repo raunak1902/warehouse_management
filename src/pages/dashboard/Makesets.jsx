@@ -1,64 +1,40 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import {
   Layers, Plus, Search, X, ChevronRight, Package, Monitor, Smartphone,
   LayoutGrid, Tv, Battery, Check, AlertTriangle, Trash2, RefreshCw,
   Info, Wrench, PackagePlus, ArrowRight, Box, Lightbulb, TrendingUp,
-  CheckCircle, XCircle, Settings, Save, ChevronDown, ChevronUp, Mouse, Zap, QrCode, Link2,
+  CheckCircle, XCircle, Settings, Save, ChevronDown, ChevronUp, Mouse, Zap, QrCode, Link2, MapPin,
 } from 'lucide-react'
 import { useInventory } from '../../context/InventoryContext'
+import { useCatalogue } from '../../context/CatalogueContext'
+import { hasRole, ROLES } from '../../App'
+import { inventoryRequestApi } from '../../api/inventoryRequestApi'
 import { setApi } from '../../api/setApi'
 import { resolveTypeId, getTypeLabel, getCodePrefixForType, deviceMatchesSlot, getAllTypes, loadCustomTypes, getColorClasses } from '../../config/deviceTypeRegistry'
 import SetBarcodeGenerator from '../../components/SetBarcodeGenerator'
+import WarehouseLocationSelector from '../../components/WarehouseLocationSelector'
+import MoveSetModal from '../../components/MoveSetModal'
+import { History } from 'lucide-react'
+import { 
+  calculateSetHealth, 
+  getComponentHealthSummary, 
+  getProblematicComponents,
+  getHealthDisplayInfo,
+  normalizeHealth as normalizeHealthStatus 
+} from '../../utils/setHealthUtils'
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
 const CUSTOM_SET_TYPES_KEY = 'edsignage_custom_set_types'
 
-// ── Set types now use canonical Device Type IDs from deviceTypeRegistry ──────
-// deviceTypes array = canonical IDs (e.g. "MB", "AST", "TV", "IST")
-// deviceMatchesSlot() in getAvailableByType resolves any legacy type string to these IDs
-const BUILTIN_SET_TYPES = {
-  aStand: {
-    label: 'A-Frame Standee',
-    icon: 'LayoutGrid',
-    colorClasses: {
-      badge: 'bg-orange-100 text-orange-700 border-orange-200',
-      card: 'border-orange-200 bg-orange-50',
-      header: 'bg-orange-500',
-    },
-    deviceTypes: ['AST', 'TV', 'MB'],          // Canonical IDs
-    deviceLabels: { AST: 'A-Frame Stand', TV: 'TV (43"+)', MB: 'Media Box' },
-    builtin: true,
-  },
-  iStand: {
-    label: 'I-Frame Standee',
-    icon: 'Monitor',
-    colorClasses: {
-      badge: 'bg-blue-100 text-blue-700 border-blue-200',
-      card: 'border-blue-200 bg-blue-50',
-      header: 'bg-blue-500',
-    },
-    deviceTypes: ['IST', 'TV', 'MB'],          // Canonical IDs
-    deviceLabels: { IST: 'I-Frame Stand', TV: 'TV (43"+)', MB: 'Media Box' },
-    builtin: true,
-  },
-  tabletCombo: {
-    label: 'Tablet Combo',
-    icon: 'Smartphone',
-    colorClasses: {
-      badge: 'bg-purple-100 text-purple-700 border-purple-200',
-      card: 'border-purple-200 bg-purple-50',
-      header: 'bg-purple-500',
-    },
-    deviceTypes: ['TAB', 'BAT', 'TST'],        // Canonical IDs
-    deviceLabels: { TAB: 'Tablet', BAT: 'Battery Pack', TST: 'Tablet Stand' },
-    builtin: true,
-  },
-}
+// ── Set types are now fully DB-driven via CatalogueContext ───────────────────
+// BUILTIN_SET_TYPES removed — all set types (including builtins) live in the DB.
+// This ensures edits in Catalogue are immediately reflected everywhere.
 
 // Built from registry — canonical IDs and labels, plus any user-defined custom types
-const ALL_KNOWN_DEVICE_TYPES = getAllTypes().map(t => ({ value: t.id, label: t.label }))
+// Rebuilt reactively inside the component so new custom device types appear immediately
+const getKnownDeviceTypes = () => getAllTypes().map(t => ({ value: t.id, label: t.label }))
 
 const ICON_MAP = { LayoutGrid, Monitor, Smartphone, Tv, Battery, Package, Layers, Mouse, Zap, Box }
 
@@ -145,20 +121,71 @@ const computeTip = (config, getAvailableByType) => {
   const counts = config.deviceTypes.map(t => ({
     type: t, label: config.deviceLabels[t], count: getAvailableByType(t).length,
   }))
-  const min = Math.min(...counts.map(c => c.count))
-  const max = Math.max(...counts.map(c => c.count))
-  if (max === 0) return null
+  if (counts.length === 0) return null
+
+  const sorted = [...counts].sort((a, b) => a.count - b.count)
+  const min = sorted[0].count
+  const max = sorted[sorted.length - 1].count
+
+  if (max === 0) return null   // no stock at all — handled by red state
   if (min === max) return null // perfectly balanced
+
+  // All components sitting at the minimum are bottlenecks
   const bottlenecks = counts.filter(c => c.count === min)
-  const addCount = max - min
-  const highestItem = counts.find(c => c.count === max)
-  return { min, max, bottlenecks, addCount, highestLabel: highestItem?.label }
+
+  // After fixing ONLY the bottlenecks (bringing them up to the next tier),
+  // the new limiting factor becomes the second-lowest count.
+  // That is the realistic set count achievable by this one action.
+  const secondMin = sorted.find(c => c.count > min)?.count ?? max
+  const addCount = secondMin - min
+
+  // The highest-count component — shown in "fully using your N Xs"
+  const highestItem = sorted[sorted.length - 1]
+
+  return {
+    min,
+    max: secondMin,          // achievable sets after this single fix
+    trueMax: max,            // stock ceiling if everything were balanced
+    bottlenecks,
+    addCount,
+    highestLabel: highestItem?.label,
+    isFullyBalanced: secondMin === max, // true if fixing bottleneck achieves full balance
+  }
+}
+
+// ─── SET CODE HELPER ─────────────────────────────────────────────────────────
+// Mirrors the backend getNextSetCode logic — used to show expected set code
+// on make_set requests before the manager approves.
+const getNextSetCodeLocal = (prefix, existingSets) => {
+  const occupied = new Set()
+  existingSets.forEach(s => {
+    const code = (s.code || '').toUpperCase()
+    if (code.startsWith(prefix.toUpperCase() + '-')) {
+      const suffix = code.slice(prefix.length + 1)
+      if (/^\d+$/.test(suffix)) occupied.add(parseInt(suffix, 10))
+    }
+  })
+  let next = 1
+  while (occupied.has(next)) next++
+  return `${prefix.toUpperCase()}-${String(next).padStart(3, '0')}`
 }
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
-const Makesets = () => {
+const Makesets = ({ userRole } = {}) => {
   const { devices, refreshDevices } = useInventory()
+  const navigate = useNavigate()
+
+  // ── Catalogue context (DB-backed set types) ───────────────────────────────
+  const { setTypes: catalogueSetTypes } = useCatalogue()
+
+  // ── Role helpers ──────────────────────────────────────────────────────────
+  const isGroundTeam = hasRole(userRole, ROLES.GROUNDTEAM)
+  const isManager    = hasRole(userRole, ROLES.MANAGER, ROLES.SUPERADMIN)
+
+  // ── Request submission state (ground team) ────────────────────────────────
+  const [requestSuccess, setRequestSuccess] = useState('')
+  const [requestError, setRequestError]     = useState('')
 
   const [searchParams] = useSearchParams()
   const urlLifecycle = searchParams.get('lifecycle') // e.g. 'return_initiated,return_transit'
@@ -168,7 +195,50 @@ const Makesets = () => {
   const [setsError, setSetsError] = useState('')
 
   const [customSetTypes, setCustomSetTypes] = useState(loadCustomSetTypes)
-  const allSetTypes = useMemo(() => ({ ...BUILTIN_SET_TYPES, ...customSetTypes }), [customSetTypes])
+
+  // Purely DB-driven — catalogue edits reflect everywhere immediately.
+  // Falls back to localStorage custom types only if DB hasn't loaded yet.
+  const allSetTypes = useMemo(() => {
+    if (catalogueSetTypes && catalogueSetTypes.length > 0) {
+      const dbTypes = {}
+      catalogueSetTypes.forEach(st => {
+        // componentSlots shape from DB: [{ slotKey, label, deviceTypeId }]
+        const slots = Array.isArray(st.componentSlots) ? st.componentSlots : []
+        const deviceTypes = slots
+          .map(s => s.deviceTypeId || s.deviceType || s.type)
+          .filter(Boolean)
+        const deviceLabels = Object.fromEntries(
+          slots
+            .map(s => [s.deviceTypeId || s.deviceType || s.type, s.label])
+            .filter(([k]) => k)
+        )
+        dbTypes[st.setTypeId] = {
+          label: st.label,
+          icon: st.icon || 'Package',
+          colorClasses: {
+            badge:  `bg-${st.color || 'gray'}-100 text-${st.color || 'gray'}-700 border-${st.color || 'gray'}-200`,
+            card:   `border-${st.color || 'gray'}-200 bg-${st.color || 'gray'}-50`,
+            header: `bg-${st.color || 'gray'}-500`,
+          },
+          deviceTypes,
+          deviceLabels,
+          builtin: st.isBuiltin,
+        }
+      })
+      // DB is authoritative — do NOT merge hardcoded builtins so edits are never shadowed
+      return dbTypes
+    }
+    // DB not loaded yet — temporary fallback to localStorage custom types
+    return customSetTypes
+  }, [catalogueSetTypes, customSetTypes])
+
+  // Reactive device type list — updates when Devices page adds a new custom device type
+  const [allKnownDeviceTypes, setAllKnownDeviceTypes] = useState(getKnownDeviceTypes)
+  useEffect(() => {
+    const handler = () => setAllKnownDeviceTypes(getKnownDeviceTypes())
+    window.addEventListener('device-types-updated', handler)
+    return () => window.removeEventListener('device-types-updated', handler)
+  }, [])
 
   const [search, setSearch] = useState('')
   const urlFilterType = searchParams.get('filterType')
@@ -184,11 +254,28 @@ const Makesets = () => {
   const [selectedSetType, setSelectedSetType] = useState('')
   const [setName, setSetName] = useState('')
   const [selectedDevices, setSelectedDevices] = useState({})
+  // Warehouse location for the new set
+  const [createWarehouseId, setCreateWarehouseId]                     = useState(null)
+  const [createWarehouseZone, setCreateWarehouseZone]                 = useState('')
+  const [createWarehouseSpecificLocation, setCreateWarehouseSpecificLocation] = useState('')
   const [createLoading, setCreateLoading] = useState(false)
   const [createError, setCreateError] = useState('')
+  const [createSuccess, setCreateSuccess] = useState(false)
 
   const [disassembleLoading, setDisassembleLoading] = useState(false)
+  const [disassembleReason, setDisassembleReason] = useState('')
+  const [disassembleReasonErr, setDisassembleReasonErr] = useState(false)
+  // Per-component location overrides for disassembly
+  // Shape: { [deviceId]: { warehouseId, warehouseZone, warehouseSpecificLocation } }
+  const [disassembleLocations, setDisassembleLocations] = useState({})
+  const [disassembleShareLocation, setDisassembleShareLocation] = useState(true) // shared toggle
+  // Shared location (used when toggle is ON)
+  const [disassembleSharedWarehouseId, setDisassembleSharedWarehouseId]                     = useState(null)
+  const [disassembleSharedZone, setDisassembleSharedZone]                                   = useState('')
+  const [disassembleSharedSpecificLocation, setDisassembleSharedSpecificLocation]           = useState('')
   const [showSetBarcode, setShowSetBarcode] = useState(null) // set object to show barcode for
+  const [expandedGroups, setExpandedGroups] = useState({}) // Track which lifecycle groups are expanded
+  const [showMoveSet, setShowMoveSet] = useState(null) // set object to move
 
   const [newTypeName, setNewTypeName] = useState('')
   const [newTypeComponents, setNewTypeComponents] = useState([{ deviceType: '', label: '' }])
@@ -225,14 +312,14 @@ const Makesets = () => {
       const counts = config.deviceTypes.map(t => ({
         type: t, label: config.deviceLabels[t], count: getAvailableByType(t).length,
       }))
-      const maxSets = Math.min(...counts.map(c => c.count))
+      const maxSets = counts.length > 0 ? Math.min(...counts.map(c => c.count)) : 0
       const tip = computeTip(config, getAvailableByType)
       result[key] = { counts, maxSets, tip }
     })
     return result
   }, [allSetTypes, getAvailableByType])
 
-  // ── Filtered sets list
+  // ── Filtered sets list with sorting
   const filteredSets = useMemo(() => {
     const lifecycleSteps = urlLifecycle ? urlLifecycle.split(',') : null
     return sets.filter(s => {
@@ -246,6 +333,48 @@ const Makesets = () => {
     })
   }, [sets, search, filterType, filterHealth, urlLifecycle])
 
+  // ── Grouped and sorted sets by lifecycle stage
+  const groupedSets = useMemo(() => {
+    const groups = {
+      warehouse: { label: '📦 In Warehouse', sets: [], order: 1, steps: ['available', 'warehouse', 'returned'] },
+      assigning: { label: '🔄 Assigning / In Transit', sets: [], order: 2, steps: ['assigning','assign_requested','assigned','ready_to_deploy','deploy_requested','in_transit','received','installed'] },
+      deployed: { label: '✅ Active / Deployed', sets: [], order: 3, steps: ['active', 'deployed', 'under_maintenance'] },
+      returning: { label: '↩️ Return Process', sets: [], order: 4, steps: ['return_initiated', 'return_requested', 'return_transit'] },
+      other: { label: '⚠️ Other Status', sets: [], order: 5, steps: [] },
+    }
+
+    // Categorize sets into groups
+    filteredSets.forEach(set => {
+      const lifecycle = set.lifecycleStatus || 'available'
+      let assigned = false
+      for (const [key, group] of Object.entries(groups)) {
+        if (group.steps.includes(lifecycle)) {
+          group.sets.push(set)
+          assigned = true
+          break
+        }
+      }
+      if (!assigned) groups.other.sets.push(set)
+    })
+
+    // Sort sets within each group: by setType, then by code
+    Object.values(groups).forEach(group => {
+      group.sets.sort((a, b) => {
+        // Primary: setType
+        const typeA = a.setType || ''
+        const typeB = b.setType || ''
+        if (typeA !== typeB) return typeA.localeCompare(typeB)
+        // Secondary: code
+        return (a.code || '').localeCompare(b.code || '')
+      })
+    })
+
+    // Return only non-empty groups in order
+    return Object.values(groups)
+      .filter(g => g.sets.length > 0)
+      .sort((a, b) => a.order - b.order)
+  }, [filteredSets])
+
   const WAREHOUSE_SET_STEPS = new Set(['available', 'warehouse', 'returned'])
   const DEPLOYED_SET_STEPS  = new Set(['active', 'deployed', 'under_maintenance'])
   const ASSIGNING_SET_STEPS = new Set(['assigning','assign_requested','assigned','ready_to_deploy','deploy_requested','in_transit','received','installed','return_initiated','return_requested','return_transit'])
@@ -258,39 +387,139 @@ const Makesets = () => {
     damaged:   sets.filter(s => s.healthStatus !== 'ok').length,
   }), [sets])
 
-  // ── Create set
+  // ── Create set (role-aware)
   const handleCreate = async () => {
     setCreateError('')
+    setRequestSuccess('')
+    setRequestError('')
     const config = allSetTypes[selectedSetType]
     if (!config) return setCreateError('Select a set type.')
     const componentDeviceIds = Object.values(selectedDevices).filter(Boolean).map(Number)
     if (componentDeviceIds.length !== config.deviceTypes.length)
       return setCreateError('Please select one device for each component.')
+    if (!createWarehouseId)
+      return setCreateError('Please select a warehouse location for this set.')
+
     setCreateLoading(true)
     try {
-      const newSet = await setApi.create({ setType: selectedSetType, setTypeName: config.label, name: setName || undefined, componentDeviceIds, location: 'Warehouse A' })
-      await Promise.all([fetchSets(), refreshDevices()])  // sync both — devices get setId, stock analysis updates
-      setShowCreate(false); resetCreateForm()
-      setShowSetBarcode(newSet)  // show QR barcode for the newly created set
+      if (isGroundTeam) {
+        const setTypeConfig = catalogueSetTypes.find(st => st.setTypeId === selectedSetType)
+        const setPrefix = setTypeConfig?.prefix || selectedSetType.toUpperCase()
+        const expectedSetCode = getNextSetCodeLocal(setPrefix, sets)
+        await inventoryRequestApi.requestMakeSet({
+          setTypeId: selectedSetType,
+          setTypeName: config.label,
+          setName: setName || undefined,
+          reservedDeviceIds: componentDeviceIds,
+          expectedCodeRange: expectedSetCode,
+          warehouseId: createWarehouseId,
+          warehouseZone: createWarehouseZone || undefined,
+          warehouseSpecificLocation: createWarehouseSpecificLocation || undefined,
+        })
+        setCreateSuccess(true)
+        setTimeout(() => { setShowCreate(false); resetCreateForm(); setCreateSuccess(false); setRequestSuccess('Set creation request submitted! A manager will review it shortly.') }, 2000)
+      } else {
+        // Manager: direct create
+        const newSet = await setApi.create({
+          setType: selectedSetType,
+          setTypeName: config.label,
+          name: setName || undefined,
+          componentDeviceIds,
+          warehouseId: createWarehouseId,
+          warehouseZone: createWarehouseZone || undefined,
+          warehouseSpecificLocation: createWarehouseSpecificLocation || undefined,
+        })
+        await Promise.all([fetchSets(), refreshDevices()])
+        setShowCreate(false); resetCreateForm()
+        setShowSetBarcode(newSet)
+      }
     } catch (err) {
-      setCreateError(err?.response?.data?.error || 'Failed to create set.')
+      const msg = err?.response?.data?.error || err?.message || 'Failed.'
+      if (isGroundTeam) setRequestError(msg)
+      else setCreateError(msg)
     } finally { setCreateLoading(false) }
   }
 
-  const resetCreateForm = () => { setSelectedSetType(''); setSetName(''); setSelectedDevices({}); setCreateError('') }
-
-  // ── Disassemble / delete
-  const handleDisassemble = async (set) => {
-    setDisassembleLoading(true)
-    try { await setApi.disassemble(set.id, []); await Promise.all([fetchSets(), refreshDevices()]); setShowDisassemble(null) }
-    catch (err) { alert(err?.response?.data?.error || 'Failed to disassemble set.') }
-    finally { setDisassembleLoading(false) }
+  const resetCreateForm = () => {
+    setSelectedSetType(''); setSetName(''); setSelectedDevices({})
+    setCreateWarehouseId(null); setCreateWarehouseZone(''); setCreateWarehouseSpecificLocation('')
+    setCreateError(''); setCreateSuccess(false)
   }
 
-  const handleDelete = async (set) => {
-    if (!window.confirm(`Delete set ${set.code}? All components will return to warehouse.`)) return
-    try { await setApi.delete(set.id); await Promise.all([fetchSets(), refreshDevices()]); setShowDetail(null) }
-    catch (err) { alert(err?.response?.data?.error || 'Failed to delete set.') }
+  // ── Disassemble (no delete)
+  const handleDisassemble = async (set) => {
+    if (!disassembleReason.trim()) { setDisassembleReasonErr(true); return }
+    setDisassembleReasonErr(false)
+    setDisassembleLoading(true)
+
+    // Build component locations array
+    const componentLocations = (set.components || []).map(comp => {
+      if (disassembleShareLocation) {
+        // All components go to the shared location
+        return {
+          deviceId: comp.id,
+          warehouseId: disassembleSharedWarehouseId,
+          warehouseZone: disassembleSharedZone || null,
+          warehouseSpecificLocation: disassembleSharedSpecificLocation || null,
+        }
+      }
+      // Per-component override, or fall back to preSet snapshot (backend handles null as fallback)
+      const loc = disassembleLocations[comp.id] || {}
+      return {
+        deviceId: comp.id,
+        warehouseId: loc.warehouseId ?? null,
+        warehouseZone: loc.warehouseZone ?? null,
+        warehouseSpecificLocation: loc.warehouseSpecificLocation ?? null,
+      }
+    })
+
+    try {
+      if (isGroundTeam) {
+        await inventoryRequestApi.requestBreakSet(set.id, disassembleReason.trim(), componentLocations)
+        setShowDisassemble(null)
+        setDisassembleReason('')
+        resetDisassembleLocations()
+        setRequestSuccess('Break set request submitted! A manager will review it shortly.')
+      } else {
+        await setApi.disassemble(set.id, [], disassembleReason.trim(), componentLocations)
+        await Promise.all([fetchSets(), refreshDevices()])
+        setShowDisassemble(null)
+        setDisassembleReason('')
+        resetDisassembleLocations()
+      }
+    } catch (err) {
+      alert(err?.response?.data?.error || err?.message || 'Failed.')
+    } finally { setDisassembleLoading(false) }
+  }
+
+  const resetDisassembleLocations = () => {
+    setDisassembleLocations({})
+    setDisassembleShareLocation(true)
+    setDisassembleSharedWarehouseId(null)
+    setDisassembleSharedZone('')
+    setDisassembleSharedSpecificLocation('')
+  }
+
+  // When the disassemble modal opens, pre-fill shared location from the set's current location
+  const openDisassemble = (set) => {
+    setDisassembleReason('')
+    setDisassembleReasonErr(false)
+    setDisassembleShareLocation(true)
+    // Pre-fill shared selector with the set's current warehouse location
+    setDisassembleSharedWarehouseId(set.warehouseId || null)
+    setDisassembleSharedZone(set.warehouseZone || '')
+    setDisassembleSharedSpecificLocation(set.warehouseSpecificLocation || '')
+    // Pre-fill per-component from each device's preSet snapshot
+    const perComp = {}
+    ;(set.components || []).forEach(comp => {
+      perComp[comp.id] = {
+        warehouseId: comp.preSetWarehouseId || null,
+        warehouseZone: comp.preSetWarehouseZone || '',
+        warehouseSpecificLocation: comp.preSetWarehouseSpecificLocation || '',
+      }
+    })
+    setDisassembleLocations(perComp)
+    setShowDisassemble(set)
   }
 
   // ── Save custom type
@@ -311,6 +540,7 @@ const Makesets = () => {
       },
     }
     setCustomSetTypes(updated); saveCustomSetTypes(updated)
+    window.dispatchEvent(new CustomEvent('set-types-updated'))
     setShowDefineType(false); setNewTypeName(''); setNewTypeComponents([{ deviceType: '', label: '' }]); setDefineError('')
   }
 
@@ -318,6 +548,7 @@ const Makesets = () => {
     if (!window.confirm('Remove this custom set type?')) return
     const updated = { ...customSetTypes }; delete updated[key]
     setCustomSetTypes(updated); saveCustomSetTypes(updated)
+    window.dispatchEvent(new CustomEvent('set-types-updated'))
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -337,14 +568,38 @@ const Makesets = () => {
           <button onClick={fetchSets} className="p-2 border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-500" title="Refresh">
             <RefreshCw className="w-4 h-4" />
           </button>
-          <button onClick={() => setShowDefineType(true)} className="flex items-center gap-2 px-3 py-2 border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 rounded-lg text-sm font-medium">
-            <Settings className="w-4 h-4" /> Define Set Type
+          <button
+            onClick={() => navigate('/dashboard/set-history')}
+            className="flex items-center gap-2 px-3 py-2 border border-gray-200 text-gray-600 bg-white hover:bg-gray-50 rounded-lg text-sm font-medium"
+          >
+            <History className="w-4 h-4" /> Set History
           </button>
-          <button onClick={() => { resetCreateForm(); setShowCreate(true) }} className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 font-medium text-sm shadow-sm">
-            <Plus className="w-4 h-4" /> Create Set
+          {isManager && (
+            <button onClick={() => setShowDefineType(true)} className="flex items-center gap-2 px-3 py-2 border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 rounded-lg text-sm font-medium">
+              <Settings className="w-4 h-4" /> Define Set Type
+            </button>
+          )}
+          <button onClick={() => { resetCreateForm(); refreshDevices(); setShowCreate(true) }} className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 font-medium text-sm shadow-sm">
+            <Plus className="w-4 h-4" /> {isGroundTeam ? 'Request Set' : 'Create Set'}
           </button>
         </div>
       </div>
+
+      {/* Request feedback banners */}
+      {requestSuccess && (
+        <div className="flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-sm">
+          <CheckCircle className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+          <span className="flex-1">{requestSuccess}</span>
+          <button onClick={() => setRequestSuccess('')} className="p-1 hover:bg-emerald-100 rounded-lg"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+      {requestError && (
+        <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-red-800 text-sm">
+          <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
+          <span className="flex-1">{requestError}</span>
+          <button onClick={() => setRequestError('')} className="p-1 hover:bg-red-100 rounded-lg"><X className="w-4 h-4" /></button>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -426,7 +681,8 @@ const Makesets = () => {
                         <TrendingUp className="w-3.5 h-3.5 text-amber-600 mt-0.5 flex-shrink-0" />
                         <p className="text-xs text-amber-800">
                           Add <strong>{tip.addCount} more {tip.bottlenecks.map(b => b.label).join(' / ')}</strong> to unlock{' '}
-                          <strong>{tip.max} total sets</strong>, fully using your {tip.max} {tip.highestLabel}s
+                          <strong>{tip.max} sets</strong>
+                          {!tip.isFullyBalanced && <span className="font-normal"> (then balance remaining stock for {tip.trueMax} total)</span>}
                         </p>
                       </div>
                     ) : maxSets > 0 ? (
@@ -465,7 +721,7 @@ const Makesets = () => {
         </select>
       </div>
 
-      {/* Sets list */}
+      {/* Sets list - Grouped by lifecycle */}
       {setsLoading ? (
         <div className="flex items-center justify-center py-20"><div className="w-8 h-8 border-4 border-violet-600 border-t-transparent rounded-full animate-spin" /></div>
       ) : setsError ? (
@@ -477,38 +733,152 @@ const Makesets = () => {
         <div className="flex flex-col items-center py-16 text-gray-400 gap-3">
           <Box className="w-12 h-12 opacity-40" />
           <p className="font-medium text-gray-500">No sets found</p>
-          <button onClick={() => { resetCreateForm(); setShowCreate(true) }} className="mt-1 flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-sm font-medium">
+          <button onClick={() => { resetCreateForm(); refreshDevices(); setShowCreate(true) }} className="mt-1 flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 text-sm font-medium">
             <Plus className="w-4 h-4" /> Create Set
           </button>
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {filteredSets.map(set => {
-            const config = allSetTypes[set.setType]
-            const Icon = getIcon(config?.icon)
+        <div className="space-y-6">
+          {groupedSets.map((group, groupIdx) => {
+            const groupKey = `group-${groupIdx}`
+            const isExpanded = expandedGroups[groupKey] !== false // Default to expanded
             return (
-              <div key={set.id} className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow cursor-pointer group" onClick={() => setShowDetail(set)}>
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <div className={`p-2 rounded-lg ${config?.colorClasses?.card || 'bg-gray-100'}`}><Icon className="w-5 h-5 text-gray-700" /></div>
-                    <div><p className="font-semibold text-gray-900 text-sm">{set.code}</p><p className="text-xs text-gray-500">{set.setTypeName}</p></div>
+              <div key={groupIdx} className="bg-white border-2 border-gray-200 rounded-2xl overflow-hidden">
+                {/* Group Header */}
+                <button 
+                  onClick={() => setExpandedGroups(prev => ({ ...prev, [groupKey]: !isExpanded }))}
+                  className="w-full flex items-center justify-between px-5 py-3.5 bg-gradient-to-r from-gray-50 to-gray-100 hover:from-gray-100 hover:to-gray-150 border-b border-gray-200 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg font-bold text-gray-800">{group.label}</span>
+                    <span className="px-2.5 py-0.5 bg-violet-100 text-violet-700 text-xs font-bold rounded-full border border-violet-200">
+                      {group.sets.length}
+                    </span>
                   </div>
-                  <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-violet-500 transition-colors mt-1" />
-                </div>
-                {set.name && <p className="text-sm text-gray-700 font-medium mb-2">{set.name}</p>}
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${getHealthStyle(set.healthStatus)}`}>
-                    {getHealthLabel(set.healthStatus)}
-                  </span>
-                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${LIFECYCLE_STYLES[set.lifecycleStatus] || LIFECYCLE_STYLES.available}`}>
-                    {LIFECYCLE_STEP_LABELS[set.lifecycleStatus] || set.lifecycleStatus || 'In Warehouse'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                  <Package className="w-3.5 h-3.5" />
-                  <span>{set.components?.length || 0} components</span>
-                  {set.location && <><span className="mx-1">·</span><span>{set.location}</span></>}
-                </div>
+                  {isExpanded ? <ChevronUp className="w-5 h-5 text-gray-500" /> : <ChevronDown className="w-5 h-5 text-gray-500" />}
+                </button>
+
+                {/* Group Content */}
+                {isExpanded && (
+                  <div className="p-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                    {group.sets.map(set => {
+                      const config = allSetTypes[set.setType]
+                      const Icon = getIcon(config?.icon)
+                      
+                      // Calculate actual set health from components
+                      const calculatedHealth = calculateSetHealth(set.components)
+                      const healthInfo = getHealthDisplayInfo(calculatedHealth)
+                      const healthSummary = getComponentHealthSummary(set.components)
+                      const problematicComponents = getProblematicComponents(set.components)
+                      const totalComps = set.components?.length || 0
+
+                      // Check for health mismatch (backend vs calculated)
+                      const healthMismatch = set.healthStatus !== calculatedHealth
+
+                      return (
+                        <div 
+                          key={set.id} 
+                          className={`bg-white rounded-xl p-4 hover:shadow-lg transition-all cursor-pointer group relative
+                            ${calculatedHealth === 'damage' ? 'border-2 border-red-300' : 
+                              calculatedHealth === 'repair' ? 'border-2 border-amber-300' : 
+                              calculatedHealth === 'lost' ? 'border-2 border-gray-300' : 
+                              'border border-gray-200 hover:border-violet-300'}`}
+                          onClick={() => setShowSetBarcode(set)}
+                        >
+                          {/* Health mismatch indicator (for debugging) */}
+                          {healthMismatch && (
+                            <div className="absolute -top-2 -right-2 w-4 h-4 bg-orange-500 rounded-full border-2 border-white" 
+                              title={`Health mismatch: DB shows ${set.healthStatus}, calculated ${calculatedHealth}`} />
+                          )}
+                          
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <div className={`p-2 rounded-lg ${config?.colorClasses?.card || 'bg-gray-100'}`}>
+                                <Icon className="w-5 h-5 text-gray-700" />
+                              </div>
+                              <div>
+                                <p className="font-bold text-gray-900 text-sm font-mono">{set.code}</p>
+                                <p className="text-xs text-gray-500">{set.setTypeName}</p>
+                              </div>
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-violet-600 group-hover:translate-x-1 transition-all mt-1" />
+                          </div>
+                          
+                          {set.name && <p className="text-sm text-gray-700 font-medium mb-2 truncate">{set.name}</p>}
+                          
+                          <div className="flex flex-wrap gap-1.5 mb-3">
+                            {/* Use calculated health, not DB health */}
+                            <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${healthInfo.badge}`}>
+                              {healthInfo.label}
+                            </span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${LIFECYCLE_STYLES[set.lifecycleStatus] || LIFECYCLE_STYLES.available}`}>
+                              {LIFECYCLE_STEP_LABELS[set.lifecycleStatus] || set.lifecycleStatus || 'In Warehouse'}
+                            </span>
+                          </div>
+                          
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                              <Package className="w-3.5 h-3.5" />
+                              <span>{totalComps} components</span>
+                            </div>
+                            {/* Warehouse location breadcrumb */}
+                            {(() => {
+                              const parts = [
+                                set.warehouse?.name || (set.warehouseId ? `WH #${set.warehouseId}` : null),
+                                set.warehouseZone,
+                                set.warehouseSpecificLocation,
+                              ].filter(Boolean)
+                              return parts.length > 0 ? (
+                                <div className="flex items-center gap-1 text-xs text-gray-400 flex-wrap">
+                                  <MapPin className="w-3 h-3 flex-shrink-0" />
+                                  {parts.map((p, i) => (
+                                    <span key={i} className="flex items-center gap-1">
+                                      {i > 0 && <span className="text-gray-300">›</span>}
+                                      <span>{p}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null
+                            })()}
+                            
+                            {/* Component Health Summary */}
+                            {totalComps > 0 && (
+                              <div className="flex items-center gap-2 text-[10px] font-medium">
+                                {healthSummary.ok > 0 && (
+                                  <span className="text-emerald-600 flex items-center gap-0.5">
+                                    <Check className="w-3 h-3" /> {healthSummary.ok}
+                                  </span>
+                                )}
+                                {healthSummary.repair > 0 && (
+                                  <span className="text-amber-600 flex items-center gap-0.5">
+                                    <Wrench className="w-3 h-3" /> {healthSummary.repair}
+                                  </span>
+                                )}
+                                {healthSummary.damage > 0 && (
+                                  <span className="text-red-600 flex items-center gap-0.5">
+                                    <AlertTriangle className="w-3 h-3" /> {healthSummary.damage}
+                                  </span>
+                                )}
+                                {healthSummary.lost > 0 && (
+                                  <span className="text-gray-600 flex items-center gap-0.5">
+                                    <XCircle className="w-3 h-3" /> {healthSummary.lost} lost
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            
+                            {/* Warning for problematic components */}
+                            {problematicComponents.length > 0 && (
+                              <div className="text-[10px] text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200">
+                                {problematicComponents.length} component{problematicComponents.length > 1 ? 's' : ''} need{problematicComponents.length === 1 ? 's' : ''} attention
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             )
           })}
@@ -566,7 +936,7 @@ const Makesets = () => {
                             <div className="mt-1 flex items-start gap-1.5 px-2 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
                               <TrendingUp className="w-3 h-3 text-amber-600 mt-0.5 flex-shrink-0" />
                               <p className="text-xs text-amber-800">
-                                Add <strong>{tip.addCount} {tip.bottlenecks.map(b => b.label).join(' / ')}</strong> → unlock <strong>{tip.max} total sets</strong>
+                                Add <strong>{tip.addCount} {tip.bottlenecks.map(b => b.label).join(' / ')}</strong> → unlock <strong>{tip.max} sets</strong>{!tip.isFullyBalanced && ` (${tip.trueMax} possible if fully balanced)`}
                               </p>
                             </div>
                           )}
@@ -594,20 +964,36 @@ const Makesets = () => {
                     <div className="space-y-3">
                       {config.deviceTypes.map(devType => {
                         const available = getAvailableByType(devType)
+                        const softLocked = available.filter(d => d.lifecycleStatus === 'pending_set_assignment')
+                        // Also exclude devices already picked in another slot of this same form
+                        const pickedElsewhere = new Set(
+                          Object.entries(selectedDevices)
+                            .filter(([k, v]) => k !== devType && v)
+                            .map(([, v]) => Number(v))
+                        )
+                        const selectable = available.filter(d =>
+                          d.lifecycleStatus !== 'pending_set_assignment' && !pickedElsewhere.has(d.id)
+                        )
                         return (
                           <div key={devType} className={`border rounded-xl p-3 ${selectedDevices[devType] ? 'border-violet-300 bg-violet-50' : 'border-gray-200'}`}>
                             <div className="flex items-center gap-2 mb-2">
                               <span className="text-sm font-medium text-gray-700">{config.deviceLabels[devType]}</span>
-                              <span className={`ml-auto text-xs font-semibold ${available.length === 0 ? 'text-red-600' : 'text-emerald-600'}`}>{available.length} available</span>
+                              <span className={`ml-auto text-xs font-semibold ${selectable.length === 0 ? 'text-red-600' : 'text-emerald-600'}`}>{selectable.length} available</span>
+                              {softLocked.length > 0 && <span className="text-xs text-indigo-600">{softLocked.length} pending</span>}
                             </div>
-                            {available.length === 0 ? (
+                            {selectable.length === 0 ? (
                               <p className="text-xs text-amber-700 bg-amber-50 px-2 py-1.5 rounded-lg border border-amber-200">⚠ No {config.deviceLabels[devType]} available in warehouse</p>
                             ) : (
                               <select value={selectedDevices[devType] || ''} onChange={e => setSelectedDevices(prev => ({ ...prev, [devType]: e.target.value }))}
                                 className={`w-full px-2 py-1.5 border rounded-lg text-sm focus:ring-2 focus:ring-violet-500 ${!selectedDevices[devType] ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-white'}`}>
                                 <option value="">Select {config.deviceLabels[devType]} *</option>
-                                {available.map(d => <option key={d.id} value={d.id}>{d.code} — {d.brand} {d.model} ({d.size || 'N/A'})</option>)}
+                                {selectable.map(d => <option key={d.id} value={d.id}>{d.code} — {d.brand} {d.model} ({d.size || 'N/A'})</option>)}
                               </select>
+                            )}
+                            {softLocked.length > 0 && (
+                              <p className="mt-1 text-[10px] text-indigo-600">
+                                {softLocked.length} device{softLocked.length > 1 ? 's' : ''} hidden — pending set assignment approval
+                              </p>
                             )}
                           </div>
                         )
@@ -617,19 +1003,58 @@ const Makesets = () => {
                 )
               })()}
 
-              {createError && (
+              {/* Step 4: warehouse location */}
+              {selectedSetType && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
+                    <MapPin className="w-4 h-4 text-violet-500" />
+                    Step 4 — Warehouse Location <span className="text-red-500">*</span>
+                  </label>
+                  <div className="border border-violet-200 rounded-xl p-3 bg-violet-50/40">
+                    <p className="text-xs text-violet-700 mb-3 flex items-start gap-1.5">
+                      <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                      All components will be assigned this location. Each component's current location is saved so it can be restored when the set is disassembled.
+                    </p>
+                    <WarehouseLocationSelector
+                      warehouseId={createWarehouseId}
+                      zone={createWarehouseZone}
+                      specificLocation={createWarehouseSpecificLocation}
+                      onWarehouseChange={setCreateWarehouseId}
+                      onZoneChange={setCreateWarehouseZone}
+                      onSpecificLocationChange={setCreateWarehouseSpecificLocation}
+                      required={true}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {createSuccess && (
+                <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
+                  <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center">
+                    <CheckCircle className="w-8 h-8 text-emerald-500" />
+                  </div>
+                  <p className="text-base font-bold text-gray-800">Request Submitted!</p>
+                  <p className="text-sm text-gray-500">A manager will review and approve your set creation request shortly.</p>
+                </div>
+              )}
+
+              {!createSuccess && createError && (
                 <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0" />{createError}
                 </div>
               )}
             </div>
 
-            <div className="flex gap-3 p-5 border-t border-gray-100">
-              <button type="button" onClick={() => { setShowCreate(false); resetCreateForm() }} disabled={createLoading} className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 font-medium disabled:opacity-50 text-sm">Cancel</button>
-              <button type="button" onClick={handleCreate} disabled={createLoading || !selectedSetType} className="flex-1 px-4 py-2.5 bg-violet-600 text-white rounded-lg hover:bg-violet-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm">
-                {createLoading ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Creating...</> : <><PackagePlus className="w-4 h-4" /> Create Set</>}
-              </button>
-            </div>
+            {!createSuccess && (
+              <div className="flex gap-3 p-5 border-t border-gray-100">
+                <button type="button" onClick={() => { setShowCreate(false); resetCreateForm() }} disabled={createLoading} className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 font-medium disabled:opacity-50 text-sm">Cancel</button>
+                <button type="button" onClick={handleCreate} disabled={createLoading || !selectedSetType} className="flex-1 px-4 py-2.5 bg-violet-600 text-white rounded-lg hover:bg-violet-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm">
+                  {createLoading
+                    ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> {isGroundTeam ? 'Submitting...' : 'Creating...'}</>
+                    : <><PackagePlus className="w-4 h-4" /> {isGroundTeam ? 'Submit Request' : 'Create Set'}</>}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -685,12 +1110,12 @@ const Makesets = () => {
                     <div key={i} className="flex gap-2 items-center">
                       <select value={comp.deviceType}
                         onChange={e => {
-                          const found = ALL_KNOWN_DEVICE_TYPES.find(d => d.value === e.target.value)
+                          const found = allKnownDeviceTypes.find(d => d.value === e.target.value)
                           setNewTypeComponents(p => p.map((c, idx) => idx === i ? { deviceType: e.target.value, label: found?.label || c.label } : c))
                         }}
                         className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500">
                         <option value="">Select device type</option>
-                        {ALL_KNOWN_DEVICE_TYPES.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                        {allKnownDeviceTypes.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
                       </select>
                       <input type="text" value={comp.label} placeholder="Display label"
                         onChange={e => setNewTypeComponents(p => p.map((c, idx) => idx === i ? { ...c, label: e.target.value } : c))}
@@ -738,71 +1163,129 @@ const Makesets = () => {
         </div>
       )}
 
-      {/* ════════════ SET DETAIL MODAL ════════════ */}
-      {showDetail && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => { if (e.target === e.currentTarget) setShowDetail(null) }}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between p-5 border-b border-gray-100">
-              <div><h2 className="text-lg font-bold text-gray-900">{showDetail.code}</h2><p className="text-sm text-gray-500">{showDetail.setTypeName}</p></div>
-              <button onClick={() => setShowDetail(null)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400"><X className="w-5 h-5" /></button>
-            </div>
-            <div className="overflow-y-auto flex-1 p-5 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { label: 'Code', value: showDetail.code },
-                  { label: 'Barcode', value: showDetail.barcode, mono: true },
-                  { label: 'Status', value: LIFECYCLE_STEP_LABELS[showDetail.lifecycleStatus] || showDetail.lifecycleStatus || 'In Warehouse' },
-                  { label: 'Health', value: showDetail.healthStatus },
-                  { label: 'Location', value: showDetail.location || '—' },
-                  { label: 'Name', value: showDetail.name || '—' },
-                ].map(({ label, value, mono }) => (
-                  <div key={label} className="bg-gray-50 rounded-lg p-2.5">
-                    <p className="text-xs text-gray-400 mb-0.5">{label}</p>
-                    <p className={`font-medium text-gray-800 text-sm ${mono ? 'font-mono text-xs' : ''}`}>{value}</p>
-                  </div>
-                ))}
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><Package className="w-4 h-4" /> Components ({showDetail.components?.length || 0})</p>
-                <div className="space-y-2">
-                  {showDetail.components?.map(comp => (
-                    <div key={comp.id} className="flex items-center gap-3 p-2.5 border border-gray-100 rounded-lg bg-gray-50">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-800">{comp.code}</p>
-                        <p className="text-xs text-gray-500">{comp.brand} {comp.model} · {comp.size || 'N/A'}</p>
-                      </div>
-                      <span className={`text-xs px-2 py-0.5 rounded-full border ${getHealthStyle(comp.healthStatus)}`}>{getHealthLabel(comp.healthStatus)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-2 p-5 border-t border-gray-100">
-              <button onClick={() => { setShowSetBarcode(showDetail); setShowDetail(null) }} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 rounded-lg text-sm font-medium"><QrCode className="w-4 h-4" /> Barcode</button>
-              {['available', 'warehouse', 'returned'].includes(showDetail?.lifecycleStatus)
-                ? <button onClick={() => { setShowDisassemble(showDetail); setShowDetail(null) }} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg text-sm font-medium"><Wrench className="w-4 h-4" /> Disassemble</button>
-                : <div className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-gray-200 text-gray-400 bg-gray-50 rounded-lg text-sm font-medium cursor-not-allowed" title="Cannot disassemble — set is not in warehouse"><Wrench className="w-4 h-4" /> Disassemble</div>
-              }
-              <button onClick={() => handleDelete(showDetail)} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 rounded-lg text-sm font-medium"><Trash2 className="w-4 h-4" /> Delete</button>
-              <button onClick={() => setShowDetail(null)} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 border border-gray-200 text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg text-sm font-medium">Close</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ════════════ DISASSEMBLE MODAL ════════════ */}
       {showDisassemble && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
-            <div className="flex items-center gap-3 mb-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            <div className="flex items-center gap-3 p-5 border-b border-gray-100">
               <div className="p-2.5 bg-amber-100 rounded-xl"><Wrench className="w-6 h-6 text-amber-600" /></div>
-              <div><h3 className="text-lg font-bold text-gray-900">Disassemble Set</h3><p className="text-sm text-gray-500">{showDisassemble.code}</p></div>
+              <div className="flex-1">
+                <h3 className="text-lg font-bold text-gray-900">Disassemble Set</h3>
+                <p className="text-sm text-gray-500">{showDisassemble.code} · {showDisassemble.components?.length || 0} components</p>
+              </div>
+              <button onClick={() => { setShowDisassemble(null); setDisassembleReason(''); setDisassembleReasonErr(false); resetDisassembleLocations() }} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400"><X className="w-5 h-5" /></button>
             </div>
-            <p className="text-sm text-gray-600 mb-5">All <strong>{showDisassemble.components?.length || 0} components</strong> will be returned to warehouse individually. This cannot be undone.</p>
-            <div className="flex gap-3">
-              <button onClick={() => setShowDisassemble(null)} disabled={disassembleLoading} className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 font-medium disabled:opacity-50 text-sm">Cancel</button>
+
+            <div className="overflow-y-auto flex-1 p-5 space-y-5">
+              <p className="text-sm text-gray-600">All <strong>{showDisassemble.components?.length || 0} components</strong> will be returned to warehouse individually. This cannot be undone.</p>
+
+              {/* Reason */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                  Reason for disassembly <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Client returned set, upgrading to larger model, components needed elsewhere…"
+                  value={disassembleReason}
+                  onChange={e => { setDisassembleReason(e.target.value); if (e.target.value.trim()) setDisassembleReasonErr(false) }}
+                  className={`w-full text-sm rounded-lg border px-3 py-2 resize-none focus:outline-none focus:ring-2 transition-colors ${
+                    disassembleReasonErr
+                      ? 'border-red-400 focus:ring-red-200 bg-red-50'
+                      : 'border-gray-300 focus:ring-amber-200 focus:border-amber-400'
+                  }`}
+                />
+                {disassembleReasonErr && (
+                  <p className="text-xs text-red-600 mt-1">A reason is required before disassembling.</p>
+                )}
+              </div>
+
+              {/* Location section */}
+              <div className="border border-amber-200 rounded-xl overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 bg-amber-50 border-b border-amber-200">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-amber-600" />
+                    <span className="text-sm font-semibold text-amber-800">Component Return Locations</span>
+                  </div>
+                  {/* Shared / Individual toggle */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-amber-700">Individual</span>
+                    <button
+                      type="button"
+                      onClick={() => setDisassembleShareLocation(v => !v)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${disassembleShareLocation ? 'bg-amber-500' : 'bg-gray-300'}`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${disassembleShareLocation ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
+                    </button>
+                    <span className="text-xs text-amber-700">All same</span>
+                  </div>
+                </div>
+
+                <div className="p-4">
+                  {disassembleShareLocation ? (
+                    /* ── Shared location ── */
+                    <div>
+                      <p className="text-xs text-gray-500 mb-3">
+                        All components will go to the same location. Pre-filled with the set's current location.
+                      </p>
+                      <WarehouseLocationSelector
+                        warehouseId={disassembleSharedWarehouseId}
+                        zone={disassembleSharedZone}
+                        specificLocation={disassembleSharedSpecificLocation}
+                        onWarehouseChange={setDisassembleSharedWarehouseId}
+                        onZoneChange={setDisassembleSharedZone}
+                        onSpecificLocationChange={setDisassembleSharedSpecificLocation}
+                        required={false}
+                      />
+                    </div>
+                  ) : (
+                    /* ── Per-component location ── */
+                    <div className="space-y-4">
+                      <p className="text-xs text-gray-500">
+                        Each component is pre-filled with its location <em>before</em> the set was created. Override as needed.
+                      </p>
+                      {(showDisassemble.components || []).map(comp => {
+                        const loc = disassembleLocations[comp.id] || {}
+                        return (
+                          <div key={comp.id} className="border border-gray-200 rounded-xl p-3 bg-gray-50/50">
+                            <div className="flex items-center gap-2 mb-3">
+                              <div className="w-7 h-7 bg-white border border-gray-200 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <Package className="w-3.5 h-3.5 text-gray-500" />
+                              </div>
+                              <div>
+                                <p className="text-sm font-semibold text-gray-800 font-mono">{comp.code}</p>
+                                <p className="text-xs text-gray-400">{comp.brand} {comp.model}</p>
+                              </div>
+                              {/* Show preSet snapshot as a hint */}
+                              {comp.preSetWarehouseId && (
+                                <span className="ml-auto text-[10px] text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200">
+                                  Pre-set location loaded
+                                </span>
+                              )}
+                            </div>
+                            <WarehouseLocationSelector
+                              warehouseId={loc.warehouseId ?? null}
+                              zone={loc.warehouseZone ?? ''}
+                              specificLocation={loc.warehouseSpecificLocation ?? ''}
+                              onWarehouseChange={val => setDisassembleLocations(prev => ({ ...prev, [comp.id]: { ...prev[comp.id], warehouseId: val, warehouseZone: '' } }))}
+                              onZoneChange={val => setDisassembleLocations(prev => ({ ...prev, [comp.id]: { ...prev[comp.id], warehouseZone: val } }))}
+                              onSpecificLocationChange={val => setDisassembleLocations(prev => ({ ...prev, [comp.id]: { ...prev[comp.id], warehouseSpecificLocation: val } }))}
+                              required={false}
+                            />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 p-5 border-t border-gray-100">
+              <button onClick={() => { setShowDisassemble(null); setDisassembleReason(''); setDisassembleReasonErr(false); resetDisassembleLocations() }} disabled={disassembleLoading} className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 font-medium disabled:opacity-50 text-sm">Cancel</button>
               <button onClick={() => handleDisassemble(showDisassemble)} disabled={disassembleLoading} className="flex-1 px-4 py-2.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600 font-medium disabled:opacity-50 flex items-center justify-center gap-2 text-sm">
-                {disassembleLoading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <><Wrench className="w-4 h-4" /> Disassemble</>}
+                {disassembleLoading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <><Wrench className="w-4 h-4" /> {isGroundTeam ? 'Submit Request' : 'Disassemble'}</>}
               </button>
             </div>
           </div>
@@ -811,9 +1294,23 @@ const Makesets = () => {
 
     </div>
 
+      {/* MOVE SET MODAL */}
+      {showMoveSet && (
+        <MoveSetModal
+          set={showMoveSet}
+          onSuccess={async (updatedSet) => {
+            // Update the set in local state so the card refreshes immediately
+            setSets(prev => prev.map(s => s.id === updatedSet.id ? { ...s, ...updatedSet } : s))
+            await refreshDevices()
+          }}
+          onClose={() => setShowMoveSet(null)}
+        />
+      )}
+
       {/* SET BARCODE MODAL */}
       {showSetBarcode && (
         <SetBarcodeGenerator
+          key={showSetBarcode.barcode || showSetBarcode.id}
           set={showSetBarcode}
           onClose={() => setShowSetBarcode(null)}
         />

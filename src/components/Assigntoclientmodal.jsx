@@ -4,9 +4,11 @@ import {
   CheckCircle2, Clock, Building2, Phone, Mail, AlertTriangle,
   Wrench, Shield, Package, Send, Loader2, Info, Layers,
   Monitor, Smartphone, LayoutGrid, ArrowRight, Sparkles, MapPin,
+  Map, Globe,
 } from 'lucide-react'
 import { useInventory } from '../context/InventoryContext'
 import { normaliseRole, ROLES } from '../App'
+import DeploymentLocationSelector from './DeploymentLocationSelector'
 
 const API = '/api/lifecycle-requests'
 const authHeaders = () => ({
@@ -16,17 +18,18 @@ const authHeaders = () => ({
 
 // ── constants ─────────────────────────────────────────────────
 const STEPS = [
-  { id: 'client',   label: 'Client',    icon: Users },
-  { id: 'health',   label: 'Health',    icon: Shield },
-  { id: 'location', label: 'Location',  icon: MapPin },
-  { id: 'return',   label: 'Return',    icon: Calendar },
-  { id: 'confirm',  label: 'Confirm',   icon: CheckCircle2 },
+  { id: 'client',      label: 'Client',      icon: Users },
+  { id: 'health',      label: 'Health',      icon: Shield },
+  { id: 'location',    label: 'Location',    icon: MapPin },
+  { id: 'coordinates', label: 'Map Info',    icon: Map },
+  { id: 'return',      label: 'Return',      icon: Calendar },
+  { id: 'confirm',     label: 'Confirm',     icon: CheckCircle2 },
 ]
 
 const HEALTH_OPTIONS = [
-  { value: 'ok',     label: 'Good Condition', sub: 'Device works perfectly',         icon: Shield,        bg: 'bg-emerald-50', border: 'border-emerald-400', iconCls: 'text-emerald-600', ring: 'ring-emerald-300' },
-  { value: 'repair', label: 'Needs Repair',   sub: 'Requires maintenance or service', icon: Wrench,        bg: 'bg-amber-50',   border: 'border-amber-400',  iconCls: 'text-amber-600',  ring: 'ring-amber-300'  },
-  { value: 'damage', label: 'Damaged',         sub: 'Has physical or functional damage',icon: AlertTriangle, bg: 'bg-red-50',     border: 'border-red-400',    iconCls: 'text-red-600',    ring: 'ring-red-300'    },
+  { value: 'ok',     label: 'Good Condition', sub: 'Device works perfectly',          icon: Shield,        bg: 'bg-emerald-50', border: 'border-emerald-400', iconCls: 'text-emerald-600', ring: 'ring-emerald-300' },
+  { value: 'repair', label: 'Needs Repair',   sub: 'Requires maintenance or service', icon: Wrench,        bg: 'bg-amber-50',   border: 'border-amber-400',   iconCls: 'text-amber-600',   ring: 'ring-amber-300'  },
+  { value: 'damage', label: 'Damaged',        sub: 'Has physical or functional damage', icon: AlertTriangle, bg: 'bg-red-50',     border: 'border-red-400',     iconCls: 'text-red-600',     ring: 'ring-red-300'    },
 ]
 
 const AVATAR_COLORS = [
@@ -66,6 +69,24 @@ const daysFrom = (d) => {
   return diff
 }
 
+// Helper to get worst component health
+const getWorstComponentHealth = (components = []) => {
+  if (!components || components.length === 0) return 'ok'
+  const healthRank = { ok: 1, repair: 2, damage: 3, damaged: 3, lost: 4 }
+  let worstHealth = 'ok'
+  let maxRank = healthRank.ok
+  
+  for (const comp of components) {
+    const health = comp.healthStatus || 'ok'
+    const rank = healthRank[health] || healthRank.ok
+    if (rank > maxRank) {
+      maxRank = rank
+      worstHealth = health
+    }
+  }
+  return worstHealth
+}
+
 // ── component ─────────────────────────────────────────────────
 const AssignToClientModal = ({ device, onClose, onSuccess }) => {
   const { clients } = useInventory()
@@ -79,6 +100,9 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
     state: '',
     district: '',
     site: '',
+    googleMapsLink: '',
+    latitude: null,
+    longitude: null,
     returnType: 'days',
     returnDays: '30',
     returnMonths: '',
@@ -89,8 +113,9 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
   const [autoApproved, setAutoApproved] = useState(false)
   const [error, setError] = useState(null)
   const [animate, setAnimate] = useState(true)
+  const [healthWarning, setHealthWarning] = useState(null)
 
-  // Detect if current user is a Manager (reads from localStorage — no prop drilling needed)
+  // Detect if current user is a Manager
   const isManager = normaliseRole(
     (() => { try { return JSON.parse(localStorage.getItem('user'))?.role ?? '' } catch { return '' } })()
   ) === 'manager'
@@ -113,14 +138,62 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
   const computedDate = useMemo(() => computeReturnDate(form), [form])
   const daysLeft = computedDate ? daysFrom(computedDate) : null
 
+  // Component health analysis for sets
+  const componentHealthSummary = useMemo(() => {
+    if (!isSet || !device?.components) return null
+    
+    const components = device.components
+    const healthCounts = { ok: 0, repair: 0, damage: 0, damaged: 0 }
+    
+    components.forEach(c => {
+      const health = c.healthStatus || 'ok'
+      healthCounts[health] = (healthCounts[health] || 0) + 1
+    })
+    
+    const worstHealth = getWorstComponentHealth(components)
+    
+    return {
+      total: components.length,
+      healthy: healthCounts.ok || 0,
+      needsRepair: healthCounts.repair || 0,
+      damaged: (healthCounts.damage || 0) + (healthCounts.damaged || 0),
+      worstHealth,
+    }
+  }, [isSet, device?.components])
+
+  // Check for health status conflicts (set marked good but has damaged components)
+  useEffect(() => {
+    if (isSet && componentHealthSummary && form.healthStatus === 'ok') {
+      if (componentHealthSummary.worstHealth !== 'ok') {
+        const healthLabel = componentHealthSummary.worstHealth === 'repair' ? 'Needs Repair' : 'Damaged'
+        setHealthWarning(
+          `⚠️ Warning: You've marked this set as "Good Condition", but some components are ${healthLabel}. ` +
+          `Consider marking the set health to match the worst component status.`
+        )
+      } else {
+        setHealthWarning(null)
+      }
+    } else {
+      setHealthWarning(null)
+    }
+  }, [form.healthStatus, isSet, componentHealthSummary])
+
   const canProceed = useMemo(() => {
     if (step === 0) return !!form.clientId
     if (step === 1) {
       const needsComment = form.healthStatus === 'repair' || form.healthStatus === 'damage'
       return !needsComment || form.healthComment.trim().length > 0
     }
-    if (step === 2) return true // location is optional
+    if (step === 2) {
+      // Location is now MANDATORY
+      return form.state && form.district && form.site
+    }
     if (step === 3) {
+      // Coordinates step is optional - can always proceed
+      return true
+    }
+    if (step === 4) {
+      // Return date validation
       if (form.returnType === 'days') return !!form.returnDays && parseInt(form.returnDays) > 0
       if (form.returnType === 'months') return !!form.returnMonths && parseInt(form.returnMonths) > 0
       if (form.returnType === 'date') return !!form.returnDate && new Date(form.returnDate) > new Date()
@@ -134,6 +207,14 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
     setTimeout(() => { setStep(s => s + dir); setAnimate(true) }, 50)
   }
 
+  const handleCoordinatesExtracted = (coords) => {
+    setForm(f => ({
+      ...f,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+    }))
+  }
+
   const handleSubmit = async () => {
     setSubmitting(true); setError(null)
     try {
@@ -142,15 +223,18 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
 
       // Build note embedding all details so manager sees everything in the request
       const note = JSON.stringify({
-        clientId:     form.clientId,
-        clientName:   selectedClientObj?.name,
-        state:        form.state    || null,
-        district:     form.district || null,
-        site:         form.site     || null,
-        returnType:   form.returnType,
-        returnDays:   form.returnDays   || null,
-        returnMonths: form.returnMonths || null,
-        returnDate:   form.returnDate   || null,
+        clientId:        form.clientId,
+        clientName:      selectedClientObj?.name,
+        state:           form.state    || null,
+        district:        form.district || null,
+        site:            form.site     || null,
+        googleMapsLink:  form.googleMapsLink || null,
+        latitude:        form.latitude || null,
+        longitude:       form.longitude || null,
+        returnType:      form.returnType,
+        returnDays:      form.returnDays   || null,
+        returnMonths:    form.returnMonths || null,
+        returnDate:      form.returnDate   || null,
         subscriptionEnd: subscriptionEnd ? subscriptionEnd.toISOString() : null,
         label: `Assign ${device.code} → client "${selectedClientObj?.name}"`,
       })
@@ -171,14 +255,17 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
       const data = await res.json()
       if (!res.ok) throw new Error(data.message || data.error || `Error ${res.status}`)
 
-      // Save location + subscription dates directly to the device/set record
+      // Save location + subscription dates + coordinates directly to the device/set record
       // so they're available immediately regardless of approval status
       if (!isSet) {
         const deviceUpdates = {}
-        if (form.state)    deviceUpdates.state    = form.state
-        if (form.district) deviceUpdates.district = form.district
-        if (form.site)     deviceUpdates.location = form.site
-        if (subscriptionEnd) deviceUpdates.subscriptionEndDate = subscriptionEnd.toISOString()
+        if (form.state)         deviceUpdates.state         = form.state
+        if (form.district)      deviceUpdates.district      = form.district
+        if (form.site)          deviceUpdates.location      = form.site
+        if (form.googleMapsLink) deviceUpdates.googleMapsLink = form.googleMapsLink
+        if (form.latitude)      deviceUpdates.latitude      = form.latitude
+        if (form.longitude)     deviceUpdates.longitude     = form.longitude
+        if (subscriptionEnd)    deviceUpdates.subscriptionEndDate = subscriptionEnd.toISOString()
 
         if (Object.keys(deviceUpdates).length > 0) {
           try {
@@ -190,13 +277,22 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
           } catch (_) { /* non-critical — lifecycle request already submitted */ }
         }
       } else {
-        // For sets, save subscriptionEndDate directly
-        if (subscriptionEnd) {
+        // For sets, save all location data + subscriptionEndDate directly
+        const setUpdates = {}
+        if (form.state)          setUpdates.state          = form.state
+        if (form.district)       setUpdates.district       = form.district
+        if (form.site)           setUpdates.pinpoint       = form.site
+        if (form.googleMapsLink) setUpdates.googleMapsLink = form.googleMapsLink
+        if (form.latitude)       setUpdates.latitude       = form.latitude
+        if (form.longitude)      setUpdates.longitude      = form.longitude
+        if (subscriptionEnd)     setUpdates.subscriptionEndDate = subscriptionEnd.toISOString()
+
+        if (Object.keys(setUpdates).length > 0) {
           try {
             await fetch(`/api/sets/${device.id}`, {
               method: 'PUT',
               headers: authHeaders(),
-              body: JSON.stringify({ subscriptionEndDate: subscriptionEnd.toISOString() }),
+              body: JSON.stringify(setUpdates),
             })
           } catch (_) { /* non-critical */ }
         }
@@ -230,7 +326,7 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
 
           {autoApproved ? (
             <>
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">Device Assigned!</h2>
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">{isSet ? 'Set' : 'Device'} Assigned!</h2>
               <p className="text-gray-500 text-sm mb-6 leading-relaxed">
                 <span className="font-semibold text-gray-700">{device.code}</span> has been assigned to{' '}
                 <span className="font-semibold text-gray-700">{selectedClient?.name}</span> and is now active.
@@ -257,16 +353,16 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
           <div className="bg-gray-50 rounded-2xl p-4 text-left space-y-3 mb-6">
             {[
               ['Client', selectedClient?.name],
-              ['Device', device.code],
+              [isSet ? 'Set' : 'Device', device.code],
               ['Health', form.healthStatus === 'ok' ? 'Good Condition' : form.healthStatus === 'repair' ? 'Needs Repair' : 'Damaged'],
-              form.state || form.district || form.site
-                ? ['Location', [form.state, form.district, form.site].filter(Boolean).join(' → ')]
-                : null,
+              ['Location', [form.state, form.district, form.site].filter(Boolean).join(' → ')],
+              form.googleMapsLink ? ['Map Link', '✓ Provided'] : null,
+              (form.latitude && form.longitude) ? ['Coordinates', `${form.latitude.toFixed(4)}, ${form.longitude.toFixed(4)}`] : null,
               ['Return By', formatDate(computedDate)],
             ].filter(Boolean).map(([k, v]) => (
               <div key={k} className="flex justify-between text-sm">
                 <span className="text-gray-400">{k}</span>
-                <span className="font-semibold text-gray-800">{v}</span>
+                <span className="font-semibold text-gray-800 text-right max-w-[60%] truncate">{v}</span>
               </div>
             ))}
           </div>
@@ -398,42 +494,92 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
           {step === 1 && (
             <div className="space-y-4">
               <div>
-                <h3 className="text-lg font-bold text-gray-900">Device Condition</h3>
-                <p className="text-sm text-gray-400">Record the health status before assignment</p>
+                <h3 className="text-lg font-bold text-gray-900">{isSet ? 'Set' : 'Device'} Health</h3>
+                <p className="text-sm text-gray-400">What's the current condition?</p>
               </div>
 
-              <div className="space-y-2.5">
+              {/* Component Health Summary for Sets */}
+              {isSet && componentHealthSummary && (
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                  <p className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                    <Package className="w-3.5 h-3.5" />
+                    Component Health Summary
+                  </p>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div className="p-2 bg-white rounded-lg border border-gray-200">
+                      <p className="text-gray-400 font-medium">Total</p>
+                      <p className="text-lg font-bold text-gray-900">{componentHealthSummary.total}</p>
+                    </div>
+                    <div className="p-2 bg-emerald-50 rounded-lg border border-emerald-200">
+                      <p className="text-emerald-600 font-medium">Healthy</p>
+                      <p className="text-lg font-bold text-emerald-700">{componentHealthSummary.healthy}</p>
+                    </div>
+                    {componentHealthSummary.needsRepair > 0 && (
+                      <div className="p-2 bg-amber-50 rounded-lg border border-amber-200">
+                        <p className="text-amber-600 font-medium">Repair</p>
+                        <p className="text-lg font-bold text-amber-700">{componentHealthSummary.needsRepair}</p>
+                      </div>
+                    )}
+                    {componentHealthSummary.damaged > 0 && (
+                      <div className="p-2 bg-red-50 rounded-lg border border-red-200">
+                        <p className="text-red-600 font-medium">Damaged</p>
+                        <p className="text-lg font-bold text-red-700">{componentHealthSummary.damaged}</p>
+                      </div>
+                    )}
+                  </div>
+                  {componentHealthSummary.worstHealth !== 'ok' && (
+                    <div className="flex items-start gap-2 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                      <Info className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs text-amber-700">
+                        Worst component health: <strong className="capitalize">{componentHealthSummary.worstHealth}</strong>
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Health Selection */}
+              <div className="grid grid-cols-1 gap-3">
                 {HEALTH_OPTIONS.map(opt => {
                   const Icon = opt.icon
                   const selected = form.healthStatus === opt.value
                   return (
                     <button key={opt.value} onClick={() => setForm(f => ({ ...f, healthStatus: opt.value }))}
-                      className={`w-full text-left p-4 rounded-2xl border-2 transition-all ${
-                        selected ? `${opt.border} ${opt.bg} ring-2 ${opt.ring}` : 'border-gray-100 hover:border-gray-200'
+                      className={`flex items-center gap-4 p-4 rounded-2xl border-2 text-left transition-all ${
+                        selected
+                          ? `${opt.bg} ${opt.border} shadow-md ring-2 ${opt.ring} ring-offset-1`
+                          : 'border-gray-200 bg-white hover:border-gray-300'
                       }`}
                     >
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${selected ? opt.bg : 'bg-gray-100'}`}>
-                          <Icon className={`w-5 h-5 ${selected ? opt.iconCls : 'text-gray-400'}`} />
-                        </div>
-                        <div className="flex-1">
-                          <p className={`font-semibold text-sm ${selected ? 'text-gray-900' : 'text-gray-700'}`}>{opt.label}</p>
-                          <p className="text-xs text-gray-400">{opt.sub}</p>
-                        </div>
-                        {selected && <CheckCircle2 className={`w-5 h-5 flex-shrink-0 ${opt.iconCls}`} />}
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${selected ? opt.bg : 'bg-gray-50'}`}>
+                        <Icon className={`w-6 h-6 ${selected ? opt.iconCls : 'text-gray-400'}`} />
                       </div>
+                      <div className="flex-1">
+                        <p className={`font-bold text-sm ${selected ? 'text-gray-900' : 'text-gray-700'}`}>{opt.label}</p>
+                        <p className="text-xs text-gray-400">{opt.sub}</p>
+                      </div>
+                      {selected && <CheckCircle2 className={`w-5 h-5 ${opt.iconCls} flex-shrink-0`} />}
                     </button>
                   )
                 })}
               </div>
 
+              {/* Health warning for sets */}
+              {healthWarning && (
+                <div className="flex items-start gap-2.5 p-3.5 bg-amber-50 border border-amber-200 rounded-xl">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-700 leading-relaxed">{healthWarning}</p>
+                </div>
+              )}
+
+              {/* Comment for non-ok health */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Comment
-                  {form.healthStatus !== 'ok'
-                    ? <span className="text-red-500 ml-1">* required</span>
-                    : <span className="text-gray-400 ml-1">(optional)</span>
-                  }
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {form.healthStatus !== 'ok' ? (
+                    <span>Description <span className="text-red-500">*</span></span>
+                  ) : (
+                    'Additional Notes (optional)'
+                  )}
                 </label>
                 <textarea
                   value={form.healthComment}
@@ -459,65 +605,107 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
             </div>
           )}
 
-          {/* STEP 2 — Location */}
+          {/* STEP 2 — Deployment Location (MANDATORY) */}
           {step === 2 && (
             <div className="space-y-4">
               <div>
                 <h3 className="text-lg font-bold text-gray-900">Deployment Location</h3>
-                <p className="text-sm text-gray-400">Where will this {isSet ? 'set' : 'device'} be deployed? (optional)</p>
+                <p className="text-sm text-gray-400">Where will this {isSet ? 'set' : 'device'} be deployed? <span className="text-red-500">*</span></p>
               </div>
 
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">State</label>
-                  <input
-                    type="text"
-                    value={form.state}
-                    onChange={e => setForm(f => ({ ...f, state: e.target.value }))}
-                    placeholder="e.g. Maharashtra"
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">District / City</label>
-                  <input
-                    type="text"
-                    value={form.district}
-                    onChange={e => setForm(f => ({ ...f, district: e.target.value }))}
-                    placeholder="e.g. Mumbai"
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Site / Pinpoint</label>
-                  <input
-                    type="text"
-                    value={form.site}
-                    onChange={e => setForm(f => ({ ...f, site: e.target.value }))}
-                    placeholder="e.g. Andheri West Branch"
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                  />
-                </div>
+              <DeploymentLocationSelector
+                state={form.state}
+                district={form.district}
+                site={form.site}
+                googleMapsLink={form.googleMapsLink}
+                onStateChange={(val) => setForm(f => ({ ...f, state: val }))}
+                onDistrictChange={(val) => setForm(f => ({ ...f, district: val }))}
+                onSiteChange={(val) => setForm(f => ({ ...f, site: val }))}
+                onGoogleMapsLinkChange={(val) => setForm(f => ({ ...f, googleMapsLink: val }))}
+                onCoordinatesExtracted={handleCoordinatesExtracted}
+                required={true}
+                disabled={false}
+              />
+
+              <div className="flex items-start gap-2.5 p-3.5 bg-blue-50 border border-blue-200 rounded-xl">
+                <Info className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-blue-700 leading-relaxed">
+                  All location fields are mandatory. Previously used locations will appear in dropdowns for quick selection.
+                </p>
               </div>
-
-              {(form.state || form.district || form.site) && (
-                <div className="flex items-center gap-3 p-3.5 bg-blue-50 border border-blue-100 rounded-2xl">
-                  <MapPin className="w-5 h-5 text-blue-500 flex-shrink-0" />
-                  <p className="text-sm font-semibold text-blue-800">
-                    {[form.state, form.district, form.site].filter(Boolean).join(' → ')}
-                  </p>
-                </div>
-              )}
-
-              <p className="text-xs text-gray-400 flex items-center gap-1.5">
-                <Info className="w-3.5 h-3.5" />
-                You can skip this and enter location later when the device arrives on site.
-              </p>
             </div>
           )}
 
-          {/* STEP 3 — Return Date */}
+          {/* STEP 3 — Map Coordinates (OPTIONAL) */}
           {step === 3 && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Map Information</h3>
+                <p className="text-sm text-gray-400">Add coordinates for map tracking (optional)</p>
+              </div>
+
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                <p className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5" />
+                  Location Coordinates
+                </p>
+
+                {form.googleMapsLink ? (
+                  <div className="flex items-start gap-2.5 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-xs font-medium text-green-700">Google Maps link provided</p>
+                      {form.latitude && form.longitude && (
+                        <p className="text-xs text-green-600 mt-1">
+                          Coordinates: {form.latitude.toFixed(6)}, {form.longitude.toFixed(6)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Latitude
+                      </label>
+                      <input
+                        type="number"
+                        step="0.000001"
+                        value={form.latitude || ''}
+                        onChange={e => setForm(f => ({ ...f, latitude: e.target.value ? parseFloat(e.target.value) : null }))}
+                        placeholder="e.g., 19.076090"
+                        className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Longitude
+                      </label>
+                      <input
+                        type="number"
+                        step="0.000001"
+                        value={form.longitude || ''}
+                        onChange={e => setForm(f => ({ ...f, longitude: e.target.value ? parseFloat(e.target.value) : null }))}
+                        placeholder="e.g., 72.877426"
+                        className="w-full px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-start gap-2.5 p-3.5 bg-gray-50 border border-gray-200 rounded-xl">
+                <Info className="w-4 h-4 text-gray-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-gray-600 leading-relaxed">
+                  Coordinates are optional. They can be auto-extracted from Google Maps link (in previous step) or entered manually here.
+                  This helps track device locations on maps if needed.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 4 — Return Date */}
+          {step === 4 && (
             <div className="space-y-5">
               <div>
                 <h3 className="text-lg font-bold text-gray-900">Return Date</h3>
@@ -599,8 +787,8 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
             </div>
           )}
 
-          {/* STEP 4 — Confirm */}
-          {step === 4 && (
+          {/* STEP 5 — Confirm */}
+          {step === 5 && (
             <div className="space-y-4">
               <div>
                 <h3 className="text-lg font-bold text-gray-900">Review & Confirm</h3>
@@ -652,17 +840,26 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
                   </div>
 
                   {/* Location */}
-                  {(form.state || form.district || form.site) && (
-                    <div className="p-4 flex items-center gap-3">
-                      <MapPin className="w-5 h-5 text-gray-300 flex-shrink-0" />
-                      <div>
-                        <p className="text-xs text-gray-400 font-medium">Deployment Location</p>
-                        <p className="font-semibold text-gray-900 text-sm">
-                          {[form.state, form.district, form.site].filter(Boolean).join(' → ')}
+                  <div className="p-4 flex items-start gap-3">
+                    <MapPin className="w-5 h-5 text-gray-300 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-xs text-gray-400 font-medium">Deployment Location</p>
+                      <p className="font-semibold text-gray-900 text-sm">
+                        {[form.state, form.district, form.site].filter(Boolean).join(' → ')}
+                      </p>
+                      {form.googleMapsLink && (
+                        <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                          <Map className="w-3 h-3" />
+                          Map link attached
                         </p>
-                      </div>
+                      )}
+                      {form.latitude && form.longitude && (
+                        <p className="text-xs text-gray-500 mt-1">
+                          📍 {form.latitude.toFixed(4)}, {form.longitude.toFixed(4)}
+                        </p>
+                      )}
                     </div>
-                  )}
+                  </div>
 
                   {/* Return date */}
                   <div className="p-4 flex items-center justify-between">
@@ -681,8 +878,8 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
                 <Info className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
                 <p className="text-xs text-amber-700 leading-relaxed">
                   {isManager
-                    ? <>This will <strong>immediately assign</strong> the device. Status will update to <strong>Assigning</strong> right away — no approval needed.</>
-                    : <>This sends an assignment request to the admin. The device will move to <strong>Assigning</strong> status and count will update once approved.</>
+                    ? <>This will <strong>immediately assign</strong> the {isSet ? 'set' : 'device'}. Status will update to <strong>Assigning</strong> right away — no approval needed.</>
+                    : <>This sends an assignment request to the admin. The {isSet ? 'set' : 'device'} will move to <strong>Assigning</strong> status once approved.</>
                   }
                 </p>
               </div>
@@ -694,7 +891,7 @@ const AssignToClientModal = ({ device, onClose, onSuccess }) => {
                       <AlertTriangle className="w-6 h-6 text-red-500" />
                     </div>
                     <div className="text-center">
-                      <p className="font-semibold text-gray-900 text-sm">Request Already Pending</p>
+                      <p className="font-semibold text-gray-900 text-sm">Request Failed</p>
                       <p className="text-sm text-red-600 mt-1">{error}</p>
                     </div>
                     <button

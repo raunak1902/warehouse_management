@@ -2,13 +2,18 @@
  * ╔══════════════════════════════════════════════════════════════════════╗
  * ║              DEVICE TYPE REGISTRY — Single Source of Truth          ║
  * ╠══════════════════════════════════════════════════════════════════════╣
- * ║  Every device type in the system is defined here.                   ║
- * ║  Built-in types are hardcoded. Custom types live in localStorage.   ║
+ * ║  NOTE: New components should import from CatalogueContext instead   ║
+ * ║  of this file. CatalogueContext fetches live DB-backed types and    ║
+ * ║  is the preferred API going forward.                                ║
+ * ║                                                                      ║
+ * ║  import { useCatalogue } from '../context/CatalogueContext'         ║
+ * ║  const { productTypes, getAllTypes, getTypeLabel } = useCatalogue() ║
+ * ║                                                                      ║
+ * ║  This file is kept for:                                             ║
+ * ║  - resolveTypeId() / deviceMatchesSlot() (alias resolution)        ║
+ * ║  - Backward compat for legacy imports not yet migrated              ║
  * ║                                                                      ║
  * ║  Each type has a canonical TYPE ID (e.g. "MB" for Media Box).       ║
- * ║  This ID is used everywhere: device codes, set slot matching,       ║
- * ║  filtering, display, and barcode generation.                        ║
- * ║                                                                      ║
  * ║  MIGRATION: All legacy type strings (e.g. "mediaBox", "a-stand",   ║
  * ║  "stand", "custom-MBX") are listed as aliases and auto-resolve      ║
  * ║  to the canonical ID via resolveTypeId().                           ║
@@ -131,9 +136,11 @@ export function loadCustomTypes() {
   }
 }
 
-/** Save custom types to localStorage */
+/** Save custom types to localStorage and notify all listeners */
 export function saveCustomTypes(types) {
   localStorage.setItem(CUSTOM_TYPES_STORAGE_KEY, JSON.stringify(types))
+  // Notify React components listening for type changes
+  window.dispatchEvent(new CustomEvent('device-types-updated'))
 }
 
 /**

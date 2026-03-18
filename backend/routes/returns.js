@@ -113,6 +113,10 @@ router.get('/subscriptions', requireManager, async (req, res) => {
         daysLeft,
         urgency:            urgency(daysLeft),
         needsAttention:     unattendedDevices.has(d.id),
+        // Warehouse location fields for pre-filling return modal
+        warehouseId:               d.warehouseId               || null,
+        warehouseZone:             d.warehouseZone             || null,
+        warehouseSpecificLocation: d.warehouseSpecificLocation || null,
       }
     }
     const shapeSet = (s) => {
@@ -130,6 +134,10 @@ router.get('/subscriptions', requireManager, async (req, res) => {
         daysLeft,
         urgency:            urgency(daysLeft),
         needsAttention:     unattendedSets.has(s.id),
+        // Warehouse location fields for pre-filling return modal
+        warehouseId:               s.warehouseId               || null,
+        warehouseZone:             s.warehouseZone             || null,
+        warehouseSpecificLocation: s.warehouseSpecificLocation || null,
       }
     }
 

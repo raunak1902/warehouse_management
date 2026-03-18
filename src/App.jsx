@@ -1,8 +1,11 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useState, useEffect } from 'react'
+import { CatalogueProvider } from './context/CatalogueContext'
 import { InventoryProvider } from './context/InventoryContext'
 import Login from './pages/Login'
 import Dashboard, { Client, Devices, Location, Assigning, Delivery, GroundTeam, Makesets, Installation, Return } from './pages/dashboard'
+import Movements from './pages/dashboard/Movements'
+import SetHistory from './pages/dashboard/SetHistory'
 import SuperAdmin from './pages/superadmin/SuperAdmin'
 import Requests from './pages/requests/Requests'
 import Layout from './components/Layout'
@@ -66,11 +69,13 @@ function App() {
           path="/"
           element={
             user ? (
-              <InventoryProvider>
-                <Layout userRole={user.role} onLogout={handleLogout}>
-                  <Outlet />
-                </Layout>
-              </InventoryProvider>
+              <CatalogueProvider>
+                <InventoryProvider>
+                  <Layout userRole={user.role} onLogout={handleLogout}>
+                    <Outlet />
+                  </Layout>
+                </InventoryProvider>
+              </CatalogueProvider>
             ) : (
               <Navigate to="/login" replace />
             )
@@ -120,6 +125,11 @@ function App() {
 
           {/* ── Requests: all roles see this (different view per role) ── */}
           <Route path="requests" element={<Requests userRole={user?.role} />} />
+
+          {/* ── Movements: all roles (ground team needs to track device moves) ── */}
+          <Route path="dashboard/movements" element={<Movements userRole={user?.role} />} />
+          <Route path="dashboard/set-history" element={<SetHistory userRole={user?.role} />} />
+          <Route path="dashboard/set-history" element={<SetHistory userRole={user?.role} />} />
 
           {/* ── SuperAdmin panel: SuperAdmin only ── */}
           <Route path="super-admin" element={

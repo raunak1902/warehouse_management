@@ -3,7 +3,7 @@ import {
   Users, Plus, Edit, Trash2, Search, Mail, Phone, Building2,
   Package, ChevronDown, ChevronUp, Clock, CheckCircle2, XCircle,
   Monitor, Smartphone, LayoutGrid, Layers, Calendar, ArrowRight,
-  AlertTriangle, Shield, Wrench, History, Box,
+  AlertTriangle, Shield, Wrench, History, Box, ChevronRight,
 } from 'lucide-react'
 import { useInventory } from '../../context/InventoryContext'
 import { clientApi } from '../../api/clientApi'
@@ -33,10 +33,16 @@ const avatarColor = (name = '') => {
 }
 
 const HEALTH_BADGE = {
-  ok:     { label: 'OK',      cls: 'bg-emerald-100 text-emerald-700', icon: Shield },
-  repair: { label: 'Repair',  cls: 'bg-amber-100 text-amber-700',     icon: Wrench },
-  damage: { label: 'Damaged', cls: 'bg-red-100 text-red-700',         icon: AlertTriangle },
+  ok:      { label: 'Healthy', cls: 'bg-emerald-100 text-emerald-700', icon: Shield,        dot: 'bg-emerald-400' },
+  repair:  { label: 'Repair',  cls: 'bg-amber-100 text-amber-700',     icon: Wrench,        dot: 'bg-amber-400'   },
+  damage:  { label: 'Damaged', cls: 'bg-red-100 text-red-700',         icon: AlertTriangle, dot: 'bg-red-500'     },
+  damaged: { label: 'Damaged', cls: 'bg-red-100 text-red-700',         icon: AlertTriangle, dot: 'bg-red-500'     },
 }
+
+// Health rank for worst-of logic (mirrors backend HEALTH_RANK)
+const HEALTH_RANK = { ok: 0, repair: 1, damage: 2, damaged: 2 }
+const worstHealth = (statuses) =>
+  statuses.reduce((worst, s) => (HEALTH_RANK[s] ?? 0) > (HEALTH_RANK[worst] ?? 0) ? s : worst, 'ok')
 
 const STATUS_BADGE = {
   pending:  { label: 'Pending',  cls: 'bg-amber-100 text-amber-700' },
@@ -44,27 +50,36 @@ const STATUS_BADGE = {
   rejected: { label: 'Rejected', cls: 'bg-red-100 text-red-700' },
 }
 
+// Covers all current granular statuses + legacy aliases
 const LIFECYCLE_BADGE = {
-  warehouse:        { label: 'Warehouse',   cls: 'bg-gray-100 text-gray-600' },
-  assign_requested: { label: 'Req. Assign', cls: 'bg-amber-100 text-amber-700' },
-  assigned:         { label: 'Assigned',    cls: 'bg-blue-100 text-blue-700' },
-  deploy_requested: { label: 'Req. Deploy', cls: 'bg-amber-100 text-amber-700' },
-  deployed:         { label: 'Deployed',    cls: 'bg-emerald-100 text-emerald-700' },
-  return_requested: { label: 'Req. Return', cls: 'bg-orange-100 text-orange-700' },
-  returned:         { label: 'Returned',    cls: 'bg-gray-100 text-gray-500' },
-  // legacy
-  assigning:        { label: 'Assigning',   cls: 'bg-amber-100 text-amber-700' },
+  // Current statuses
+  available:         { label: 'In Warehouse',     cls: 'bg-gray-100 text-gray-600' },
+  assigning:         { label: 'Assigning',         cls: 'bg-blue-100 text-blue-700' },
+  ready_to_deploy:   { label: 'Ready to Deploy',   cls: 'bg-teal-100 text-teal-700' },
+  in_transit:        { label: 'In Transit',         cls: 'bg-amber-100 text-amber-700' },
+  received:          { label: 'Received at Site',  cls: 'bg-purple-100 text-purple-700' },
+  installed:         { label: 'Installed',          cls: 'bg-indigo-100 text-indigo-700' },
+  active:            { label: 'Active / Live',      cls: 'bg-emerald-100 text-emerald-700' },
+  under_maintenance: { label: 'Maintenance',        cls: 'bg-orange-100 text-orange-700' },
+  return_initiated:  { label: 'Return Initiated',  cls: 'bg-rose-100 text-rose-700' },
+  return_transit:    { label: 'Return Transit',     cls: 'bg-pink-100 text-pink-700' },
+  returned:          { label: 'Returned',           cls: 'bg-gray-100 text-gray-500' },
+  lost:              { label: 'Lost',               cls: 'bg-red-100 text-red-700' },
+  // Legacy aliases
+  warehouse:         { label: 'In Warehouse',       cls: 'bg-gray-100 text-gray-600' },
+  assign_requested:  { label: 'Assigning',          cls: 'bg-blue-100 text-blue-700' },
+  assigned:          { label: 'Assigning',          cls: 'bg-blue-100 text-blue-700' },
+  deploy_requested:  { label: 'Ready to Deploy',    cls: 'bg-teal-100 text-teal-700' },
+  deployed:          { label: 'Active / Live',      cls: 'bg-emerald-100 text-emerald-700' },
+  return_requested:  { label: 'Return Initiated',   cls: 'bg-rose-100 text-rose-700' },
 }
 
 const DEVICE_ICON = { tv: Monitor, tablet: Smartphone, stand: LayoutGrid, istand: Monitor, set: Layers }
-const deviceIcon = (type) => DEVICE_ICON[type] || Package
+const deviceIcon = (type) => DEVICE_ICON[type?.toLowerCase()] || Package
 
-// CHANGED: removed subscriptionStart and subscriptionEnd from default form
-const defaultForm = {
-  name: '', phone: '', email: '', company: '', address: '', notes: '',
-}
+const defaultForm = { name: '', phone: '', email: '', company: '', address: '', notes: '' }
 
-// ── HistoryRow (unchanged) ────────────────────────────────────
+// ── HistoryRow ────────────────────────────────────────────────
 const HistoryRow = ({ req }) => {
   const status = STATUS_BADGE[req.status] || STATUS_BADGE.pending
   const health = HEALTH_BADGE[req.healthStatus] || HEALTH_BADGE.ok
@@ -98,20 +113,203 @@ const HistoryRow = ({ req }) => {
   )
 }
 
+// ── HealthBadge — reusable icon+label health pill ────────────
+const HealthBadge = ({ status, size = 'sm' }) => {
+  const h = HEALTH_BADGE[status] || HEALTH_BADGE.ok
+  const Icon = h.icon
+  const sz = size === 'xs' ? 'w-2.5 h-2.5' : 'w-3 h-3'
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${h.cls}`}>
+      <Icon className={sz} />
+      {h.label}
+    </span>
+  )
+}
+
+// ── SetRow — expandable set with components ───────────────────
+const SetRow = ({ set }) => {
+  const [open, setOpen] = useState(false)
+  const lifecycle = LIFECYCLE_BADGE[set.lifecycleStatus] || { label: set.lifecycleStatus || 'Unknown', cls: 'bg-gray-100 text-gray-500' }
+  const components = set.components || []
+
+  // Always compute worst health from component list — this is the ground truth.
+  // Components are included in the API response, so we can derive it locally.
+  // This guarantees the UI is correct even if set.healthStatus is stale in the DB
+  // (e.g. health was changed via a path that didn't trigger syncSetHealth).
+  // Fall back to set.healthStatus only when there are no components (edge case).
+  const componentHealths = components.map(c => c.healthStatus || 'ok')
+  const computedWorst = components.length > 0 ? worstHealth(componentHealths) : (set.healthStatus || 'ok')
+  const setHealth = computedWorst
+  const health = HEALTH_BADGE[setHealth] || HEALTH_BADGE.ok
+  const isDamaged = setHealth === 'damage' || setHealth === 'damaged'
+  const needsAttention = setHealth !== 'ok'
+
+  // Count how many components have non-ok health
+  const unhealthyCount = components.filter(c => c.healthStatus && c.healthStatus !== 'ok').length
+
+  return (
+    <div className={`rounded-xl border overflow-hidden ${isDamaged ? 'border-red-200' : needsAttention ? 'border-amber-200' : 'border-purple-200'}`}>
+      {/* Set header — clickable to expand components */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`w-full flex items-center gap-3 p-3 transition-colors text-left ${isDamaged ? 'bg-red-50 hover:bg-red-100' : needsAttention ? 'bg-amber-50 hover:bg-amber-100' : 'bg-purple-50 hover:bg-purple-100'}`}
+      >
+        {/* Icon — pulses red if damaged */}
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${isDamaged ? 'bg-red-200' : needsAttention ? 'bg-amber-200' : 'bg-purple-200'}`}>
+          <Layers className={`w-4 h-4 ${isDamaged ? 'text-red-700' : needsAttention ? 'text-amber-700' : 'text-purple-700'}`} />
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-bold text-gray-900">{set.code}</p>
+            <span className={`text-xs px-1.5 py-0.5 rounded font-medium border ${isDamaged ? 'bg-red-100 text-red-600 border-red-200' : needsAttention ? 'bg-amber-100 text-amber-600 border-amber-200' : 'bg-purple-100 text-purple-600 border-purple-200'}`}>
+              Set · {components.length} device{components.length !== 1 ? 's' : ''}
+            </span>
+            {/* Attention hint: shows how many components are unhealthy */}
+            {unhealthyCount > 0 && (
+              <span className="text-xs text-red-500 font-medium flex items-center gap-0.5">
+                <AlertTriangle className="w-3 h-3" />
+                {unhealthyCount} issue{unhealthyCount !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 mt-0.5">{set.setTypeName || set.setType}</p>
+        </div>
+
+        {/* Badges: lifecycle + health */}
+        <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${lifecycle.cls}`}>{lifecycle.label}</span>
+          <HealthBadge status={setHealth} />
+          {open ? <ChevronUp className="w-4 h-4 text-gray-400 ml-0.5" /> : <ChevronDown className="w-4 h-4 text-gray-400 ml-0.5" />}
+        </div>
+      </button>
+
+      {/* Component devices — lifecycle + individual health */}
+      {open && (
+        <div className="divide-y divide-gray-100 bg-white">
+          {components.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-3">No components found</p>
+          ) : (
+            components.map((d, idx) => {
+              const Icon = deviceIcon(d.type)
+              const compLifecycle = LIFECYCLE_BADGE[d.lifecycleStatus] || { label: d.lifecycleStatus || 'Unknown', cls: 'bg-gray-100 text-gray-500' }
+              const compHealthStatus = d.healthStatus || 'ok'
+              const compHealth = HEALTH_BADGE[compHealthStatus] || HEALTH_BADGE.ok
+              const CompHealthIcon = compHealth.icon
+              const compIsDamaged = compHealthStatus === 'damage' || compHealthStatus === 'damaged'
+              const compNeedsAttention = compHealthStatus !== 'ok'
+              const isLast = idx === components.length - 1
+              return (
+                <div
+                  key={d.id}
+                  className={`flex items-center gap-2 px-3 py-2.5 ${compIsDamaged ? 'bg-red-50' : compNeedsAttention ? 'bg-amber-50' : ''}`}
+                >
+                  {/* Tree connector lines */}
+                  <div className="flex items-center flex-shrink-0 pl-3">
+                    <div className="flex flex-col items-center self-stretch w-px">
+                      <div className={`w-px flex-1 bg-purple-200 ${idx === 0 ? 'mt-2' : ''}`} />
+                      {isLast && <div className="w-px flex-1" />}
+                    </div>
+                    <div className="w-4 h-px bg-purple-200" />
+                  </div>
+
+                  {/* Device icon — coloured by health */}
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${compIsDamaged ? 'bg-red-100' : compNeedsAttention ? 'bg-amber-100' : 'bg-gray-100'}`}>
+                    <Icon className={`w-3.5 h-3.5 ${compIsDamaged ? 'text-red-500' : compNeedsAttention ? 'text-amber-500' : 'text-gray-500'}`} />
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-semibold ${compIsDamaged ? 'text-red-700' : compNeedsAttention ? 'text-amber-700' : 'text-gray-800'}`}>{d.code}</p>
+                    <p className="text-xs text-gray-400 capitalize">
+                      {d.type}{d.brand ? ` · ${d.brand}` : ''}{d.model ? ` ${d.model}` : ''}
+                    </p>
+                  </div>
+
+                  {/* Lifecycle + health badges side by side */}
+                  <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${compLifecycle.cls}`}>{compLifecycle.label}</span>
+                    <HealthBadge status={compHealthStatus} />
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── StandaloneDeviceRow ───────────────────────────────────────
+const StandaloneDeviceRow = ({ device }) => {
+  const Icon = deviceIcon(device.type)
+  const lifecycle = LIFECYCLE_BADGE[device.lifecycleStatus] || { label: device.lifecycleStatus || 'Unknown', cls: 'bg-gray-100 text-gray-500' }
+  const healthStatus = device.healthStatus || 'ok'
+  const isDamaged = healthStatus === 'damage' || healthStatus === 'damaged'
+  const needsAttention = healthStatus !== 'ok'
+
+  return (
+    <div className={`flex items-center gap-3 p-3 rounded-xl border ${isDamaged ? 'bg-red-50 border-red-200' : needsAttention ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-100'}`}>
+      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${isDamaged ? 'bg-red-100' : needsAttention ? 'bg-amber-100' : 'bg-blue-100'}`}>
+        <Icon className={`w-4 h-4 ${isDamaged ? 'text-red-500' : needsAttention ? 'text-amber-500' : 'text-blue-600'}`} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className={`text-sm font-semibold ${isDamaged ? 'text-red-700' : needsAttention ? 'text-amber-700' : 'text-gray-900'}`}>{device.code}</p>
+        <p className="text-xs text-gray-400 capitalize">
+          {device.type}{device.brand ? ` · ${device.brand}` : ''}{device.model ? ` ${device.model}` : ''}
+        </p>
+      </div>
+      <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${lifecycle.cls}`}>{lifecycle.label}</span>
+        <HealthBadge status={healthStatus} />
+      </div>
+    </div>
+  )
+}
+
 // ── ClientCard ─────────────────────────────────────────────────
 const ClientCard = ({ client, onEdit, onDelete }) => {
   const [expanded, setExpanded] = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [history, setHistory] = useState(null)
 
-  const currentDevices = client.devices || []
-  const currentSets = client.deviceSets || []
-  const totalCurrent = currentDevices.length + currentSets.length
+  // Backend filters setId: null, but guard here too for safety
+  const standaloneDevices = (client.devices || []).filter(d => !d.setId)
+  const sets = client.deviceSets || []
 
-  // Lifecycle breakdown counts
-  const warehouseCount       = currentDevices.filter(d => d.lifecycleStatus === 'warehouse').length
-  const pendingCount         = currentDevices.filter(d => ['assign_requested', 'deploy_requested', 'return_requested'].includes(d.lifecycleStatus)).length
-  const deployedCount        = currentDevices.filter(d => d.lifecycleStatus === 'deployed').length
+  // Logical total: 1 standalone = 1, 1 set = 1 (not counting components separately)
+  const logicalTotal = standaloneDevices.length + sets.length
+
+  // Bucket sets matching InventoryContext logic exactly
+  const WAREHOUSE_STATUSES  = new Set(['available', 'warehouse', 'returned'])
+  const PENDING_STATUSES    = new Set([
+    'assigning', 'assign_requested', 'assigned',
+    'ready_to_deploy', 'deploy_requested',
+    'in_transit', 'received', 'installed',
+    'return_initiated', 'return_requested', 'return_transit',
+  ])
+  const DEPLOYED_STATUSES   = new Set(['active', 'deployed', 'under_maintenance'])
+
+  const warehouseCount = standaloneDevices.filter(d => WAREHOUSE_STATUSES.has(d.lifecycleStatus)).length
+                       + sets.filter(s => WAREHOUSE_STATUSES.has(s.lifecycleStatus)).length
+  const pendingCount   = standaloneDevices.filter(d => PENDING_STATUSES.has(d.lifecycleStatus)).length
+                       + sets.filter(s => PENDING_STATUSES.has(s.lifecycleStatus)).length
+  const deployedCount  = standaloneDevices.filter(d => DEPLOYED_STATUSES.has(d.lifecycleStatus)).length
+                       + sets.filter(s => DEPLOYED_STATUSES.has(s.lifecycleStatus)).length
+
+  // Health attention count — compute worst-of-components for sets (same logic as SetRow)
+  // so the card badge is always consistent with what the expanded view shows
+  const UNHEALTHY = new Set(['repair', 'damage', 'damaged'])
+  const setWorstHealth = (s) => {
+    const comps = s.components || []
+    if (comps.length === 0) return s.healthStatus || 'ok'
+    return comps.reduce((worst, c) => {
+      const rank = { ok: 0, repair: 1, damage: 2, damaged: 2 }
+      return (rank[c.healthStatus] ?? 0) > (rank[worst] ?? 0) ? c.healthStatus : worst
+    }, 'ok')
+  }
+  const attentionCount = standaloneDevices.filter(d => UNHEALTHY.has(d.healthStatus)).length
+                       + sets.filter(s => UNHEALTHY.has(setWorstHealth(s))).length
 
   const handleExpand = async () => {
     if (!expanded && history === null) {
@@ -136,7 +334,6 @@ const ClientCard = ({ client, onEdit, onDelete }) => {
           <div className={`w-12 h-12 bg-gradient-to-br ${avatarColor(client.name)} rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm`}>
             <span className="text-white font-bold text-sm">{getInitials(client.name)}</span>
           </div>
-
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-2">
               <div>
@@ -156,7 +353,6 @@ const ClientCard = ({ client, onEdit, onDelete }) => {
                 </button>
               </div>
             </div>
-
             <div className="flex flex-wrap gap-3 mt-2 text-xs text-gray-500">
               <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{client.phone}</span>
               <span className="flex items-center gap-1"><Mail className="w-3 h-3" />{client.email}</span>
@@ -164,10 +360,10 @@ const ClientCard = ({ client, onEdit, onDelete }) => {
           </div>
         </div>
 
-        {/* Stats row — CHANGED: replaced subscription cols with lifecycle cols */}
+        {/* Stats row — logical counts */}
         <div className="grid grid-cols-4 gap-2 mt-4">
           <div className="text-center p-2 bg-blue-50 rounded-xl">
-            <p className="text-xl font-bold text-blue-700">{totalCurrent}</p>
+            <p className="text-xl font-bold text-blue-700">{logicalTotal}</p>
             <p className="text-xs text-blue-500 font-medium">Total</p>
           </div>
           <div className="text-center p-2 bg-gray-50 rounded-xl">
@@ -184,7 +380,30 @@ const ClientCard = ({ client, onEdit, onDelete }) => {
           </div>
         </div>
 
-        {/* Address if present */}
+        {/* Quick breakdown pill — at a glance what's assigned */}
+        {logicalTotal > 0 && (
+          <div className="flex items-center gap-2 mt-3 flex-wrap">
+            {standaloneDevices.length > 0 && (
+              <span className="flex items-center gap-1 text-xs bg-blue-50 text-blue-600 px-2.5 py-1 rounded-full border border-blue-100 font-medium">
+                <Monitor className="w-3 h-3" />
+                {standaloneDevices.length} standalone device{standaloneDevices.length !== 1 ? 's' : ''}
+              </span>
+            )}
+            {sets.length > 0 && (
+              <span className="flex items-center gap-1 text-xs bg-purple-50 text-purple-600 px-2.5 py-1 rounded-full border border-purple-100 font-medium">
+                <Layers className="w-3 h-3" />
+                {sets.length} set{sets.length !== 1 ? 's' : ''} ({sets.reduce((n, s) => n + (s.components?.length || 0), 0)} components)
+              </span>
+            )}
+            {attentionCount > 0 && (
+              <span className="flex items-center gap-1 text-xs bg-red-50 text-red-600 px-2.5 py-1 rounded-full border border-red-200 font-medium">
+                <AlertTriangle className="w-3 h-3" />
+                {attentionCount} need{attentionCount === 1 ? 's' : ''} attention
+              </span>
+            )}
+          </div>
+        )}
+
         {client.address && (
           <p className="mt-3 text-xs text-gray-400 truncate">{client.address}</p>
         )}
@@ -205,48 +424,28 @@ const ClientCard = ({ client, onEdit, onDelete }) => {
       {/* Expanded panel */}
       {expanded && (
         <div className="px-5 pb-5 pt-4 space-y-5 border-t border-gray-100">
-          {totalCurrent > 0 ? (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Currently Assigned</p>
-              <div className="space-y-2">
-                {currentDevices.map(d => {
-                  const Icon = deviceIcon(d.type)
-                  const lifecycle = d.lifecycleStatus || 'warehouse'
-                  const badge = LIFECYCLE_BADGE[lifecycle] || LIFECYCLE_BADGE.warehouse
-                  return (
-                    <div key={d.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
-                      <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Icon className="w-4 h-4 text-blue-600" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-900">{d.code}</p>
-                        <p className="text-xs text-gray-400 capitalize">{d.type}{d.brand ? ` · ${d.brand}` : ''}{d.model ? ` ${d.model}` : ''}</p>
-                      </div>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badge.cls}`}>{badge.label}</span>
-                    </div>
-                  )
-                })}
-                {currentSets.map(s => {
-                  const badge = LIFECYCLE_BADGE[s.lifecycleStatus] || LIFECYCLE_BADGE.warehouse
-                  return (
-                    <div key={s.id} className="flex items-center gap-3 p-3 bg-purple-50 rounded-xl">
-                      <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Layers className="w-4 h-4 text-purple-600" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-900">{s.code}</p>
-                        <p className="text-xs text-gray-400">{s.setTypeName} · Set</p>
-                      </div>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badge.cls}`}>{badge.label}</span>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          ) : (
+
+          {/* Currently Assigned */}
+          {logicalTotal === 0 ? (
             <div className="text-center py-4 text-gray-400">
               <Box className="w-8 h-8 mx-auto mb-1 opacity-40" />
               <p className="text-sm">No devices currently assigned</p>
+            </div>
+          ) : (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Currently Assigned</p>
+                <span className="text-xs text-gray-400">
+                  {logicalTotal} item{logicalTotal !== 1 ? 's' : ''}
+                  {sets.length > 0 && ` · click a set to see its components`}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {/* Sets shown first — expandable */}
+                {sets.map(s => <SetRow key={s.id} set={s} />)}
+                {/* Standalone devices */}
+                {standaloneDevices.map(d => <StandaloneDeviceRow key={d.id} device={d} />)}
+              </div>
             </div>
           )}
 
@@ -275,12 +474,12 @@ const ClientCard = ({ client, onEdit, onDelete }) => {
 const Client = () => {
   const { clients, clientsLoading, addClient, updateClient, removeClient } = useInventory()
 
-  const [showModal, setShowModal]     = useState(false)
+  const [showModal, setShowModal]         = useState(false)
   const [editingClient, setEditingClient] = useState(null)
-  const [searchTerm, setSearchTerm]   = useState('')
-  const [formData, setFormData]       = useState(defaultForm)
-  const [saving, setSaving]           = useState(false)
-  const [formError, setFormError]     = useState(null)
+  const [searchTerm, setSearchTerm]       = useState('')
+  const [formData, setFormData]           = useState(defaultForm)
+  const [saving, setSaving]               = useState(false)
+  const [formError, setFormError]         = useState(null)
 
   const filteredClients = useMemo(() => {
     const q = searchTerm.toLowerCase()
@@ -293,12 +492,11 @@ const Client = () => {
   }, [clients, searchTerm])
 
   const stats = useMemo(() => {
-    const totalDevices = clients.reduce((sum, c) => sum + (c.devices?.length || 0), 0)
+    const totalDevices = clients.reduce((sum, c) => sum + ((c.devices || []).filter(d => !d.setId).length), 0)
     const totalSets    = clients.reduce((sum, c) => sum + (c.deviceSets?.length || 0), 0)
     return { totalClients: clients.length, totalDevices, totalSets }
   }, [clients])
 
-  // CHANGED: no longer reads subscriptionStart/End from client
   const handleOpenModal = (client = null) => {
     setFormError(null)
     if (client) {
@@ -325,7 +523,6 @@ const Client = () => {
     setFormError(null)
   }
 
-  // CHANGED: payload no longer includes subscription dates
   const handleSubmit = async (e) => {
     e.preventDefault()
     setSaving(true)
@@ -353,9 +550,14 @@ const Client = () => {
   }
 
   const handleDelete = async (client) => {
-    const total = (client.devices?.length || 0) + (client.deviceSets?.length || 0)
+    const standaloneCount = (client.devices || []).filter(d => !d.setId).length
+    const setCount = client.deviceSets?.length || 0
+    const total = standaloneCount + setCount
+    const parts = []
+    if (standaloneCount > 0) parts.push(`${standaloneCount} device(s)`)
+    if (setCount > 0) parts.push(`${setCount} set(s)`)
     const msg = total > 0
-      ? `${client.name} has ${total} device(s)/set(s) assigned. Deleting will unassign them. Continue?`
+      ? `${client.name} has ${parts.join(' and ')} assigned. Deleting will unassign them. Continue?`
       : `Delete client "${client.name}"?`
     if (!confirm(msg)) return
     try {
@@ -400,12 +602,12 @@ const Client = () => {
         </div>
         <div className="bg-white rounded-2xl p-4 border border-gray-200 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
-              <Package className="w-5 h-5 text-emerald-600" />
+            <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+              <Monitor className="w-5 h-5 text-blue-600" />
             </div>
             <div>
               <p className="text-2xl font-bold text-gray-900">{stats.totalDevices}</p>
-              <p className="text-xs text-gray-500">Devices Assigned</p>
+              <p className="text-xs text-gray-500">Standalone Devices</p>
             </div>
           </div>
         </div>
@@ -459,7 +661,7 @@ const Client = () => {
         </div>
       )}
 
-      {/* Add/Edit Modal — CHANGED: no subscription date fields */}
+      {/* Add/Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto">
@@ -549,9 +751,6 @@ const Client = () => {
                   placeholder="Any additional notes..."
                 />
               </div>
-
-              {/* NOTE: Subscription date fields removed intentionally.
-                  Assignment dates are now tracked per-device (assignedAt, deployedAt). */}
 
               <div className="flex gap-3 pt-2 border-t border-gray-100">
                 <button type="button" onClick={handleCloseModal}

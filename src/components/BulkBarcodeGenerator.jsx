@@ -19,18 +19,47 @@ const BulkBarcodeGenerator = ({ devices, onClose }) => {
   }
 
   // Convert a rendered SVG element to a PNG blob using canvas
-  const svgToPngBlob = (svgEl) =>
+  const svgToPngBlob = (svgEl, device) =>
     new Promise((resolve) => {
       const svgData = new XMLSerializer().serializeToString(svgEl)
       const canvas = document.createElement('canvas')
-      canvas.width = 300
-      canvas.height = 300
+      // Increased canvas size to accommodate QR + text labels
+      canvas.width = 400
+      canvas.height = 500
       const ctx = canvas.getContext('2d')
       const img = new Image()
       img.onload = () => {
+        // White background
         ctx.fillStyle = 'white'
-        ctx.fillRect(0, 0, 300, 300)
-        ctx.drawImage(img, 0, 0, 300, 300)
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        
+        // Draw QR code centered at top
+        const qrSize = 300
+        const qrX = (canvas.width - qrSize) / 2
+        const qrY = 20
+        ctx.drawImage(img, qrX, qrY, qrSize, qrSize)
+        
+        // Add device code below QR (large, bold)
+        ctx.fillStyle = '#000000'
+        ctx.font = 'bold 32px Arial, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText(device.code, canvas.width / 2, qrY + qrSize + 50)
+        
+        // Add separator line
+        ctx.strokeStyle = '#d1d5db'
+        ctx.lineWidth = 2
+        const lineY = qrY + qrSize + 70
+        ctx.beginPath()
+        ctx.moveTo(50, lineY)
+        ctx.lineTo(canvas.width - 50, lineY)
+        ctx.stroke()
+        
+        // Add barcode number below (monospace)
+        ctx.fillStyle = '#374151'
+        ctx.font = '18px "Courier New", monospace'
+        ctx.textAlign = 'center'
+        ctx.fillText(device.barcode, canvas.width / 2, lineY + 35)
+        
         canvas.toBlob((blob) => resolve(blob), 'image/png')
       }
       img.onerror = () => resolve(null)
@@ -46,7 +75,7 @@ const BulkBarcodeGenerator = ({ devices, onClose }) => {
         const svgEl = document.getElementById(`bulk-qr-${i}`)
         if (!svgEl) continue
 
-        const blob = await svgToPngBlob(svgEl)
+        const blob = await svgToPngBlob(svgEl, device)
         if (!blob) continue
 
         const url = URL.createObjectURL(blob)
@@ -136,6 +165,7 @@ const BulkBarcodeGenerator = ({ devices, onClose }) => {
                   key={device.id}
                   className="border border-gray-200 rounded-lg p-3 flex flex-col items-center gap-2 hover:border-primary-300 hover:shadow-sm transition-all bulk-barcode-card"
                 >
+                  {/* QR Code */}
                   <QRCodeSVG
                     id={`bulk-qr-${i}`}
                     value={barcodeData}
@@ -143,7 +173,15 @@ const BulkBarcodeGenerator = ({ devices, onClose }) => {
                     level="H"
                     includeMargin={true}
                   />
-                  <p className="font-mono font-bold text-gray-900 text-xs">{device.code}</p>
+                  
+                  {/* Device Code - Bold */}
+                  <div className="w-full border-t border-gray-200 pt-2">
+                    <p className="font-mono font-bold text-gray-900 text-sm text-center">{device.code}</p>
+                  </div>
+                  
+                  {/* Barcode Number - Monospace */}
+                  <p className="font-mono text-gray-600 text-xs text-center break-all px-1">{device.barcode}</p>
+                  
                   <button
                     type="button"
                     onClick={() => setExpandedIndex(isExpanded ? null : i)}
@@ -154,7 +192,6 @@ const BulkBarcodeGenerator = ({ devices, onClose }) => {
                   </button>
                   {isExpanded && (
                     <div className="w-full text-xs bg-gray-50 rounded p-2 space-y-1 border border-gray-100">
-                      <p className="font-mono text-gray-600 break-all">{device.barcode}</p>
                       {device.brand && <p className="text-gray-500">Brand: {device.brand}</p>}
                       {device.model && <p className="text-gray-500">Model: {device.model}</p>}
                       {device.color && <p className="text-gray-500">Color: {device.color}</p>}

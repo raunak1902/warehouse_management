@@ -16,8 +16,9 @@ import {
   X, Shield, AlertTriangle, Wrench, CheckCircle2, Send, Loader2,
   ChevronRight, Layers, Monitor, Info, ArrowRight, Truck, Package,
   Wrench as WrenchIcon, RotateCcw, Zap, AlertCircle, Upload,
-  ImageIcon, FileText, Video, Trash2, Eye, Camera, Film,
+  ImageIcon, FileText, Video, Trash2, Eye, Camera, Film, MapPin,
 } from 'lucide-react'
+import WarehouseLocationSelector from './WarehouseLocationSelector'
 import {
   lifecycleRequestApi, STEP_META, VALID_NEXT_STEPS, HEALTH_OPTIONS,
   PROOF_CONFIG, HEALTH_REQUIRES_PROOF, MAX_PROOF_FILES, MAX_FILE_SIZE_MB,
@@ -237,7 +238,8 @@ function ProofUploadSection({ proofConfig, files, previews, onAdd, onRemove, isH
 // ─────────────────────────────────────────────────────────────────────────────
 const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) => {
   const isSet       = !!device?._isSet
-  const isManager   = ['manager', 'superadmin'].includes(normaliseRole(currentUserRole()))
+  const role        = normaliseRole(currentUserRole())
+  const isManager   = ['manager', 'superadmin'].includes(role)
   const currentStep = device?.lifecycleStatus ?? 'available'
 
   const availableSteps = useMemo(() => {
@@ -255,6 +257,12 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
   const [submitted,      setSubmitted]      = useState(false)
   const [autoApproved,   setAutoApproved]   = useState(false)
   const [error,          setError]          = useState(null)
+
+  // ── Return-to-warehouse location ─────────────────────────────────────────
+  // Pre-filled from the device/set's last known warehouse location
+  const [returnWarehouseId,       setReturnWarehouseId]       = useState(device.warehouseId || null)
+  const [returnWarehouseZone,     setReturnWarehouseZone]     = useState(device.warehouseZone || '')
+  const [returnWarehouseSpecific, setReturnWarehouseSpecific] = useState(device.warehouseSpecificLocation || '')
 
   const selectedMeta    = selectedStep ? STEP_META[selectedStep] : null
   const needsHealthNote = healthStatus !== 'ok'
@@ -282,11 +290,14 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
 
   const proofRequired = !!effectiveProofConfig?.required
   const proofMissing  = proofRequired && proofFiles.length === 0
+  const isReturned    = selectedStep === 'returned'
+  const returnWarehouseMissing = isReturned && !returnWarehouseId
 
   const canSubmit =
     !!selectedStep &&
     (!needsHealthNote || healthNote.trim().length > 0) &&
-    !proofMissing
+    !proofMissing &&
+    !returnWarehouseMissing
 
   // ── File management ──────────────────────────────────────────────────────────
   const addFiles = useCallback((incoming) => {
@@ -329,11 +340,23 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
     setSubmitting(true)
     setError(null)
     try {
+      // For 'returned' step, encode warehouse location into the note JSON
+      let submitNote = note.trim() || undefined
+      if (selectedStep === 'returned') {
+        const returnMeta = {
+          warehouseId:               returnWarehouseId,
+          warehouseZone:             returnWarehouseZone   || null,
+          warehouseSpecificLocation: returnWarehouseSpecific || null,
+        }
+        // Merge with any existing note text
+        submitNote = JSON.stringify({ ...returnMeta, _note: note.trim() || undefined })
+      }
+
       const body = {
         toStep:       selectedStep,
         healthStatus,
         healthNote:   needsHealthNote ? healthNote.trim() : undefined,
-        note:         note.trim() || undefined,
+        note:         submitNote,
         ...(isSet ? { setId: device.id } : { deviceId: device.id }),
       }
       const res = await lifecycleRequestApi.create(body, proofFiles)
@@ -597,6 +620,39 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
                 </div>
               )}
 
+              {/* Warehouse location — mandatory when marking as 'Returned to Warehouse' */}
+              {selectedStep === 'returned' && (
+                <div className="border-2 border-teal-200 rounded-xl overflow-hidden bg-teal-50/30">
+                  <div className="flex items-center gap-2 px-4 py-3 bg-teal-50 border-b border-teal-200">
+                    <MapPin className="w-4 h-4 text-teal-600" />
+                    <span className="text-sm font-semibold text-teal-800">
+                      Return Warehouse Location <span className="text-red-500">*</span>
+                    </span>
+                  </div>
+                  <div className="p-4">
+                    <p className="text-xs text-teal-700 mb-3">
+                      {device.warehouseId
+                        ? 'Pre-filled with last known location — update if device is going somewhere different.'
+                        : 'Device is returning from client — confirm where it will be stored.'}
+                    </p>
+                    <WarehouseLocationSelector
+                      warehouseId={returnWarehouseId}
+                      zone={returnWarehouseZone}
+                      specificLocation={returnWarehouseSpecific}
+                      onWarehouseChange={v => { setReturnWarehouseId(v); setReturnWarehouseZone('') }}
+                      onZoneChange={setReturnWarehouseZone}
+                      onSpecificLocationChange={setReturnWarehouseSpecific}
+                      required={true}
+                    />
+                    {returnWarehouseMissing && (
+                      <p className="mt-2 text-xs text-red-600 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> Please select a warehouse to confirm return location.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Optional note */}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -633,7 +689,7 @@ const LifecycleActionModal = ({ device, onClose, onSuccess, forceStep = null }) 
           )}
         </div>
 
-        {/* Footer */}
+        {/* Footer — hide when locked */}
         {availableSteps.length > 0 && (
           <div className="flex-shrink-0 border-t border-gray-100 p-4 space-y-2">
             {/* Proof file count badge */}

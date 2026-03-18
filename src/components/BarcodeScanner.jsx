@@ -126,6 +126,7 @@ const BarcodeScanner = ({ onClose }) => {
   if (device) {
     return (
       <BarcodeResultCard
+        key={device.barcode || device.id}
         device={device}
         onClose={onClose}
         onDeviceUpdated={handleDeviceUpdated}

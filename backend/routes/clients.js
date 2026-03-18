@@ -7,8 +7,20 @@ const router = express.Router()
 const prisma = new PrismaClient()
 
 const INCLUDE_CLIENT = {
-  devices: { include: { deviceSet: true }, orderBy: { updatedAt: 'desc' } },
-  deviceSets: { orderBy: { updatedAt: 'desc' } },
+  // Only standalone devices (not part of any set)
+  devices: {
+    where: { setId: null },
+    orderBy: { updatedAt: 'desc' },
+  },
+  // Sets with their component devices included
+  deviceSets: {
+    include: {
+      components: {
+        orderBy: { updatedAt: 'desc' },
+      },
+    },
+    orderBy: { updatedAt: 'desc' },
+  },
 }
 
 router.get('/', authMiddleware, requirePermission('Clients', 'read'), async (req, res) => {

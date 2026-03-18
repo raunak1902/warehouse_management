@@ -7,6 +7,8 @@ import jwt from "jsonwebtoken";
 import path from "path";
 import { fileURLToPath } from "url";
 import authMiddleware from "./middleware/auth.js";
+import { initSystem } from "./init/initSystem.js";
+import rateLimit from "express-rate-limit";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,32 +25,69 @@ import permissionsRouter        from "./routes/Permissions.js";
 import lifecycleRequestsRouter  from "./routes/lifecycleRequests.js";
 import notificationsRouter      from "./routes/notifications.js";
 import returnsRouter            from "./routes/returns.js";
+import catalogueRouter          from "./routes/catalogue.js";
+import inventoryRequestsRouter  from "./routes/inventoryRequests.js";
+import deletionRequestsRouter   from "./routes/deletionRequests.js";
+
+// ═══ Warehouse & Location Routes ═══
+import warehouseRoutes          from "./routes/warehouses.js";
+import customLocationRoutes     from "./routes/customLocations.js";
+
 import { startSubscriptionCron } from "./cron/subscriptionReminders.js";
+import { seedBuiltinTypes }       from "./routes/catalogue.js";
 
 dotenv.config();
 
 const app    = express();
 const prisma = new PrismaClient();
 
+// ═══ CORS Configuration (Production-Ready) ═══
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : ["http://localhost:5174"];
+
 app.use(cors({
-  origin: [
-    "http://localhost:5174",
-    "http://10.156.23.45:5174",
-    "https://10.156.23.45:5174",
-  ],
+  origin: allowedOrigins,
   credentials: true,
 }));
 
 app.use(express.json());
 
+// ═══ Rate Limiting for Login (Security) ═══
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 login attempts per window
+  message: { message: 'Too many login attempts. Please try again after 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // ── Static: serve uploaded proof files ───────────────────────────────────────
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 
-// ── Health check ──────────────────────────────────────────────────────────────
+// ── Health Check ──────────────────────────────────────────────────────────────
 app.get("/", (_req, res) => res.json({ message: "Backend is running 🚀" }));
 
-// ── Login ─────────────────────────────────────────────────────────────────────
-app.post("/login", async (req, res) => {
+// ── Health Check with DB Connection Test ──────────────────────────────────────
+app.get("/health", async (req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ 
+      status: "healthy",
+      database: "connected",
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(503).json({ 
+      status: "unhealthy",
+      database: "disconnected",
+      error: error.message 
+    });
+  }
+});
+
+// ── Login (with Rate Limiting) ────────────────────────────────────────────────
+app.post("/login", loginLimiter, async (req, res) => {
   const { email, password } = req.body;
 
   try {
@@ -67,7 +106,7 @@ app.post("/login", async (req, res) => {
     if (!isMatch) return res.status(400).json({ message: "Invalid password" });
 
     const token = jwt.sign(
-      { userId: user.id, role: user.role.name },
+      { userId: user.id, role: user.role.name, name: user.name },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
@@ -99,11 +138,18 @@ app.use("/api/permissions",         permissionsRouter);
 app.use("/api/lifecycle-requests",   lifecycleRequestsRouter);
 app.use("/api/notifications",        notificationsRouter);
 app.use("/api/returns",              returnsRouter);
+app.use("/api/catalogue",            catalogueRouter);
+app.use("/api/inventory-requests",   inventoryRequestsRouter);
+app.use("/api/deletion-requests",    deletionRequestsRouter);
+
+// ═══ Warehouse & Location Routes ═══
+app.use("/api/warehouses",           warehouseRoutes);
+app.use("/api/custom-locations",     customLocationRoutes);
 
 // ── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: "Route not found" }));
 
-// ── Error handler ─────────────────────────────────────────────────────────────
+// ── Error Handler ─────────────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
   console.error(err.stack);
   res.status(500).json({
@@ -112,14 +158,44 @@ app.use((err, _req, res, _next) => {
   });
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
+// ── Start Server ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`)
-  startSubscriptionCron()
+
+const startServer = async () => {
+  try {
+    // 🔥 STEP 1: RUN SYSTEM INIT (Critical - creates permissions, roles, SuperAdmin)
+    await initSystem();
+
+    // 🔥 STEP 2: START SERVER
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`✅ Server running on port ${PORT}`);
+      console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`✅ CORS enabled for: ${allowedOrigins.join(', ')}`);
+
+      // Seed builtin types and start cron jobs
+      seedBuiltinTypes().catch(console.error);
+      startSubscriptionCron();
+    });
+
+  } catch (error) {
+    console.error("❌ Failed to start server:", error);
+    process.exit(1);
+  }
+};
+
+startServer();
+
+// ── Graceful Shutdown ─────────────────────────────────────────────────────────
+process.on("SIGINT", async () => {
+  console.log("\n🛑 Shutting down gracefully...");
+  await prisma.$disconnect();
+  console.log("✅ Database connection closed");
+  process.exit(0);
 });
 
-process.on("SIGINT", async () => {
+process.on("SIGTERM", async () => {
+  console.log("\n🛑 SIGTERM received, shutting down...");
   await prisma.$disconnect();
+  console.log("✅ Database connection closed");
   process.exit(0);
 });

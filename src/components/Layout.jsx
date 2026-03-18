@@ -302,6 +302,7 @@ const Layout = ({ userRole, onLogout }) => {
     ...(canManage ? [
       { path: '/dashboard/client',       icon: Users,      label: 'Client' },
       { path: '/dashboard/devices',      icon: Smartphone, label: 'Devices' },
+      { path: '/dashboard/movements',     icon: Truck,      label: 'Movements' },
       { path: '/dashboard/makesets',     icon: Layers,     label: 'Make Sets' },
       { path: '/dashboard/location',     icon: MapPin,     label: 'Location' },
       { path: '/dashboard/assigning',    icon: Link2,      label: 'Assigning' },
@@ -314,6 +315,7 @@ const Layout = ({ userRole, onLogout }) => {
     // Ground Team limited nav
     ...(isGroundTeam ? [
       { path: '/dashboard/devices',   icon: Smartphone, label: 'Devices' },
+      { path: '/dashboard/movements',  icon: Truck,      label: 'Movements' },
       { path: '/dashboard/makesets',  icon: Layers,     label: 'Make Sets' },
       { path: '/dashboard/assigning', icon: Link2,      label: 'Assigning' },
     ] : []),
@@ -415,7 +417,7 @@ const Layout = ({ userRole, onLogout }) => {
     <div className="flex h-screen bg-background-main">
 
       {/* ── Desktop sidebar ──────────────────────────────────────────────── */}
-      <aside className="hidden md:flex w-64 bg-white border-r border-gray-200 flex-col shadow-sm flex-shrink-0">
+      <aside className="hidden lg:flex w-64 bg-white border-r border-gray-200 flex-col shadow-sm flex-shrink-0">
         <div className="p-4 border-b border-gray-200">
           <h1 className="font-bold text-xl text-primary-600">EDSignage</h1>
         </div>
@@ -448,11 +450,11 @@ const Layout = ({ userRole, onLogout }) => {
 
       {/* ── Mobile overlay ────────────────────────────────────────────────── */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-40 bg-black/50 md:hidden" onClick={() => setSidebarOpen(false)} />
+        <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
       {/* ── Mobile slide-over sidebar ─────────────────────────────────────── */}
-      <aside className={`fixed inset-y-0 left-0 z-50 w-72 bg-white shadow-2xl flex flex-col transform transition-transform duration-300 md:hidden ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed inset-y-0 left-0 z-50 w-72 bg-white shadow-2xl flex flex-col transform transition-transform duration-300 lg:hidden ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 bg-gradient-to-r from-primary-600 to-primary-500">
           <h1 className="font-bold text-xl text-white">EDSignage</h1>
           <button onClick={() => setSidebarOpen(false)} className="p-2 rounded-lg bg-white/20 text-white">
@@ -479,7 +481,7 @@ const Layout = ({ userRole, onLogout }) => {
       {/* ── Main content ──────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Desktop top bar */}
-        <header className="hidden md:flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 shadow-sm flex-shrink-0 z-30">
+        <header className="hidden lg:flex items-center justify-between px-6 py-3 bg-white border-b border-gray-200 shadow-sm flex-shrink-0 z-30">
           <div className="text-sm text-gray-500 font-medium">
             Welcome back, <span className="text-gray-800 font-semibold">{userRole}</span>
           </div>
@@ -487,7 +489,7 @@ const Layout = ({ userRole, onLogout }) => {
         </header>
 
         {/* Mobile top bar */}
-        <header className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 shadow-sm flex-shrink-0 z-30">
+        <header className="lg:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 shadow-sm flex-shrink-0 z-30">
           <button onClick={() => setSidebarOpen(true)} className="p-2 rounded-lg text-gray-700 hover:bg-gray-100">
             <Menu size={22} />
           </button>
@@ -496,7 +498,7 @@ const Layout = ({ userRole, onLogout }) => {
         </header>
 
         <main className="flex-1 overflow-auto">
-          <div className="p-4 md:p-6 max-w-7xl mx-auto pb-24 md:pb-6">
+          <div className="p-4 lg:p-6 max-w-7xl mx-auto pb-24 lg:pb-6">
             <Outlet />
           </div>
         </main>
@@ -514,7 +516,7 @@ const Layout = ({ userRole, onLogout }) => {
       )}
 
       {/* ── Mobile bottom nav ─────────────────────────────────────────────── */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-gray-200 shadow-lg flex safe-area-bottom">
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-gray-200 shadow-lg flex safe-area-bottom">
         {bottomNavItems.map((item) => {
           const Icon = item.icon
           const isMenuButton = item.path === '__menu__'

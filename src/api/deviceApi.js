@@ -50,7 +50,6 @@ export const deviceApi = {
   update: async (id, deviceData) => (await api.put(`/api/devices/${id}`, deviceData)).data,
   delete: async (id) => (await api.delete(`/api/devices/${id}`)).data,
   bulkAssign: async (deviceIds, clientId) => (await api.post('/api/devices/bulk/assign', { deviceIds, clientId })).data,
-  bulkUnassign: async (deviceIds) => (await api.post('/api/devices/bulk/unassign', { deviceIds })).data,
   bulkUpdateLifecycle: async (deviceIds, lifecycleData) => (await api.post('/api/devices/bulk/update-lifecycle', { deviceIds, ...lifecycleData })).data,
   filterByType: async (type) => (await api.get(`/api/devices/filter/type/${type}`)).data,
   filterByLifecycle: async (status) => (await api.get(`/api/devices/filter/lifecycle/${status}`)).data,

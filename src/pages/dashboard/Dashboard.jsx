@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useInventory } from '../../context/InventoryContext'
-import { deviceMatchesSlot } from '../../config/deviceTypeRegistry'
+import { deviceMatchesSlot, getAllTypes } from '../../config/deviceTypeRegistry'
 import {
   ChevronLeft, ChevronRight, MapPin, TrendingUp, Package, Box,
   Tv, Smartphone, Battery, Monitor, Layout as LayoutIcon, Sparkles,
@@ -148,16 +148,46 @@ const Dashboard = ({ userRole }) => {
     [warehouseDevices]
   )
 
+  // Reactive custom set types — updates when Makesets page defines a new set type
+  const CUSTOM_SET_TYPES_KEY = 'edsignage_custom_set_types'
+  const loadCustomSetTypes = () => { try { return JSON.parse(localStorage.getItem(CUSTOM_SET_TYPES_KEY) || '{}') } catch { return {} } }
+  const [customSetTypes, setCustomSetTypes] = useState(loadCustomSetTypes)
+  useEffect(() => {
+    const handler = () => setCustomSetTypes(loadCustomSetTypes())
+    window.addEventListener('set-types-updated', handler)
+    window.addEventListener('device-types-updated', handler)
+    return () => {
+      window.removeEventListener('set-types-updated', handler)
+      window.removeEventListener('device-types-updated', handler)
+    }
+  }, [])
+
+  const BUILTIN_SET_TYPE_DEFS = [
+    { key: 'aStand',      label: 'A-Stand Set',  url: '/dashboard/makesets?filterType=aStand',
+      slots: [{ id:'AST', label:'A-Frame Stand' }, { id:'TV', label:'TV (43"+)' }, { id:'MB', label:'Media Box' }] },
+    { key: 'iStand',      label: 'I-Stand Set',  url: '/dashboard/makesets?filterType=iStand',
+      slots: [{ id:'IST', label:'I-Frame Stand' }, { id:'TV', label:'TV (43"+)' }, { id:'MB', label:'Media Box' }] },
+    { key: 'tabletCombo', label: 'Tablet Combo', url: '/dashboard/makesets?filterType=tabletCombo',
+      slots: [{ id:'TAB', label:'Tablet' }, { id:'BAT', label:'Battery Pack' }, { id:'TST', label:'Tablet Stand' }] },
+  ]
+
   const buildableSets = useMemo(() => {
-    const SET_TYPE_DEFS = [
-      { key: 'aStand',      label: 'A-Stand Set',  url: '/dashboard/makesets?filterType=aStand',
-        slots: [{ id:'AST', label:'A-Frame Stand' }, { id:'TV', label:'TV (43"+)' }, { id:'MB', label:'Media Box' }] },
-      { key: 'iStand',      label: 'I-Stand Set',  url: '/dashboard/makesets?filterType=iStand',
-        slots: [{ id:'IST', label:'I-Frame Stand' }, { id:'TV', label:'TV (43"+)' }, { id:'MB', label:'Media Box' }] },
-      { key: 'tabletCombo', label: 'Tablet Combo', url: '/dashboard/makesets?filterType=tabletCombo',
-        slots: [{ id:'TAB', label:'Tablet' }, { id:'BAT', label:'Battery Pack' }, { id:'TST', label:'Tablet Stand' }] },
-    ]
-    const types = SET_TYPE_DEFS.map(({ key, label, url, slots }) => {
+    // Start with built-in set types
+    const allDefs = [...BUILTIN_SET_TYPE_DEFS]
+    // Append any user-defined custom set types from Makesets page
+    Object.entries(customSetTypes).forEach(([key, config]) => {
+      if (!config.deviceTypes?.length) return
+      allDefs.push({
+        key,
+        label: config.label || key,
+        url: `/dashboard/makesets?filterType=${key}`,
+        slots: config.deviceTypes.map(id => ({
+          id,
+          label: config.deviceLabels?.[id] || id,
+        })),
+      })
+    })
+    const types = allDefs.map(({ key, label, url, slots }) => {
       const counts = slots.map(s => ({ label: s.label, count: getAvailableByType(s.id) }))
       const maxSets = Math.min(...counts.map(c => c.count))
       const minCount = Math.min(...counts.map(c => c.count))
@@ -165,7 +195,7 @@ const Dashboard = ({ userRole }) => {
       return { key, label, url, buildable: maxSets, counts, bottleneck }
     })
     return { total: types.reduce((sum, t) => sum + t.buildable, 0), types }
-  }, [getAvailableByType])
+  }, [getAvailableByType, customSetTypes])
 
   // ── Recent activity — devices + sets combined ───────────────────────────────
   const recentActivity = useMemo(() => {

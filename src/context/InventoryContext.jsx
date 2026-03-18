@@ -45,6 +45,7 @@ export const LIFECYCLE_LABELS = {
   returned:          'Returned',
   lost:              'Lost',
   health_update:     'Health Update',
+  pending_set_assignment: 'Pending Set Assignment',
   // legacy fallbacks
   warehouse:         'In Warehouse',
   assign_requested:  'Assigning to Client',
@@ -68,6 +69,7 @@ export const LIFECYCLE_COLORS = {
   returned:          { bg: 'bg-gray-100',   text: 'text-gray-500',   dot: 'bg-gray-400'   },
   lost:              { bg: 'bg-red-100',    text: 'text-red-700',    dot: 'bg-red-500'    },
   health_update:     { bg: 'bg-cyan-100',   text: 'text-cyan-700',   dot: 'bg-cyan-500'   },
+  pending_set_assignment: { bg: 'bg-violet-100', text: 'text-violet-700', dot: 'bg-violet-400' },
   // legacy fallbacks
   warehouse:         { bg: 'bg-gray-100',   text: 'text-gray-700',   dot: 'bg-gray-400'   },
   assign_requested:  { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500'   },

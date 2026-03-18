@@ -1,0 +1,682 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Role {
+  id              Int              @id @default(autoincrement())
+  name            String           @unique
+  description     String?
+  createdAt       DateTime         @default(now())
+  rolePermissions RolePermission[]
+  users           User[]
+}
+
+model User {
+  id                       Int                        @id @default(autoincrement())
+  name                     String
+  email                    String                     @unique
+  password                 String
+  status                   String                     @default("ACTIVE")
+  createdAt                DateTime                   @default(now())
+  roleId                   Int
+  locationChanges          DeviceLocationHistory[]
+  disassembledSets         DisassembledSetLog[]       @relation("SetDisassembledBy")
+  requestedDisassemblies   DisassembledSetLog[]       @relation("SetRequestedBy")
+  ExpenseRequest           ExpenseRequest[]
+  requestsApproved         LifecycleRequest[]         @relation("ApprovedBy")
+  requestsMade             LifecycleRequest[]         @relation("RequestedBy")
+  notifications            Notification[]
+  setLocationChanges       SetLocationHistory[]
+  role                     Role                       @relation(fields: [roleId], references: [id])
+  transferRequestsApproved WarehouseTransferRequest[] @relation("ApprovedBy")
+  transferRequestsMade     WarehouseTransferRequest[] @relation("RequestedBy")
+
+  @@index([roleId])
+}
+
+model Permission {
+  id              Int              @id @default(autoincrement())
+  module          String
+  operation       String
+  description     String?
+  createdAt       DateTime         @default(now())
+  rolePermissions RolePermission[]
+
+  @@unique([module, operation])
+}
+
+model RolePermission {
+  roleId       Int
+  permissionId Int
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model Client {
+  id                Int                     @id @default(autoincrement())
+  name              String
+  phone             String
+  email             String
+  company           String?
+  address           String?
+  notes             String?
+  createdAt         DateTime                @default(now())
+  devices           Device[]
+  locationHistory   DeviceLocationHistory[]
+  deviceSets        DeviceSet[]
+  editRequests      InventoryRequest[]      @relation("ClientEditRequests")
+  lifecycleRequests LifecycleRequest[]
+}
+
+model Device {
+  id                              Int                        @id @default(autoincrement())
+  code                            String                     @unique
+  type                            String
+  brand                           String?
+  size                            String?
+  model                           String?
+  color                           String?
+  gpsId                           String?
+  mfgDate                         DateTime?
+  lifecycleStatus                 String                     @default("available")
+  location                        String?
+  state                           String?
+  district                        String?
+  pinpoint                        String?
+  createdAt                       DateTime                   @default(now())
+  updatedAt                       DateTime                   @updatedAt
+  clientId                        Int?
+  healthStatus                    String                     @default("ok")
+  setId                           Int?
+  approvedAt                      DateTime?
+  approvedById                    Int?
+  assignedAt                      DateTime?
+  barcode                         String                     @unique
+  deployedAt                      DateTime?
+  rejectionNote                   String?
+  requestedAt                     DateTime?
+  requestedById                   Int?
+  subscriptionEndDate             DateTime?
+  warehouseId                     Int?
+  warehouseZone                   String?
+  warehouseSpecificLocation       String?
+  deploymentState                 String?
+  deploymentDistrict              String?
+  deploymentSite                  String?
+  latitude                        Decimal?                   @db.Decimal(10, 8)
+  longitude                       Decimal?                   @db.Decimal(11, 8)
+  googleMapsLink                  String?
+  returnDate                      DateTime?
+  assignmentHealth                String?
+  assignmentHealthNote            String?
+  preSetWarehouseId               Int?
+  preSetWarehouseZone             String?
+  preSetWarehouseSpecificLocation String?
+  client                          Client?                    @relation(fields: [clientId], references: [id])
+  deviceSet                       DeviceSet?                 @relation(fields: [setId], references: [id])
+  warehouse                       Warehouse?                 @relation(fields: [warehouseId], references: [id])
+  history                         DeviceHistory[]
+  locationHistory                 DeviceLocationHistory[]
+  editRequests                    InventoryRequest[]         @relation("DeviceEditRequests")
+  lifecycleRequests               LifecycleRequest[]         @relation("DeviceRequests")
+  warehouseTransfers              WarehouseTransferRequest[]
+
+  @@index([type])
+  @@index([lifecycleStatus])
+  @@index([clientId])
+  @@index([code])
+  @@index([barcode])
+  @@index([setId])
+  @@index([warehouseId])
+  @@index([deploymentState])
+}
+
+model DeviceSet {
+  id                        Int                        @id @default(autoincrement())
+  code                      String                     @unique
+  barcode                   String                     @unique
+  setType                   String
+  setTypeName               String
+  name                      String?
+  lifecycleStatus           String                     @default("available")
+  healthStatus              String                     @default("ok")
+  location                  String?
+  state                     String?
+  district                  String?
+  notes                     String?
+  clientId                  Int?
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  approvedAt                DateTime?
+  approvedById              Int?
+  rejectionNote             String?
+  requestedAt               DateTime?
+  requestedById             Int?
+  subscriptionEndDate       DateTime?
+  warehouseId               Int?
+  warehouseZone             String?
+  warehouseSpecificLocation String?
+  pinpoint                  String?
+  googleMapsLink            String?
+  latitude                  Float?
+  longitude                 Float?
+  components                Device[]
+  client                    Client?                    @relation(fields: [clientId], references: [id])
+  warehouse                 Warehouse?                 @relation(fields: [warehouseId], references: [id])
+  lifecycleRequests         LifecycleRequest[]         @relation("SetRequests")
+  locationHistory           SetLocationHistory[]
+  warehouseTransfers        WarehouseTransferRequest[]
+
+  @@index([setType])
+  @@index([lifecycleStatus])
+  @@index([clientId])
+  @@index([barcode])
+}
+
+model LifecycleRequest {
+  id            Int         @id @default(autoincrement())
+  deviceId      Int?
+  setId         Int?
+  clientId      Int?
+  fromStep      String
+  toStep        String
+  healthStatus  String      @default("ok")
+  healthNote    String?
+  note          String?
+  requestedById Int
+  createdAt     DateTime    @default(now())
+  approvedById  Int?
+  approvedAt    DateTime?
+  status        String      @default("pending")
+  rejectionNote String?
+  autoApproved  Boolean     @default(false)
+  approvedBy    User?       @relation("ApprovedBy", fields: [approvedById], references: [id])
+  client        Client?     @relation(fields: [clientId], references: [id])
+  device        Device?     @relation("DeviceRequests", fields: [deviceId], references: [id])
+  requestedBy   User        @relation("RequestedBy", fields: [requestedById], references: [id])
+  deviceSet     DeviceSet?  @relation("SetRequests", fields: [setId], references: [id])
+  proofFiles    ProofFile[]
+
+  @@index([status])
+  @@index([deviceId])
+  @@index([setId])
+  @@index([clientId])
+  @@index([requestedById])
+  @@index([toStep])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  title     String
+  body      String
+  requestId Int?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  type      String   @default("lifecycle")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, read])
+}
+
+model DeviceHistory {
+  id          Int      @id @default(autoincrement())
+  deviceId    Int
+  fromStatus  String
+  toStatus    String
+  changedById Int?
+  changedAt   DateTime @default(now())
+  note        String?
+  device      Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId])
+  @@index([deviceId, changedAt])
+}
+
+model AssignmentRequest {
+  id                 Int       @id @default(autoincrement())
+  requestType        String
+  deviceId           Int?
+  setId              Int?
+  clientId           Int
+  healthStatus       String    @default("ok")
+  healthComment      String?
+  returnType         String
+  returnDays         Int?
+  returnMonths       Int?
+  returnDate         DateTime?
+  computedReturnDate DateTime?
+  status             String    @default("pending")
+  requestedBy        Int?
+  approvedBy         Int?
+  approvedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([status])
+  @@index([clientId])
+  @@index([deviceId])
+  @@index([setId])
+}
+
+model TeamRequest {
+  id            Int                  @id @default(autoincrement())
+  requestedById Int
+  deviceId      Int?
+  setId         Int?
+  requestType   String
+  changes       Json
+  status        String               @default("pending")
+  note          String?
+  adminNote     String?
+  approvedById  Int?
+  approvedAt    DateTime?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  comments      TeamRequestComment[]
+
+  @@index([status])
+  @@index([requestedById])
+  @@index([deviceId])
+  @@index([setId])
+}
+
+model TeamRequestComment {
+  id            Int         @id @default(autoincrement())
+  teamRequestId Int
+  authorId      Int
+  authorRole    String
+  message       String
+  createdAt     DateTime    @default(now())
+  authorName    String
+  teamRequest   TeamRequest @relation(fields: [teamRequestId], references: [id], onDelete: Cascade)
+
+  @@index([teamRequestId])
+}
+
+model ProofFile {
+  id         Int              @id @default(autoincrement())
+  requestId  Int
+  fileName   String
+  storedName String
+  fileType   String
+  mimeType   String
+  sizeKb     Int
+  url        String
+  thumbUrl   String?
+  createdAt  DateTime         @default(now()) @db.Timestamptz(6)
+  request    LifecycleRequest @relation(fields: [requestId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([requestId])
+}
+
+model DeletionRequest {
+  id                Int       @id @default(autoincrement())
+  entityType        String
+  entityId          Int
+  entityCode        String
+  snapshot          Json
+  componentSnapshot Json?
+  reason            String
+  requestedById     Int
+  requestedByName   String
+  scheduledFor      DateTime
+  createdAt         DateTime  @default(now())
+  status            String    @default("pending")
+  cancelledById     Int?
+  cancelledByName   String?
+  cancelledAt       DateTime?
+  executedAt        DateTime?
+  executionNote     String?
+
+  @@index([status])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([scheduledFor])
+  @@index([createdAt])
+}
+
+model SubscriptionReminder {
+  id           Int       @id @default(autoincrement())
+  deviceId     Int?
+  setId        Int?
+  reminderType String
+  sentAt       DateTime  @default(now())
+  attended     Boolean   @default(false)
+  attendedAt   DateTime?
+
+  @@index([deviceId])
+  @@index([setId])
+  @@index([attended])
+}
+
+model ProductTypeConfig {
+  id        Int      @id @default(autoincrement())
+  typeId    String   @unique
+  label     String
+  prefix    String
+  icon      String   @default("Package")
+  color     String   @default("gray")
+  isBuiltin Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(999)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([typeId])
+  @@index([isActive])
+}
+
+model SetTypeConfig {
+  id             Int      @id @default(autoincrement())
+  setTypeId      String   @unique
+  label          String
+  prefix         String
+  icon           String   @default("Layers")
+  color          String   @default("gray")
+  componentSlots Json     @default("[]")
+  isBuiltin      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  sortOrder      Int      @default(999)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  @@index([setTypeId])
+}
+
+model CatalogueBrand {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model CatalogueSize {
+  id        Int      @id @default(autoincrement())
+  value     String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model CatalogueColor {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model SavedPinpoint {
+  id        Int      @id @default(autoincrement())
+  state     String
+  district  String
+  pinpoint  String
+  createdAt DateTime @default(now())
+
+  @@unique([state, district, pinpoint])
+  @@index([state, district])
+}
+
+model InventoryRequest {
+  id                        Int       @id @default(autoincrement())
+  requestedById             Int
+  requestedByName           String
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @default(now()) @updatedAt
+  requestType               String
+  status                    String    @default("pending")
+  reviewedById              Int?
+  reviewedAt                DateTime?
+  rejectionNote             String?
+  deviceTypeId              String?
+  deviceTypeName            String?
+  quantity                  Int?
+  brand                     String?
+  size                      String?
+  model                     String?
+  color                     String?
+  gpsId                     String?
+  inDate                    DateTime?
+  healthStatus              String?   @default("ok")
+  note                      String?
+  setTypeId                 String?
+  setTypeName               String?
+  setName                   String?
+  reservedDeviceIds         Json?
+  targetSetId               Int?
+  createdDeviceIds          Json?
+  createdSetId              Int?
+  approvedCodeRange         String?
+  expectedCodeRange         String?
+  warehouseId               Int?
+  warehouseZone             String?
+  warehouseSpecificLocation String?
+  clientId                  Int?
+  proposedChanges           Json?
+  targetDeviceCode          String?
+  targetDeviceId            Int?
+  client                    Client?   @relation("ClientEditRequests", fields: [clientId], references: [id])
+  targetDevice              Device?   @relation("DeviceEditRequests", fields: [targetDeviceId], references: [id])
+
+  @@index([requestedById])
+  @@index([clientId])
+  @@index([targetDeviceId])
+  @@index([status])
+  @@index([requestType])
+  @@index([createdAt])
+}
+
+model ExpenseAttachment {
+  id               Int            @id @default(autoincrement())
+  expenseRequestId Int
+  originalName     String
+  storedPath       String
+  ExpenseRequest   ExpenseRequest @relation(fields: [expenseRequestId], references: [id], onDelete: Cascade)
+
+  @@index([expenseRequestId])
+}
+
+model ExpenseRequest {
+  id                  Int                  @id @default(autoincrement())
+  requestedById       Int
+  employeeName        String
+  department          String
+  departmentOther     String?
+  expenseDate         DateTime
+  expenseTime         String?
+  client              String
+  location            String
+  kilometres          Float?
+  travelReimbursement Float?
+  totalAmount         Float
+  status              String               @default("pending")
+  adminComment        String?
+  approvedById        Int?
+  approvedAt          DateTime?
+  rejectedById        Int?
+  rejectedAt          DateTime?
+  rejectedReason      String?
+  reimbursedAt        DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime
+  ExpenseAttachment   ExpenseAttachment[]
+  User                User                 @relation(fields: [requestedById], references: [id])
+  ExpenseRequestLine  ExpenseRequestLine[]
+
+  @@index([createdAt])
+  @@index([requestedById])
+  @@index([status])
+}
+
+model ExpenseRequestLine {
+  id               Int            @id @default(autoincrement())
+  expenseRequestId Int
+  expenseType      String
+  expenseTypeOther String?
+  description      String
+  amount           Float
+  sortOrder        Int            @default(0)
+  ExpenseRequest   ExpenseRequest @relation(fields: [expenseRequestId], references: [id], onDelete: Cascade)
+
+  @@index([expenseRequestId])
+}
+
+model Warehouse {
+  id               Int                        @id @default(autoincrement())
+  name             String                     @unique
+  address          String?
+  city             String?
+  state            String?
+  contactPerson    String?
+  contactPhone     String?
+  isActive         Boolean                    @default(true)
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+  devices          Device[]
+  locationHistory  DeviceLocationHistory[]
+  deviceSets       DeviceSet[]
+  disassembledSets DisassembledSetLog[]
+  transfersFrom    WarehouseTransferRequest[] @relation("FromWarehouse")
+  transfersTo      WarehouseTransferRequest[] @relation("ToWarehouse")
+  zones            WarehouseZone[]
+}
+
+model WarehouseZone {
+  id          Int       @id @default(autoincrement())
+  warehouseId Int
+  name        String
+  description String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@unique([warehouseId, name])
+}
+
+model DeviceLocationHistory {
+  id                        Int        @id @default(autoincrement())
+  deviceId                  Int
+  warehouseId               Int?
+  warehouseZone             String?
+  warehouseSpecificLocation String?
+  clientId                  Int?
+  deploymentState           String?
+  deploymentDistrict        String?
+  deploymentSite            String?
+  latitude                  Decimal?   @db.Decimal(10, 8)
+  longitude                 Decimal?   @db.Decimal(11, 8)
+  googleMapsLink            String?
+  changedById               Int?
+  changeReason              String?
+  notes                     String?
+  timestamp                 DateTime   @default(now())
+  changedBy                 User?      @relation(fields: [changedById], references: [id])
+  client                    Client?    @relation(fields: [clientId], references: [id])
+  device                    Device     @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  warehouse                 Warehouse? @relation(fields: [warehouseId], references: [id])
+
+  @@index([deviceId])
+  @@index([timestamp(sort: Desc)])
+}
+
+model SetLocationHistory {
+  id                        Int        @id @default(autoincrement())
+  setId                     Int?
+  setCode                   String
+  warehouseId               Int?
+  warehouseZone             String?
+  warehouseSpecificLocation String?
+  warehouseName             String?
+  changedById               Int?
+  changedByName             String?
+  changeReason              String?
+  notes                     String?
+  timestamp                 DateTime   @default(now())
+  changedBy                 User?      @relation(fields: [changedById], references: [id])
+  set                       DeviceSet? @relation(fields: [setId], references: [id])
+
+  @@index([setId])
+  @@index([setCode])
+  @@index([timestamp(sort: Desc)])
+}
+
+model DisassembledSetLog {
+  id                        Int        @id @default(autoincrement())
+  setCode                   String
+  setTypeName               String
+  setName                   String?
+  disassembledAt            DateTime   @default(now())
+  disassembledById          Int?
+  disassembledByName        String?
+  reason                    String
+  componentSnapshot         Json       @default("[]")
+  lifecycleSnapshot         String?
+  warehouseId               Int?
+  warehouseZone             String?
+  warehouseSpecificLocation String?
+  warehouseName             String?
+  requestedById             Int?
+  requestedByName           String?
+  disassembledBy            User?      @relation("SetDisassembledBy", fields: [disassembledById], references: [id])
+  requestedBy               User?      @relation("SetRequestedBy", fields: [requestedById], references: [id])
+  warehouse                 Warehouse? @relation(fields: [warehouseId], references: [id])
+
+  @@index([setCode])
+  @@index([disassembledAt(sort: Desc)])
+}
+
+model CustomDeploymentLocation {
+  id         Int      @id @default(autoincrement())
+  state      String
+  district   String
+  site       String
+  usageCount Int      @default(1)
+  lastUsed   DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@unique([state, district, site])
+  @@index([usageCount(sort: Desc), lastUsed(sort: Desc)])
+}
+
+model WarehouseTransferRequest {
+  id                 Int        @id @default(autoincrement())
+  deviceId           Int?
+  setId              Int?
+  fromWarehouseId    Int?
+  toWarehouseId      Int
+  toZone             String?
+  toSpecificLocation String?
+  requestedById      Int
+  approvedById       Int?
+  status             String     @default("pending")
+  notes              String?
+  createdAt          DateTime   @default(now())
+  approvedAt         DateTime?
+  approvedBy         User?      @relation("ApprovedBy", fields: [approvedById], references: [id])
+  device             Device?    @relation(fields: [deviceId], references: [id])
+  fromWarehouse      Warehouse? @relation("FromWarehouse", fields: [fromWarehouseId], references: [id])
+  requestedBy        User       @relation("RequestedBy", fields: [requestedById], references: [id])
+  set                DeviceSet? @relation(fields: [setId], references: [id])
+  toWarehouse        Warehouse  @relation("ToWarehouse", fields: [toWarehouseId], references: [id])
+
+  @@index([status])
+}
+
+model CatalogueLocationPreset {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([isActive])
+}
+
+

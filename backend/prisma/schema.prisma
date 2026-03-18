@@ -7,6 +7,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RBAC — Roles & Permissions
+// ─────────────────────────────────────────────────────────────────────────────
+
 model Role {
   id              Int              @id @default(autoincrement())
   name            String           @unique
@@ -16,6 +20,11 @@ model Role {
   users           User[]
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// User
+// Extended with: warehouse location-change history + transfer request relations
+// ─────────────────────────────────────────────────────────────────────────────
+
 model User {
   id               Int                @id @default(autoincrement())
   name             String
@@ -24,10 +33,28 @@ model User {
   status           String             @default("ACTIVE")
   createdAt        DateTime           @default(now())
   roleId           Int
+  role             Role               @relation(fields: [roleId], references: [id])
+
+  // Existing relations
+  ExpenseRequest   ExpenseRequest[]
   requestsApproved LifecycleRequest[] @relation("ApprovedBy")
   requestsMade     LifecycleRequest[] @relation("RequestedBy")
   notifications    Notification[]
-  role             Role               @relation(fields: [roleId], references: [id])
+
+  // NEW: tracks every device location change made by this user
+  locationChanges          DeviceLocationHistory[]
+  
+  // NEW: tracks every set location change made by this user
+  setLocationChanges       SetLocationHistory[]
+  
+  // NEW: tracks sets disassembled by this user
+  disassembledSets         DisassembledSetLog[] @relation("SetDisassembledBy")
+  // NEW: tracks sets whose disassembly was requested by this user (ground team)
+  requestedDisassemblies   DisassembledSetLog[] @relation("SetRequestedBy")
+
+  // NEW: warehouse transfer requests this user initiated or approved
+  transferRequestsMade     WarehouseTransferRequest[] @relation("RequestedBy")
+  transferRequestsApproved WarehouseTransferRequest[] @relation("ApprovedBy")
 
   @@index([roleId])
 }
@@ -52,6 +79,11 @@ model RolePermission {
   @@id([roleId, permissionId])
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Client
+// Extended with: location history relation
+// ─────────────────────────────────────────────────────────────────────────────
+
 model Client {
   id                Int                @id @default(autoincrement())
   name              String
@@ -61,44 +93,104 @@ model Client {
   address           String?
   notes             String?
   createdAt         DateTime           @default(now())
+
+  // Existing relations
   devices           Device[]
   deviceSets        DeviceSet[]
   lifecycleRequests LifecycleRequest[]
+
+  // NEW: all device location history entries associated with this client
+  locationHistory   DeviceLocationHistory[]
+  editRequests      InventoryRequest[]       @relation("ClientEditRequests")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Device
+// Extended with: warehouse location fields, deployment GPS fields,
+//               assignment health, return date, and new relations
+// ─────────────────────────────────────────────────────────────────────────────
+
 model Device {
-  id                Int                @id @default(autoincrement())
-  code              String             @unique
-  type              String
-  brand             String?
-  size              String?
-  model             String?
-  color             String?
-  gpsId             String?
-  mfgDate           DateTime?
-  lifecycleStatus   String             @default("available")
-  location          String?
-  state             String?
-  district          String?
-  pinpoint          String?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  clientId          Int?
-  healthStatus      String             @default("ok")
-  setId             Int?
-  approvedAt        DateTime?
-  approvedById      Int?
-  assignedAt        DateTime?
-  barcode           String             @unique
-  deployedAt        DateTime?
+  id                  Int                @id @default(autoincrement())
+  code                String             @unique
+  type                String
+  brand               String?
+  size                String?
+  model               String?
+  color               String?
+  gpsId               String?
+  mfgDate             DateTime?
+  lifecycleStatus     String             @default("available")
+  location            String?
+  state               String?
+  district            String?
+  pinpoint            String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  clientId            Int?
+  healthStatus        String             @default("ok")
+  setId               Int?
+  approvedAt          DateTime?
+  approvedById        Int?
+  assignedAt          DateTime?
+  barcode             String             @unique
+  deployedAt          DateTime?
+  rejectionNote       String?
+  requestedAt         DateTime?
+  requestedById       Int?
   subscriptionEndDate DateTime?
-  rejectionNote     String?
-  requestedAt       DateTime?
-  requestedById     Int?
+
+  // ── NEW: Warehouse Location ───────────────────────────────────────────────
+  // Which warehouse this device is currently stored in
+  warehouseId               Int?
+  // Named zone within the warehouse (e.g. "Zone A", "Shelf 3")
+  warehouseZone             String?
+  // Freeform specific location within the zone (e.g. "Rack 2, Bin 4")
+  warehouseSpecificLocation String?
+
+  // ── Pre-Set Location Snapshot ─────────────────────────────────────────────
+  // Saved when a device is added to a set — restored on disassembly so each
+  // component can return to its original location (or user can override).
+  preSetWarehouseId               Int?
+  preSetWarehouseZone             String?
+  preSetWarehouseSpecificLocation String?
+
+  // ── NEW: Deployment / Field Location ─────────────────────────────────────
+  // State where the device is deployed in the field
+  deploymentState    String?
+  // District within that state
+  deploymentDistrict String?
+  // Specific site name at the deployment location
+  deploymentSite     String?
+  // GPS coordinates for the deployment site
+  latitude           Decimal? @db.Decimal(10, 8)
+  longitude          Decimal? @db.Decimal(11, 8)
+  // Convenience link to open the location in Google Maps
+  googleMapsLink     String?
+
+  // ── NEW: Assignment Metadata ──────────────────────────────────────────────
+  // When the device is expected to be returned from a client
+  returnDate           DateTime?
+  // Health condition recorded at time of assignment (e.g. "good", "damaged")
+  assignmentHealth     String?
+  // Free-text note describing any health issues at assignment time
+  assignmentHealthNote String?
+
+  // ── Existing relations ────────────────────────────────────────────────────
   client            Client?            @relation(fields: [clientId], references: [id])
   deviceSet         DeviceSet?         @relation(fields: [setId], references: [id])
   history           DeviceHistory[]
   lifecycleRequests LifecycleRequest[] @relation("DeviceRequests")
+
+  // ── NEW relations ─────────────────────────────────────────────────────────
+  // The warehouse this device is currently assigned to
+  warehouse          Warehouse?                 @relation(fields: [warehouseId], references: [id])
+  // Full audit trail of every location change for this device
+  locationHistory    DeviceLocationHistory[]
+  // Pending/approved warehouse transfer requests involving this device
+  warehouseTransfers WarehouseTransferRequest[]
+  // Edit requests targeting this device
+  editRequests       InventoryRequest[]         @relation("DeviceEditRequests")
 
   @@index([type])
   @@index([lifecycleStatus])
@@ -106,33 +198,62 @@ model Device {
   @@index([code])
   @@index([barcode])
   @@index([setId])
+  @@index([warehouseId])       // NEW: fast lookup by warehouse
+  @@index([deploymentState])   // NEW: fast lookup by deployment state
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DeviceSet
+// Extended with: warehouse location fields and new relations
+// ─────────────────────────────────────────────────────────────────────────────
+
 model DeviceSet {
-  id                Int                @id @default(autoincrement())
-  code              String             @unique
-  barcode           String             @unique
-  setType           String
-  setTypeName       String
-  name              String?
-  lifecycleStatus   String             @default("available")
-  healthStatus      String             @default("ok")
-  location          String?
-  state             String?
-  district          String?
-  notes             String?
-  clientId          Int?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  approvedAt        DateTime?
-  approvedById      Int?
-  rejectionNote     String?
-  requestedAt       DateTime?
-  requestedById     Int?
+  id                  Int                @id @default(autoincrement())
+  code                String             @unique
+  barcode             String             @unique
+  setType             String
+  setTypeName         String
+  name                String?
+  lifecycleStatus     String             @default("available")
+  healthStatus        String             @default("ok")
+  location            String?
+  state               String?
+  district            String?
+  pinpoint            String?            // Site/branch name (e.g., "Andheri West Branch")
+  googleMapsLink      String?            // Optional Google Maps link for location
+  latitude            Float?             // Optional latitude coordinate
+  longitude           Float?             // Optional longitude coordinate
+  notes               String?
+  clientId            Int?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  approvedAt          DateTime?
+  approvedById        Int?
+  rejectionNote       String?
+  requestedAt         DateTime?
+  requestedById       Int?
   subscriptionEndDate DateTime?
+
+  // ── NEW: Warehouse Location ───────────────────────────────────────────────
+  // Which warehouse this set is currently stored in
+  warehouseId               Int?
+  // Named zone within the warehouse
+  warehouseZone             String?
+  // Freeform specific location within the zone
+  warehouseSpecificLocation String?
+
+  // ── Existing relations ────────────────────────────────────────────────────
   components        Device[]
   client            Client?            @relation(fields: [clientId], references: [id])
   lifecycleRequests LifecycleRequest[] @relation("SetRequests")
+
+  // ── NEW relations ─────────────────────────────────────────────────────────
+  // The warehouse this set is currently assigned to
+  warehouse          Warehouse?                 @relation(fields: [warehouseId], references: [id])
+  // Pending/approved warehouse transfer requests involving this set
+  warehouseTransfers WarehouseTransferRequest[]
+  // Full audit trail of every location change for this set
+  locationHistory    SetLocationHistory[]
 
   @@index([setType])
   @@index([lifecycleStatus])
@@ -140,28 +261,32 @@ model DeviceSet {
   @@index([barcode])
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Lifecycle & Workflow
+// ─────────────────────────────────────────────────────────────────────────────
+
 model LifecycleRequest {
-  id            Int        @id @default(autoincrement())
+  id            Int         @id @default(autoincrement())
   deviceId      Int?
   setId         Int?
   clientId      Int?
   fromStep      String
   toStep        String
-  healthStatus  String     @default("ok")
+  healthStatus  String      @default("ok")
   healthNote    String?
   note          String?
   requestedById Int
-  createdAt     DateTime   @default(now())
+  createdAt     DateTime    @default(now())
   approvedById  Int?
   approvedAt    DateTime?
-  status        String     @default("pending")
+  status        String      @default("pending")
   rejectionNote String?
-  autoApproved  Boolean    @default(false)
-  approvedBy    User?      @relation("ApprovedBy", fields: [approvedById], references: [id])
-  client        Client?    @relation(fields: [clientId], references: [id])
-  device        Device?    @relation("DeviceRequests", fields: [deviceId], references: [id])
-  requestedBy   User       @relation("RequestedBy", fields: [requestedById], references: [id])
-  deviceSet     DeviceSet? @relation("SetRequests", fields: [setId], references: [id])
+  autoApproved  Boolean     @default(false)
+  approvedBy    User?       @relation("ApprovedBy", fields: [approvedById], references: [id])
+  client        Client?     @relation(fields: [clientId], references: [id])
+  device        Device?     @relation("DeviceRequests", fields: [deviceId], references: [id])
+  requestedBy   User        @relation("RequestedBy", fields: [requestedById], references: [id])
+  deviceSet     DeviceSet?  @relation("SetRequests", fields: [setId], references: [id])
   proofFiles    ProofFile[]
 
   @@index([status])
@@ -181,6 +306,7 @@ model Notification {
   requestId Int?
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
+  type      String   @default("lifecycle")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
@@ -263,36 +389,493 @@ model TeamRequestComment {
 }
 
 model ProofFile {
-  id          Int              @id @default(autoincrement())
-  requestId   Int
-  fileName    String           // original filename
-  storedName  String           // uuid-based name on disk / storage key
-  fileType    String           // 'image' | 'video' | 'pdf'
-  mimeType    String
-  sizeKb      Int
-  url         String           // public URL (local path or CDN URL)
-  thumbUrl    String?          // compressed thumbnail URL (images only)
-  createdAt   DateTime         @default(now())
-  request     LifecycleRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  id         Int              @id @default(autoincrement())
+  requestId  Int
+  fileName   String
+  storedName String
+  fileType   String
+  mimeType   String
+  sizeKb     Int
+  url        String
+  thumbUrl   String?
+  createdAt  DateTime         @default(now()) @db.Timestamptz(6)
+  request    LifecycleRequest @relation(fields: [requestId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([requestId])
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Deletion audit + delayed execution
+// Every delete request creates one of these records permanently.
+// Status flow:  pending → executed  (cron runs it after scheduledFor)
+//               pending → cancelled (manager cancels before scheduledFor)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DeletionRequest {
+  id                Int       @id @default(autoincrement())
+  // What is being deleted
+  entityType        String    // 'device' | 'set'
+  entityId          Int       // original DB id (will be gone after execution)
+  entityCode        String    // e.g. "TV-001" — preserved forever
+  snapshot          Json      // full record at time of request
+  componentSnapshot Json?     // set components (only for sets)
+
+  // Why
+  reason            String
+
+  // Who
+  requestedById     Int
+  requestedByName   String
+
+  // Timing
+  scheduledFor      DateTime  // requestedAt + 24h
+  createdAt         DateTime  @default(now())
+
+  // Outcome
+  status            String    @default("pending") // pending | cancelled | executed
+  cancelledById     Int?
+  cancelledByName   String?
+  cancelledAt       DateTime?
+  executedAt        DateTime?
+  executionNote     String?   // any error/info from the cron run
+
+  @@index([status])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([scheduledFor])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subscription Reminders
+// ─────────────────────────────────────────────────────────────────────────────
 
 model SubscriptionReminder {
   id           Int       @id @default(autoincrement())
   deviceId     Int?
   setId        Int?
-  reminderDate DateTime  @default(now())
-  reminderType String    // "7day" | "2day" | "expired"
-  sent         Boolean   @default(false)
-  sentAt       DateTime?
+  reminderType String
+  sentAt       DateTime  @default(now())
   attended     Boolean   @default(false)
   attendedAt   DateTime?
-  createdAt    DateTime  @default(now())
 
   @@index([deviceId])
   @@index([setId])
   @@index([attended])
-  @@unique([deviceId, reminderType], name: "unique_device_reminder")
-  @@unique([setId, reminderType],    name: "unique_set_reminder")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Catalogue / Config lookups
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ProductTypeConfig {
+  id        Int      @id @default(autoincrement())
+  typeId    String   @unique
+  label     String
+  prefix    String
+  icon      String   @default("Package")
+  color     String   @default("gray")
+  isBuiltin Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(999)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([typeId])
+  @@index([isActive])
+}
+
+model SetTypeConfig {
+  id             Int      @id @default(autoincrement())
+  setTypeId      String   @unique
+  label          String
+  prefix         String
+  icon           String   @default("Layers")
+  color          String   @default("gray")
+  componentSlots Json     @default("[]")
+  isBuiltin      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  sortOrder      Int      @default(999)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  @@index([setTypeId])
+}
+
+model CatalogueBrand {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model CatalogueSize {
+  id        Int      @id @default(autoincrement())
+  value     String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model CatalogueColor {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model SavedPinpoint {
+  id        Int      @id @default(autoincrement())
+  state     String
+  district  String
+  pinpoint  String
+  createdAt DateTime @default(now())
+
+  @@unique([state, district, pinpoint])
+  @@index([state, district])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inventory & Expense Requests
+// ─────────────────────────────────────────────────────────────────────────────
+
+model InventoryRequest {
+  id                Int       @id @default(autoincrement())
+  requestedById     Int
+  requestedByName   String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @default(now()) @updatedAt
+  requestType       String
+  status            String    @default("pending")
+  reviewedById      Int?
+  reviewedAt        DateTime?
+  rejectionNote     String?
+  deviceTypeId      String?
+  deviceTypeName    String?
+  quantity          Int?
+  brand             String?
+  size              String?
+  model             String?
+  color             String?
+  gpsId             String?
+  inDate            DateTime?
+  healthStatus      String?   @default("ok")
+  note              String?
+  setTypeId         String?
+  setTypeName       String?
+  setName           String?
+  reservedDeviceIds Json?
+  targetSetId       Int?
+  createdDeviceIds  Json?
+  createdSetId      Int?
+  approvedCodeRange String?
+  expectedCodeRange String?
+  targetDeviceId             Int?
+  targetDeviceCode           String?
+  proposedChanges            Json?
+  targetDevice               Device?  @relation("DeviceEditRequests", fields: [targetDeviceId], references: [id], onDelete: SetNull)
+  clientId                   Int?
+  client                     Client?  @relation("ClientEditRequests", fields: [clientId], references: [id], onDelete: SetNull)
+  warehouseId                Int?
+  warehouseZone              String?
+  warehouseSpecificLocation  String?
+
+  @@index([requestedById])
+  @@index([clientId])
+  @@index([targetDeviceId])
+  @@index([status])
+  @@index([requestType])
+  @@index([createdAt])
+}
+
+model ExpenseAttachment {
+  id               Int            @id @default(autoincrement())
+  expenseRequestId Int
+  originalName     String
+  storedPath       String
+  ExpenseRequest   ExpenseRequest @relation(fields: [expenseRequestId], references: [id], onDelete: Cascade)
+
+  @@index([expenseRequestId])
+}
+
+model ExpenseRequest {
+  id                  Int                  @id @default(autoincrement())
+  requestedById       Int
+  employeeName        String
+  department          String
+  departmentOther     String?
+  expenseDate         DateTime
+  expenseTime         String?
+  client              String
+  location            String
+  kilometres          Float?
+  travelReimbursement Float?
+  totalAmount         Float
+  status              String               @default("pending")
+  adminComment        String?
+  approvedById        Int?
+  approvedAt          DateTime?
+  rejectedById        Int?
+  rejectedAt          DateTime?
+  rejectedReason      String?
+  reimbursedAt        DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime
+  ExpenseAttachment   ExpenseAttachment[]
+  User                User                 @relation(fields: [requestedById], references: [id])
+  ExpenseRequestLine  ExpenseRequestLine[]
+
+  @@index([createdAt])
+  @@index([requestedById])
+  @@index([status])
+}
+
+model ExpenseRequestLine {
+  id               Int            @id @default(autoincrement())
+  expenseRequestId Int
+  expenseType      String
+  expenseTypeOther String?
+  description      String
+  amount           Float
+  sortOrder        Int            @default(0)
+  ExpenseRequest   ExpenseRequest @relation(fields: [expenseRequestId], references: [id], onDelete: Cascade)
+
+  @@index([expenseRequestId])
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// NEW MODELS — Warehouse & Location Tracking
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Warehouse
+// Represents a physical storage facility that can hold devices and sets.
+// A warehouse can be subdivided into named WarehouseZones.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Warehouse {
+  id            Int      @id @default(autoincrement())
+  name          String   @unique
+  address       String?
+  city          String?
+  state         String?
+  contactPerson String?
+  contactPhone  String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Zones within this warehouse
+  zones           WarehouseZone[]
+  // Devices currently located here
+  devices         Device[]
+  // Sets currently located here
+  deviceSets      DeviceSet[]
+  // Full history of all device location changes that reference this warehouse
+  locationHistory DeviceLocationHistory[]
+  // History of disassembled sets that were in this warehouse
+  disassembledSets DisassembledSetLog[]
+  // Transfer requests where stock is moving OUT of this warehouse
+  transfersFrom   WarehouseTransferRequest[] @relation("FromWarehouse")
+  // Transfer requests where stock is moving INTO this warehouse
+  transfersTo     WarehouseTransferRequest[] @relation("ToWarehouse")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WarehouseZone
+// A named area inside a warehouse (e.g. "Zone A", "Cold Storage").
+// Zones are unique per warehouse.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model WarehouseZone {
+  id          Int      @id @default(autoincrement())
+  warehouseId Int
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  // A zone name must be unique within its warehouse
+  @@unique([warehouseId, name])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DeviceLocationHistory
+// Immutable audit log — one row per location change for a device.
+// Captures both warehouse moves and field deployment changes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DeviceLocationHistory {
+  id                        Int      @id @default(autoincrement())
+  deviceId                  Int
+  // Warehouse fields (null if the device is deployed in the field)
+  warehouseId               Int?
+  warehouseZone             String?
+  warehouseSpecificLocation String?
+  // Client the device was assigned to at this point in time (if any)
+  clientId                  Int?
+  // Deployment / field location fields (null if device is in a warehouse)
+  deploymentState           String?
+  deploymentDistrict        String?
+  deploymentSite            String?
+  // GPS coordinates at the time of this location record
+  latitude                  Decimal? @db.Decimal(10, 8)
+  longitude                 Decimal? @db.Decimal(11, 8)
+  googleMapsLink            String?
+  // Who made the change and why
+  changedById               Int?
+  changeReason              String?
+  notes                     String?
+  timestamp                 DateTime @default(now())
+
+  device    Device     @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id])
+  client    Client?    @relation(fields: [clientId], references: [id])
+  changedBy User?      @relation(fields: [changedById], references: [id])
+
+  @@index([deviceId])
+  @@index([timestamp(sort: Desc)]) // most-recent-first queries
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SetLocationHistory
+// Immutable audit log — one row per location change for a set.
+// Tracks warehouse moves for entire sets.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SetLocationHistory {
+  id                        Int       @id @default(autoincrement())
+  setId                     Int?      // Nullable because set may be deleted after disassembly
+  setCode                   String
+  warehouseId               Int?
+  warehouseZone             String?
+  warehouseSpecificLocation String?
+  warehouseName             String?   // Denormalized for convenience
+  changedById               Int?
+  changedByName             String?   // Denormalized for convenience
+  changeReason              String?   // e.g., "location_move", "disassembled"
+  notes                     String?
+  timestamp                 DateTime  @default(now())
+
+  set       DeviceSet? @relation(fields: [setId], references: [id], onDelete: SetNull)
+  changedBy User?      @relation(fields: [changedById], references: [id])
+
+  @@index([setId])
+  @@index([setCode])
+  @@index([timestamp(sort: Desc)])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DisassembledSetLog
+// Permanent record of all sets that have been disassembled.
+// Preserves the component snapshot, location, and reason for historical reference.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DisassembledSetLog {
+  id                        Int      @id @default(autoincrement())
+  setCode                   String
+  setTypeName               String
+  setName                   String?
+  // Who physically performed the disassembly (manager / superadmin)
+  disassembledById          Int?
+  disassembledByName        String?
+  // Who originally requested the disassembly (ground team, or same as disassembledBy if manager acted directly)
+  requestedById             Int?
+  requestedByName           String?
+  reason                    String
+  componentSnapshot         Json     @default("[]")  // Array of component details at disassembly time
+  lifecycleSnapshot         String?  // Lifecycle status of the set when it was disassembled
+  warehouseId               Int?
+  warehouseZone             String?
+  warehouseSpecificLocation String?
+  warehouseName             String?
+  disassembledAt            DateTime @default(now())
+
+  disassembledBy User?      @relation("SetDisassembledBy", fields: [disassembledById], references: [id])
+  requestedBy    User?      @relation("SetRequestedBy",    fields: [requestedById],    references: [id])
+  warehouse      Warehouse? @relation(fields: [warehouseId], references: [id])
+
+  @@index([setCode])
+  @@index([disassembledAt(sort: Desc)])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CustomDeploymentLocation
+// Stores user-defined deployment locations (state / district / site combos)
+// so they can be suggested as autocomplete options in the UI.
+// Ordered by usage frequency and recency.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CustomDeploymentLocation {
+  id         Int      @id @default(autoincrement())
+  state      String
+  district   String
+  site       String
+  // Incremented each time this combo is reused
+  usageCount Int      @default(1)
+  lastUsed   DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  // Each state / district / site combination must be unique
+  @@unique([state, district, site])
+  // Compound index supports "show most used / most recent first" queries
+  @@index([usageCount(sort: Desc), lastUsed(sort: Desc)])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WarehouseTransferRequest
+// Records a request to move a device or set between warehouses.
+// Either deviceId or setId must be set (not both).
+// Status flow: pending → approved | rejected
+// ─────────────────────────────────────────────────────────────────────────────
+
+model WarehouseTransferRequest {
+  id                 Int       @id @default(autoincrement())
+  // Target item — exactly one of these should be non-null
+  deviceId           Int?
+  setId              Int?
+  // Source warehouse (null if the item has no warehouse yet)
+  fromWarehouseId    Int?
+  // Destination warehouse (required)
+  toWarehouseId      Int
+  // Optional destination zone / specific location within the target warehouse
+  toZone             String?
+  toSpecificLocation String?
+  // Workflow fields
+  requestedById      Int
+  approvedById       Int?
+  status             String    @default("pending") // pending | approved | rejected
+  notes              String?
+  createdAt          DateTime  @default(now())
+  approvedAt         DateTime?
+
+  // Relations
+  device        Device?    @relation(fields: [deviceId], references: [id])
+  set           DeviceSet? @relation(fields: [setId], references: [id])
+  fromWarehouse Warehouse? @relation("FromWarehouse", fields: [fromWarehouseId], references: [id])
+  toWarehouse   Warehouse  @relation("ToWarehouse", fields: [toWarehouseId], references: [id])
+  requestedBy   User       @relation("RequestedBy", fields: [requestedById], references: [id])
+  approvedBy    User?      @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  @@index([status])
+}
+// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// CatalogueLocationPreset
+// Named specific-location presets (e.g. "Rack 5", "Shelf 3") that appear as
+// autocomplete chips inside WarehouseLocationSelector.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CatalogueLocationPreset
+// Named specific-location presets (e.g. "Rack 5", "Shelf 3") that appear as
+// autocomplete chips inside WarehouseLocationSelector.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CatalogueLocationPreset {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([isActive])
 }

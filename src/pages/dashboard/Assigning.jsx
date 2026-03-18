@@ -3,9 +3,16 @@ import {
   Link2, User, Package, Calendar, CheckCircle, AlertCircle, Search,
   Monitor, Tablet as TabletIcon, Building2, Phone, Mail, Eye,
   RotateCcw, ChevronDown, Filter, X, Layers, Send,
+  Clock, Wrench, ArrowRight,
 } from 'lucide-react'
 import { useInventory, DEVICE_TYPES } from '../../context/InventoryContext'
 import { normaliseRole, ROLES } from '../../App'
+import DeploymentLocationSelector from '../../components/DeploymentLocationSelector'
+import AssignmentHealthCheck from '../../components/AssignmentHealthCheck'
+
+// ── Phase 2 flag ──────────────────────────────────────────────────────────────
+// Set to false when bulk assign is ready for ground team.
+const COMING_SOON = true
 
 const DeviceTypeIcon = ({ type }) => {
   if (type === 'stand' || type === 'istand') return <Monitor className="w-4 h-4" />
@@ -21,14 +28,74 @@ const Assigning = ({ userRole }) => {
   const role         = normaliseRole(userRole)
   const isGroundTeam = role === ROLES.GROUNDTEAM
 
+  // ── Coming Soon — ground team only, phase 2 ──────────────────────────────
+  if (isGroundTeam && COMING_SOON) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center p-6">
+        <div className="max-w-md w-full text-center">
+
+          {/* Icon */}
+          <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-primary-100 to-violet-100 flex items-center justify-center shadow-sm">
+            <Wrench className="w-9 h-9 text-primary-500" />
+          </div>
+
+          {/* Heading */}
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">
+            Device Assignment
+          </h1>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-700 border border-amber-200 rounded-full text-xs font-bold mb-4">
+            <Clock className="w-3 h-3" /> Coming Soon
+          </div>
+
+          {/* Description */}
+          <p className="text-gray-500 text-sm leading-relaxed mb-6">
+            The device assignment module is currently being upgraded. It will be available in the next update with improved workflows and better tracking.
+          </p>
+
+          {/* What to do in the meantime */}
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-left mb-6">
+            <p className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-2">
+              In the meantime
+            </p>
+            <ul className="space-y-2 text-sm text-blue-800">
+              <li className="flex items-start gap-2">
+                <ArrowRight className="w-4 h-4 flex-shrink-0 mt-0.5 text-blue-500" />
+                Use the <strong>Requests</strong> page to submit lifecycle steps for devices
+              </li>
+              <li className="flex items-start gap-2">
+                <ArrowRight className="w-4 h-4 flex-shrink-0 mt-0.5 text-blue-500" />
+                Scan a device barcode to confirm actions on the ground
+              </li>
+            </ul>
+          </div>
+
+          <p className="text-xs text-gray-400">
+            Contact your manager if you need urgent assignment help.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   const { clients, devices, getDevicesByClientId, bulkAssignDevices, getClientById, unassignDevice } = useInventory()
 
   const [activeTab,          setActiveTab]          = useState('assign')
   const [selectedClientId,   setSelectedClientId]   = useState('')
-  const [selectedState,      setSelectedState]      = useState('')
-  const [selectedDistrict,   setSelectedDistrict]   = useState('')
-  const [selectedLocation,   setSelectedLocation]   = useState('')
-  const [deliveryDate,       setDeliveryDate]       = useState('')
+  
+  // NEW: Deployment location fields
+  const [deploymentState,    setDeploymentState]    = useState('')
+  const [deploymentDistrict, setDeploymentDistrict] = useState('')
+  const [deploymentSite,     setDeploymentSite]     = useState('')
+  const [googleMapsLink,     setGoogleMapsLink]     = useState('')
+  const [coordinates,        setCoordinates]        = useState({ latitude: null, longitude: null })
+  
+  // NEW: Assignment health fields
+  const [assignmentHealth,     setAssignmentHealth]     = useState('good')
+  const [assignmentHealthNote, setAssignmentHealthNote] = useState('')
+  
+  // NEW: Return date (replaces deliveryDate)
+  const [returnDate,         setReturnDate]         = useState('')
+  
   const [selectedDevices,    setSelectedDevices]    = useState([])
   const [deviceSearchTerm,   setDeviceSearchTerm]   = useState('')
   const [selectedDeviceType, setSelectedDeviceType] = useState('all')
@@ -73,20 +140,6 @@ const Assigning = ({ userRole }) => {
     return f
   }, [assignedDevices, assignedClientFilter, assignedTypeFilter, assignedSearchTerm, getClientById])
 
-  const availableStates = useMemo(() => {
-    const s = new Set(); availableDevices.forEach(d => d.state?.trim() && s.add(d.state)); return [...s].sort()
-  }, [availableDevices])
-
-  const availableDistricts = useMemo(() => {
-    if (!selectedState) return []
-    const s = new Set(); availableDevices.forEach(d => d.state === selectedState && d.district?.trim() && s.add(d.district)); return [...s].sort()
-  }, [availableDevices, selectedState])
-
-  const availableLocations = useMemo(() => {
-    if (!selectedState || !selectedDistrict) return []
-    const s = new Set(); availableDevices.forEach(d => d.state === selectedState && d.district === selectedDistrict && d.location?.trim() && s.add(d.location)); return [...s].sort()
-  }, [availableDevices, selectedState, selectedDistrict])
-
   const selectedClient = useMemo(() => clients.find(c => c.id === Number(selectedClientId)) || null, [clients, selectedClientId])
 
   const toggleDevice      = (id) => setSelectedDevices(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
@@ -94,8 +147,18 @@ const Assigning = ({ userRole }) => {
   const clearSelection    = ()   => setSelectedDevices([])
 
   const resetForm = () => {
-    setSelectedClientId(''); setSelectedState(''); setSelectedDistrict(''); setSelectedLocation('')
-    setDeliveryDate(''); setSelectedDevices([]); setDeviceSearchTerm(''); setSelectedDeviceType('all')
+    setSelectedClientId('')
+    setDeploymentState('')
+    setDeploymentDistrict('')
+    setDeploymentSite('')
+    setGoogleMapsLink('')
+    setCoordinates({ latitude: null, longitude: null })
+    setAssignmentHealth('good')
+    setAssignmentHealthNote('')
+    setReturnDate('')
+    setSelectedDevices([])
+    setDeviceSearchTerm('')
+    setSelectedDeviceType('all')
     setSubmitError(null)
   }
 
@@ -103,28 +166,34 @@ const Assigning = ({ userRole }) => {
     e.preventDefault()
     setSubmitError(null)
 
-    if (!selectedClientId || selectedDevices.length === 0 || !deliveryDate) {
-      alert('Please fill all required fields'); return
+    if (!selectedClientId || selectedDevices.length === 0 || !returnDate || 
+        !deploymentState || !deploymentDistrict || !deploymentSite) {
+      alert('Please fill all required fields')
+      return
     }
+    
     const client = clients.find(c => c.id === Number(selectedClientId))
     if (!client) { alert('Invalid client selected'); return }
 
-    // ── Ground Team: POST a request for each device → manager reviews it ──────
+    // Ground Team: POST a request for each device
     if (isGroundTeam) {
       setSubmitting(true)
       try {
         const selectedDeviceObjects = devices.filter(d => selectedDevices.includes(d.id))
 
-        // Build the changes array that will be stored as Json in TeamRequest.changes
         const changes = [
-          { field: 'clientId',     to: String(selectedClientId) },
-          { field: 'deliveryDate', to: deliveryDate              },
-          ...(selectedState    ? [{ field: 'state',    to: selectedState    }] : []),
-          ...(selectedDistrict ? [{ field: 'district', to: selectedDistrict }] : []),
-          ...(selectedLocation ? [{ field: 'location', to: selectedLocation }] : []),
+          { field: 'clientId', to: String(selectedClientId) },
+          { field: 'returnDate', to: returnDate },
+          { field: 'deploymentState', to: deploymentState },
+          { field: 'deploymentDistrict', to: deploymentDistrict },
+          { field: 'deploymentSite', to: deploymentSite },
+          { field: 'googleMapsLink', to: googleMapsLink || '' },
+          { field: 'latitude', to: String(coordinates.latitude || '') },
+          { field: 'longitude', to: String(coordinates.longitude || '') },
+          { field: 'assignmentHealth', to: assignmentHealth },
+          { field: 'assignmentHealthNote', to: assignmentHealthNote || '' },
         ]
 
-        // One request per device so manager can approve/reject individually
         await Promise.all(
           selectedDeviceObjects.map(device =>
             fetch('/api/ground-requests', {
@@ -133,7 +202,7 @@ const Assigning = ({ userRole }) => {
               body: JSON.stringify({
                 requestType: 'assignment',
                 deviceId:    device.id,
-                note: `Assign ${device.code} → client "${client.name}" (ID ${selectedClientId}). Delivery: ${deliveryDate}`,
+                note: `Assign ${device.code} → client "${client.name}". Return: ${returnDate}`,
                 changes,
               }),
             }).then(async r => {
@@ -154,52 +223,74 @@ const Assigning = ({ userRole }) => {
       return
     }
 
-    // ── Manager / SuperAdmin: assign directly via context ─────────────────────
-    // Manager/SuperAdmin: directly assign devices
+    // Manager: bulk assign
+    setSubmitting(true)
     try {
-      await bulkAssignDevices(selectedDevices, Number(selectedClientId))
+      const result = await bulkAssignDevices(
+        selectedDevices,
+        Number(selectedClientId),
+        {
+          deploymentState,
+          deploymentDistrict,
+          deploymentSite,
+          googleMapsLink,
+          latitude: coordinates.latitude,
+          longitude: coordinates.longitude,
+          returnDate,
+          assignmentHealth,
+          assignmentHealthNote,
+        }
+      )
+
+      if (result.success) {
+        setShowSuccess(true)
+        setTimeout(() => { setShowSuccess(false); resetForm() }, 3000)
+      } else {
+        setSubmitError(result.message || 'Assignment failed')
+      }
     } catch (err) {
-      setSubmitError(err.message || 'Assignment failed')
-      return
+      setSubmitError(err.message)
+    } finally {
+      setSubmitting(false)
     }
-    setShowSuccess(true)
-    setTimeout(() => { setShowSuccess(false); resetForm() }, 2000)
   }
 
-  const handleUnassign = (deviceId) => {
-    const device = devices.find(d => d.id === deviceId)
-    const client = device ? getClientById(device.clientId) : null
-    if (confirm(`Unassign device ${device?.code} from ${client?.name}?`)) unassignDevice(deviceId)
+  const handleUnassign = async (deviceId) => {
+    if (!confirm('Are you sure you want to unassign this device?')) return
+    try {
+      await unassignDevice(deviceId)
+    } catch (err) {
+      alert('Failed to unassign: ' + err.message)
+    }
   }
-
-  const getCountByType = (list) => {
-    const c = { stand: 0, istand: 0, tablet: 0 }
-    list.forEach(d => c[d.type] !== undefined && c[d.type]++)
-    return c
-  }
-
-  const selectedDeviceObjects = devices.filter(d => selectedDevices.includes(d.id))
-  const selectedCounts = getCountByType(selectedDeviceObjects)
 
   const devicesByClient = useMemo(() => {
-    const g = {}
-    filteredAssignedDevices.forEach(d => { if (!g[d.clientId]) g[d.clientId] = []; g[d.clientId].push(d) })
-    return g
+    const grouped = {}
+    filteredAssignedDevices.forEach(d => {
+      if (!grouped[d.clientId]) grouped[d.clientId] = []
+      grouped[d.clientId].push(d)
+    })
+    return grouped
   }, [filteredAssignedDevices])
+
+  const getCountByType = (devices) => {
+    const counts = { stand: 0, istand: 0, tablet: 0 }
+    devices.forEach(d => { if (counts.hasOwnProperty(d.type)) counts[d.type]++ })
+    return counts
+  }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-          <Link2 className="w-8 h-8 text-primary-600" /> Device Assignment
+          <Link2 className="w-8 h-8 text-primary-600" />
+          Device Assignment
         </h1>
         <p className="text-gray-600 mt-1">
           {isGroundTeam ? 'Submit assignment requests for manager approval' : 'Assign available devices to clients and manage assigned devices'}
         </p>
       </div>
 
-      {/* Ground Team info banner */}
       {isGroundTeam && (
         <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800">
           <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
@@ -207,12 +298,11 @@ const Assigning = ({ userRole }) => {
         </div>
       )}
 
-      {/* Tabs */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="flex border-b border-gray-200">
           {[
             { key: 'assign',   icon: <Package className="w-5 h-5" />, label: isGroundTeam ? 'Request Assignment' : 'Assign Devices', count: availableDevices.length, countClass: 'bg-gray-100 text-gray-700' },
-            { key: 'assigned', icon: <Layers  className="w-5 h-5" />, label: 'Assigned Devices',                                     count: assignedDevices.length,  countClass: 'bg-primary-100 text-primary-700' },
+            { key: 'assigned', icon: <Layers  className="w-5 h-5" />, label: 'Assigned Devices', count: assignedDevices.length,  countClass: 'bg-primary-100 text-primary-700' },
           ].map(tab => (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)}
               className={`flex-1 px-6 py-4 text-sm font-medium transition-colors ${activeTab === tab.key ? 'bg-primary-50 text-primary-700 border-b-2 border-primary-600' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'}`}>
@@ -225,7 +315,6 @@ const Assigning = ({ userRole }) => {
         </div>
       </div>
 
-      {/* Success */}
       {showSuccess && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
           <CheckCircle className="w-6 h-6 text-green-600" />
@@ -236,7 +325,6 @@ const Assigning = ({ userRole }) => {
         </div>
       )}
 
-      {/* Error */}
       {submitError && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
@@ -244,10 +332,8 @@ const Assigning = ({ userRole }) => {
         </div>
       )}
 
-      {/* ── ASSIGN TAB ── */}
       {activeTab === 'assign' && (
         <form onSubmit={handleSubmit} className="space-y-6">
-
           {/* Step 1: Client */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <div className="flex items-center gap-3 mb-4">
@@ -272,171 +358,225 @@ const Assigning = ({ userRole }) => {
             )}
           </div>
 
-          {/* Step 2: Location */}
+          {/* Step 2: Deployment Location */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center font-bold">2</div>
-              <div><h2 className="text-xl font-semibold text-gray-900">Deployment Location</h2><p className="text-sm text-gray-500">Optional</p></div>
+              <h2 className="text-xl font-semibold text-gray-900">Deployment Location</h2>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">State</label>
-                <select value={selectedState} onChange={e => { setSelectedState(e.target.value); setSelectedDistrict(''); setSelectedLocation('') }}
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500">
-                  <option value="">Select state...</option>
-                  {availableStates.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">District</label>
-                <select value={selectedDistrict} onChange={e => { setSelectedDistrict(e.target.value); setSelectedLocation('') }}
-                  disabled={!selectedState} className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 disabled:bg-gray-100">
-                  <option value="">Select district...</option>
-                  {availableDistricts.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Location</label>
-                <select value={selectedLocation} onChange={e => setSelectedLocation(e.target.value)}
-                  disabled={!selectedDistrict} className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 disabled:bg-gray-100">
-                  <option value="">Select location...</option>
-                  {availableLocations.map(l => <option key={l} value={l}>{l}</option>)}
-                </select>
-              </div>
-            </div>
+            
+            <DeploymentLocationSelector
+              state={deploymentState}
+              district={deploymentDistrict}
+              site={deploymentSite}
+              googleMapsLink={googleMapsLink}
+              onStateChange={setDeploymentState}
+              onDistrictChange={setDeploymentDistrict}
+              onSiteChange={setDeploymentSite}
+              onGoogleMapsLinkChange={setGoogleMapsLink}
+              onCoordinatesExtracted={setCoordinates}
+              required={true}
+            />
           </div>
 
-          {/* Step 3: Devices */}
+          {/* Step 3: Health Check */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center font-bold">3</div>
-              <h2 className="text-xl font-semibold text-gray-900">Select Devices</h2>
+              <h2 className="text-xl font-semibold text-gray-900">Assignment Health Check</h2>
             </div>
-            <div className="space-y-4 mb-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input type="text" value={deviceSearchTerm} onChange={e => setDeviceSearchTerm(e.target.value)}
-                  placeholder="Search by code, brand, or model..."
-                  className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500" />
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                {[
-                  { v: 'all',    l: `All (${availableDevices.length})` },
-                  { v: 'stand',  l: `A Stand (${availableDevices.filter(d => d.type === 'stand').length})` },
-                  { v: 'istand', l: `I Stand (${availableDevices.filter(d => d.type === 'istand').length})` },
-                  { v: 'tablet', l: `Tablet (${availableDevices.filter(d => d.type === 'tablet').length})` },
-                ].map(({ v, l }) => (
-                  <button key={v} type="button" onClick={() => setSelectedDeviceType(v)}
-                    className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${selectedDeviceType === v ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                    {l}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-center justify-between mb-4 pb-4 border-b border-gray-200">
-              <span className="text-sm text-gray-600">{selectedDevices.length} selected</span>
-              <div className="flex gap-2">
-                <button type="button" onClick={selectAllFiltered} className="text-sm text-primary-600 hover:text-primary-700 font-medium">Select All</button>
-                {selectedDevices.length > 0 && <button type="button" onClick={clearSelection} className="text-sm text-red-600 hover:text-red-700 font-medium">Clear</button>}
-              </div>
-            </div>
-            <div className="border border-gray-200 rounded-lg max-h-96 overflow-y-auto">
-              {filteredAvailableDevices.length === 0 ? (
-                <div className="p-8 text-center"><Package className="w-12 h-12 text-gray-400 mx-auto mb-3" /><p className="text-gray-500">No available devices found</p></div>
-              ) : (
-                <div className="divide-y divide-gray-200">
-                  {filteredAvailableDevices.map(device => (
-                    <label key={device.id} className="flex items-center gap-4 p-4 hover:bg-gray-50 cursor-pointer transition-colors">
-                      <input type="checkbox" checked={selectedDevices.includes(device.id)} onChange={() => toggleDevice(device.id)}
-                        className="w-5 h-5 rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
-                      <DeviceTypeIcon type={device.type} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="font-mono font-semibold text-gray-900">{device.code}</p>
-                          <span className="px-2 py-0.5 bg-gray-100 text-gray-700 text-xs rounded">{DEVICE_TYPES[device.type]}</span>
-                        </div>
-                        <p className="text-sm text-gray-600">{device.brand} {device.model} {device.size && `(${device.size})`}</p>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
+            
+            <AssignmentHealthCheck
+              componentHealth="ok"
+              assignmentHealth={assignmentHealth}
+              assignmentHealthNote={assignmentHealthNote}
+              onAssignmentHealthChange={setAssignmentHealth}
+              onAssignmentHealthNoteChange={setAssignmentHealthNote}
+              required={true}
+            />
           </div>
 
-          {/* Step 4: Delivery Date */}
+          {/* Step 4: Return Date */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center font-bold">4</div>
-              <h2 className="text-xl font-semibold text-gray-900">Delivery Date</h2>
+              <h2 className="text-xl font-semibold text-gray-900">Return Date</h2>
             </div>
-            <div className="max-w-md">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Expected Delivery Date *</label>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Expected Return Date <span className="text-red-500">*</span>
+              </label>
               <div className="relative">
                 <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input type="date" required value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)}
+                <input
+                  type="date"
+                  value={returnDate}
+                  onChange={(e) => setReturnDate(e.target.value)}
+                  required
                   min={new Date().toISOString().split('T')[0]}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500" />
+                  className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                />
               </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Set when the device is expected to return from deployment
+              </p>
             </div>
           </div>
 
-          {/* Submit */}
+          {/* Step 5: Select Devices */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            {selectedClient && (
-              <div className="text-sm text-gray-600 space-y-1 mb-6">
-                <p>• Client: <strong>{selectedClient.name}</strong></p>
-                <p>• Devices: <strong>{selectedDevices.length} selected</strong></p>
-                {deliveryDate && <p>• Delivery: <strong>{new Date(deliveryDate).toLocaleDateString()}</strong></p>}
-                {isGroundTeam && <p className="text-amber-600 mt-1">⚠ This will be submitted as a request pending Manager approval.</p>}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center font-bold">5</div>
+                <h2 className="text-xl font-semibold text-gray-900">Select Devices</h2>
+              </div>
+              {selectedDevices.length > 0 && (
+                <span className="px-3 py-1 bg-primary-100 text-primary-700 rounded-full text-sm font-medium">
+                  {selectedDevices.length} selected
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-3 mb-4">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search by code, brand, or model..."
+                  value={deviceSearchTerm}
+                  onChange={e => setDeviceSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+              <select value={selectedDeviceType} onChange={e => setSelectedDeviceType(e.target.value)}
+                className="px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500">
+                <option value="all">All Types</option>
+                <option value="stand">A Stand</option>
+                <option value="istand">I Stand</option>
+                <option value="tablet">Tablet</option>
+              </select>
+            </div>
+
+            {filteredAvailableDevices.length > 0 && (
+              <div className="flex gap-2 mb-4">
+                <button type="button" onClick={selectAllFiltered}
+                  className="px-4 py-2 text-sm font-medium text-primary-600 hover:bg-primary-50 rounded-lg border border-primary-200">
+                  Select All ({filteredAvailableDevices.length})
+                </button>
+                {selectedDevices.length > 0 && (
+                  <button type="button" onClick={clearSelection}
+                    className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg border border-gray-200">
+                    Clear Selection
+                  </button>
+                )}
               </div>
             )}
-            <div className="flex gap-3">
-              <button type="button" onClick={resetForm} className="px-6 py-3 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 font-medium">Reset</button>
-              <button type="submit" disabled={!selectedClientId || selectedDevices.length === 0 || !deliveryDate || submitting}
-                className="flex-1 px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-medium disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                {submitting
-                  ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Submitting...</>
-                  : isGroundTeam
-                    ? <><Send className="w-4 h-4" /> Submit Assignment Request</>
-                    : 'Assign Devices to Client'
-                }
-              </button>
-            </div>
+
+            {filteredAvailableDevices.length === 0 ? (
+              <div className="text-center py-12">
+                <Package className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                <p className="text-gray-500">No devices available</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
+                {filteredAvailableDevices.map(device => (
+                  <div
+                    key={device.id}
+                    onClick={() => toggleDevice(device.id)}
+                    className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                      selectedDevices.includes(device.id)
+                        ? 'border-primary-500 bg-primary-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-mono font-bold text-lg">{device.code}</span>
+                      {selectedDevices.includes(device.id) && (
+                        <CheckCircle className="w-5 h-5 text-primary-600" />
+                      )}
+                    </div>
+                    <div className="text-sm text-gray-600 space-y-1">
+                      <p className="flex items-center gap-1">
+                        <DeviceTypeIcon type={device.type} />
+                        {DEVICE_TYPES[device.type]}
+                      </p>
+                      <p>{device.brand} {device.model}</p>
+                      {device.size && <p className="text-xs">{device.size}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Submit */}
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={resetForm}
+              disabled={submitting}
+              className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
+            >
+              Reset
+            </button>
+            <button
+              type="submit"
+              disabled={submitting || selectedDevices.length === 0}
+              className="flex-1 px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {submitting ? (
+                <>Processing...</>
+              ) : (
+                <>
+                  <Send className="w-5 h-5" />
+                  {isGroundTeam ? 'Submit Request' : 'Assign Devices'} ({selectedDevices.length})
+                </>
+              )}
+            </button>
           </div>
         </form>
       )}
 
-      {/* ── ASSIGNED TAB ── */}
       {activeTab === 'assigned' && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <button onClick={() => setShowFilters(!showFilters)} className="w-full flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2"><Filter className="w-5 h-5 text-gray-600" /><h3 className="text-lg font-semibold text-gray-900">Filters</h3></div>
-              <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
-            </button>
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-gray-900">Filters</h3>
+              <button onClick={() => setShowFilters(!showFilters)}
+                className="flex items-center gap-2 text-sm text-primary-600 font-medium">
+                <Filter className="w-4 h-4" />
+                {showFilters ? 'Hide' : 'Show'} Filters
+              </button>
+            </div>
+
             {showFilters && (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                  <input type="text" value={assignedSearchTerm} onChange={e => setAssignedSearchTerm(e.target.value)}
-                    placeholder="Search..." className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500" />
+                  <input
+                    type="text"
+                    placeholder="Search devices or clients..."
+                    value={assignedSearchTerm}
+                    onChange={e => setAssignedSearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg"
+                  />
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Client</label>
                     <select value={assignedClientFilter} onChange={e => setAssignedClientFilter(e.target.value)}
-                      className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500">
+                      className="w-full px-3 py-2.5 border border-gray-200 rounded-lg">
                       <option value="all">All Clients</option>
-                      {clients.filter(c => getDevicesByClientId(c.id).length > 0).map(c => (
-                        <option key={c.id} value={c.id}>{c.name} ({getDevicesByClientId(c.id).length})</option>
+                      {clients.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
                       ))}
                     </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Type</label>
                     <select value={assignedTypeFilter} onChange={e => setAssignedTypeFilter(e.target.value)}
-                      className="w-full px-3 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500">
+                      className="w-full px-3 py-2.5 border border-gray-200 rounded-lg">
                       <option value="all">All Types</option>
                       <option value="stand">A Stand</option>
                       <option value="istand">I Stand</option>
@@ -490,7 +630,7 @@ const Assigning = ({ userRole }) => {
                     <div className="overflow-x-auto">
                       <table className="w-full">
                         <thead className="bg-gray-50 border-b border-gray-200">
-                          <tr>{['Device','Type','Details','Location','Subscription','Actions'].map(h => (
+                          <tr>{['Device','Type','Details','Location','Return Date','Actions'].map(h => (
                             <th key={h} className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${h==='Actions'?'text-right':'text-left'}`}>{h}</th>
                           ))}</tr>
                         </thead>
@@ -503,13 +643,13 @@ const Assigning = ({ userRole }) => {
                               <td className="px-6 py-4 whitespace-nowrap"><span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">{DEVICE_TYPES[device.type]}</span></td>
                               <td className="px-6 py-4"><p className="text-sm">{device.brand} {device.model}</p>{device.size && <p className="text-xs text-gray-500">{device.size}</p>}</td>
                               <td className="px-6 py-4">
-                                {device.state && device.district
-                                  ? <div className="text-sm"><p>{device.state}, {device.district}</p>{device.location && <p className="text-xs text-gray-500">{device.location}</p>}</div>
+                                {device.deploymentState && device.deploymentDistrict && device.deploymentSite
+                                  ? <div className="text-sm"><p>{device.deploymentState}, {device.deploymentDistrict}</p><p className="text-xs text-gray-500">{device.deploymentSite}</p></div>
                                   : <span className="text-xs text-gray-400">Not set</span>}
                               </td>
                               <td className="px-6 py-4">
-                                {device.subscriptionStart && device.subscriptionEnd
-                                  ? <div className="text-xs"><p>{new Date(device.subscriptionStart).toLocaleDateString()}</p><p className="text-gray-500">to {new Date(device.subscriptionEnd).toLocaleDateString()}</p></div>
+                                {device.returnDate
+                                  ? <div className="text-xs">{new Date(device.returnDate).toLocaleDateString()}</div>
                                   : <span className="text-xs text-gray-400">Not set</span>}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-right">
@@ -533,7 +673,6 @@ const Assigning = ({ userRole }) => {
         </div>
       )}
 
-      {/* Detail modal */}
       {detailDevice && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">

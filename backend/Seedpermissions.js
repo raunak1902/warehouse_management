@@ -52,11 +52,12 @@ const ALL_PERMISSIONS = [
   { module: "Devices", operation: "view_history",   description: "View device lifecycle history" },
 
   // ── Sets ───────────────────────────────────────────────────────────────────
-  { module: "Sets", operation: "create",      description: "Create device sets (MakeSets)" },
-  { module: "Sets", operation: "read",        description: "View device sets" },
-  { module: "Sets", operation: "update",      description: "Update set details and lifecycle" },
-  { module: "Sets", operation: "delete",      description: "Delete or disassemble device sets" },
-  { module: "Sets", operation: "disassemble", description: "Disassemble a set into individual devices" },
+  { module: "Sets", operation: "create",              description: "Create device sets (MakeSets)" },
+  { module: "Sets", operation: "read",                description: "View device sets" },
+  { module: "Sets", operation: "update",              description: "Update set details and lifecycle" },
+  { module: "Sets", operation: "delete",              description: "Delete or disassemble device sets" },
+  { module: "Sets", operation: "disassemble",         description: "Disassemble a set into individual devices (manager+)" },
+  { module: "Sets", operation: "request_disassemble", description: "Request disassembly of a set (ground team)" },
 
   // ── Clients ────────────────────────────────────────────────────────────────
   { module: "Clients", operation: "create",  description: "Create new client accounts" },
@@ -137,8 +138,8 @@ const GROUNDTEAM_PERMISSIONS = [
   // Devices — view only, submit requests only
   "Devices.read", "Devices.view_history",
   "Devices.request_assign", "Devices.request_deploy", "Devices.request_return",
-  // Sets — view only
-  "Sets.read",
+  // Sets — view only, can request disassembly
+  "Sets.read", "Sets.request_disassemble",
   // Clients — view only (needed for assigning page dropdowns)
   "Clients.read",
   // Assignment Requests — can create and view own

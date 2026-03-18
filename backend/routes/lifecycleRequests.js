@@ -160,10 +160,32 @@ async function applyApproval(tx, req, approverId) {
     ? { healthStatus: req.healthStatus, updatedAt: now }
     : { lifecycleStatus: req.toStep, healthStatus: req.healthStatus, updatedAt: now }
 
+  // ✨ FIXED: Bug #4 - Require warehouse location for returns
   if (req.toStep === 'returned') {
     update.client    = { disconnect: true }
     update.deployedAt = null
     update.subscriptionEndDate = null
+    
+    // Extract warehouse location from note JSON (set by LifecycleActionModal)
+    let hasLocation = false
+    try {
+      const meta = JSON.parse(req.note || '{}')
+      if (meta.warehouseId) {
+        // Use relation connect for warehouseId — direct scalar may not be exposed
+        // depending on prisma client version; connect works universally
+        update.warehouse                 = { connect: { id: parseInt(meta.warehouseId) } }
+        update.warehouseZone             = meta.warehouseZone             || null
+        update.warehouseSpecificLocation = meta.warehouseSpecificLocation || null
+        // Also store the raw id so DeviceLocationHistory logging can read it back
+        update._warehouseIdRaw           = parseInt(meta.warehouseId)
+        hasLocation = true
+      }
+    } catch (_) { /* note may not be JSON if set manually */ }
+    
+    // ✨ NEW: Require warehouse location for returns
+    if (!hasLocation) {
+      throw new Error('Warehouse location is required when returning a device to warehouse. Please specify the warehouse, zone, and location.')
+    }
   }
   if (req.toStep === 'assigning' && req.note) {
     try {
@@ -179,7 +201,14 @@ async function applyApproval(tx, req, approverId) {
       where: { id: req.deviceId },
       select: { lifecycleStatus: true, healthStatus: true, setId: true },
     })
+    // Strip private helper key before passing to Prisma
+    const warehouseIdForRaw = update._warehouseIdRaw ?? null
+    delete update._warehouseIdRaw
     await tx.device.update({ where: { id: req.deviceId }, data: update })
+    // Apply warehouseId via raw SQL — avoids Prisma relation/scalar ambiguity on older clients
+    if (warehouseIdForRaw) {
+      await tx.$executeRaw`UPDATE "Device" SET "warehouseId" = ${warehouseIdForRaw} WHERE "id" = ${req.deviceId}`
+    }
     await tx.deviceHistory.create({
       data: {
         deviceId:    req.deviceId,
@@ -194,6 +223,43 @@ async function applyApproval(tx, req, approverId) {
             (req.healthNote ? ` | Note: ${req.healthNote}` : ''),
       },
     })
+    // Log DeviceLocationHistory for all movement-implying lifecycle steps
+    const MOVEMENT_STEPS = new Set(['in_transit', 'received', 'installed', 'active', 'returned'])
+    if (!isHealthUpdate && MOVEMENT_STEPS.has(req.toStep)) {
+      try {
+        if (req.toStep === 'returned' && warehouseIdForRaw) {
+          await tx.deviceLocationHistory.create({
+            data: {
+              deviceId:                 req.deviceId,
+              warehouseId:              warehouseIdForRaw,
+              warehouseZone:            update.warehouseZone             || null,
+              warehouseSpecificLocation:update.warehouseSpecificLocation || null,
+              changedById:              approverId,
+              changeReason:             'returned',
+              notes:                    'Device returned to warehouse',
+            },
+          })
+        } else {
+          // Deployment steps — fetch current deployment location after update
+          const updatedDev = await tx.device.findUnique({
+            where: { id: req.deviceId },
+            select: { state: true, district: true, location: true, clientId: true },
+          })
+          await tx.deviceLocationHistory.create({
+            data: {
+              deviceId:          req.deviceId,
+              clientId:          updatedDev?.clientId     || null,
+              deploymentState:   updatedDev?.state        || null,
+              deploymentDistrict:updatedDev?.district     || null,
+              deploymentSite:    updatedDev?.location     || null,
+              changedById:       approverId,
+              changeReason:      req.toStep,
+              notes:             'Lifecycle step: ' + (STEP_META[req.toStep]?.label ?? req.toStep),
+            },
+          })
+        }
+      } catch (_) { /* non-fatal */ }
+    }
     if (cur?.setId) await syncSetHealth(tx, cur.setId)
   }
 
@@ -203,7 +269,20 @@ async function applyApproval(tx, req, approverId) {
       healthStatus:    req.healthStatus,
       updatedAt:       now,
     }
-    if (req.toStep === 'returned') { setUpdate.client = { disconnect: true }; setUpdate.subscriptionEndDate = null }
+    if (req.toStep === 'returned') {
+      setUpdate.client = { disconnect: true }
+      setUpdate.subscriptionEndDate = null
+      // Extract warehouse location from note JSON
+      try {
+        const meta = JSON.parse(req.note || '{}')
+        if (meta.warehouseId) {
+          setUpdate.warehouse                 = { connect: { id: parseInt(meta.warehouseId) } }
+          setUpdate.warehouseZone             = meta.warehouseZone             || null
+          setUpdate.warehouseSpecificLocation = meta.warehouseSpecificLocation || null
+          setUpdate._warehouseIdRaw           = parseInt(meta.warehouseId)
+        }
+      } catch (_) { /* non-JSON note */ }
+    }
     if (req.toStep === 'assigning' && req.note) {
       try {
         const m = JSON.parse(req.note)
@@ -211,11 +290,18 @@ async function applyApproval(tx, req, approverId) {
         if (m.subscriptionEnd) setUpdate.subscriptionEndDate = new Date(m.subscriptionEnd)
       } catch (_) {}
     }
+    // Strip private helper key before passing to Prisma
+    const setWarehouseIdForRaw = setUpdate._warehouseIdRaw ?? null
+    delete setUpdate._warehouseIdRaw
     await tx.deviceSet.update({ where: { id: req.setId }, data: setUpdate })
+    // Apply warehouseId via raw SQL — avoids Prisma relation/scalar ambiguity on older clients
+    if (setWarehouseIdForRaw) {
+      await tx.$executeRaw`UPDATE "DeviceSet" SET "warehouseId" = ${setWarehouseIdForRaw} WHERE "id" = ${req.setId}`
+    }
 
     const updatedSet = await tx.deviceSet.findUnique({
       where: { id: req.setId },
-      select: { clientId: true, state: true, district: true, location: true },
+      select: { clientId: true, state: true, district: true, location: true, code: true, setTypeName: true },
     })
     if (!isHealthUpdate) {
       // Lifecycle step change — cascade status + location + clientId to all members
@@ -231,8 +317,22 @@ async function applyApproval(tx, req, approverId) {
           memberUpdate.state    = null
           memberUpdate.district = null
           memberUpdate.location = null
+          // Cascade warehouse zone/specific to all components via updateMany (scalars are fine here)
+          // warehouseId is set via raw query below to avoid Prisma relation ambiguity
+          try {
+            const meta = JSON.parse(req.note || '{}')
+            if (meta.warehouseId) {
+              memberUpdate._returnWarehouseId        = parseInt(meta.warehouseId)
+              memberUpdate.warehouseZone             = meta.warehouseZone             || null
+              memberUpdate.warehouseSpecificLocation = meta.warehouseSpecificLocation || null
+            }
+          } catch (_) { /* non-JSON note */ }
         }
       }
+      // Extract private keys before passing memberUpdate to Prisma
+      const returnWarehouseIdForMembers = memberUpdate._returnWarehouseId ?? null
+      delete memberUpdate._returnWarehouseId
+
       await tx.device.updateMany({ where: { setId: req.setId }, data: memberUpdate })
       // Update clientId via raw query — Prisma generated client may not expose scalar FK
       if (memberClientId !== undefined) {
@@ -242,6 +342,63 @@ async function applyApproval(tx, req, approverId) {
           await tx.$executeRaw`UPDATE "Device" SET "clientId" = ${memberClientId} WHERE "setId" = ${req.setId}`
         }
       }
+      // Update warehouseId for all components via raw SQL (avoids Prisma relation ambiguity)
+      if (returnWarehouseIdForMembers) {
+        await tx.$executeRaw`UPDATE "Device" SET "warehouseId" = ${returnWarehouseIdForMembers} WHERE "setId" = ${req.setId}`
+      }
+      // ── Log DeviceHistory for every component device — set moved ────────────
+      const setCode     = updatedSet?.code        ?? `Set#${req.setId}`
+      const setTypeName = updatedSet?.setTypeName  ?? ''
+      const stepLabel   = STEP_META[req.toStep]?.label ?? req.toStep
+      const components  = await tx.device.findMany({ where: { setId: req.setId }, select: { id: true, lifecycleStatus: true } })
+      await Promise.all(components.map(d =>
+        tx.deviceHistory.create({
+          data: {
+            deviceId:    d.id,
+            fromStatus:  d.lifecycleStatus,
+            toStatus:    req.toStep,
+            changedById: approverId,
+            note: (() => {
+              let base = `[SET_MOVE] Via set ${setCode} (${setTypeName}) → ${stepLabel}`
+              if (req.healthStatus !== 'ok') base += ` | Health: ${req.healthStatus}`
+              if (req.healthNote) base += ` | Note: ${req.healthNote}`
+              if (req.note) {
+                try {
+                  const m = JSON.parse(req.note)
+                  if (m && typeof m === 'object') {
+                    if (m.clientName) base += ` | Client: ${m.clientName}`
+                    else if (m.clientId) base += ` | Client ID: ${m.clientId}`
+                    if (m.returnType === 'days' && m.returnDays) base += ` | Return: ${m.returnDays} days`
+                    else if (m.returnType === 'months' && m.returnMonths) base += ` | Return: ${m.returnMonths} months`
+                    else if (m.returnType === 'date' && m.returnDate) base += ` | Return by: ${new Date(m.returnDate).toLocaleDateString('en-IN')}`
+                    if (m.subscriptionEnd) base += ` | Sub end: ${new Date(m.subscriptionEnd).toLocaleDateString('en-IN')}`
+                    if (m.state) base += ` | State: ${m.state}`
+                    if (m.district) base += ` | District: ${m.district}`
+                  } else { base += ` | ${req.note}` }
+                } catch { base += ` | ${req.note}` }
+              }
+              return base
+            })(),
+          },
+        })
+      ))
+    } else {
+      // Health update on set — log for all components too
+      const setCode     = updatedSet?.code        ?? `Set#${req.setId}`
+      const setTypeName = updatedSet?.setTypeName  ?? ''
+      const components  = await tx.device.findMany({ where: { setId: req.setId }, select: { id: true, lifecycleStatus: true } })
+      await Promise.all(components.map(d =>
+        tx.deviceHistory.create({
+          data: {
+            deviceId:    d.id,
+            fromStatus:  d.lifecycleStatus,
+            toStatus:    d.lifecycleStatus,
+            changedById: approverId,
+            note: `[SET_HEALTH] Via set ${setCode} (${setTypeName}) — Health updated to ${req.healthStatus}` +
+              (req.healthNote ? ` | Note: ${req.healthNote}` : ''),
+          },
+        })
+      ))
     }
     // Always re-derive set health from the worst component after any change
     await syncSetHealth(tx, req.setId)
@@ -382,6 +539,29 @@ router.post(
             ? `Proof files are required when health status is '${healthStatus}'. Please attach at least one image, video, or document.`
             : `Proof files are required for the '${toStep}' step. Please attach at least one image, video, or document.`,
         })
+      }
+
+      // ── SET-LOCK: block individual lifecycle steps on set-member devices ───────
+      if (deviceId && toStep !== 'health_update') {
+        const deviceCheck = await prisma.device.findUnique({
+          where: { id: deviceId },
+          select: { setId: true, code: true, deviceSet: { select: { code: true } } },
+        })
+        if (deviceCheck?.setId) {
+          const isSuperAdmin = (req.user?.role ?? '').toLowerCase().replace(/[\s_-]/g, '') === 'superadmin'
+          const override = req.body.superAdminOverride === 'true' || req.body.superAdminOverride === true
+          if (!isSuperAdmin || !override) {
+            const setLabel = deviceCheck.deviceSet?.code ?? `Set #${deviceCheck.setId}`
+            return res.status(403).json({
+              message: `Device ${deviceCheck.code} is part of ${setLabel}. Lifecycle steps must be performed on the set, not individual components. Only health updates are allowed individually.`,
+              setId: deviceCheck.setId,
+              setCode: deviceCheck.deviceSet?.code ?? null,
+              locked: true,
+            })
+          }
+          // SuperAdmin override — log warning
+          console.warn(`[SET-LOCK OVERRIDE] SuperAdmin userId=${req.user.userId} submitting individual lifecycle request for device ${deviceCheck.code} (setId=${deviceCheck.setId}), toStep=${toStep}`)
+        }
       }
 
       // ── Step gating ─────────────────────────────────────────────────────────

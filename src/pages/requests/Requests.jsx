@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   ClipboardList, CheckCircle, XCircle, Clock, ChevronDown, ChevronUp,
   AlertCircle, RefreshCw, Search, X, User, Layers, Monitor,
@@ -6,13 +7,17 @@ import {
   ArrowRight, CheckCircle2, Truck,
   Hourglass, Plus, Send, Zap, Heart,
   Paperclip, ImageIcon, Film, Eye,
-  MoreHorizontal, Clipboard, ClipboardCheck
+  MoreHorizontal, Clipboard, ClipboardCheck,
+  Pencil, MapPin,
 } from 'lucide-react'
 import { normaliseRole, ROLES } from '../../App'
 import { useInventory } from '../../context/InventoryContext'
 import { lifecycleRequestApi, STEP_META, VALID_NEXT_STEPS, PROOF_CONFIG, HEALTH_REQUIRES_PROOF, MAX_PROOF_FILES } from '../../api/lifecycleRequestApi'
 import LifecycleTimeline, { TimelineItem, ProofFilesPanel, ProofAttachmentButton } from '../../components/LifecycleTimeline'
 import { ProofUploadPanel, useProofFiles } from '../../components/ProofUpload'
+import InventoryRequestPanel from '../../components/InventoryRequestPanel'
+import { inventoryRequestApi } from '../../api/inventoryRequestApi'
+import WarehouseLocationSelector from '../../components/WarehouseLocationSelector'
 
 const authHeaders = () => ({
   'Content-Type': 'application/json',
@@ -269,6 +274,327 @@ const StatTile = ({ label, value, icon: Icon, accent, sub }) => (
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
+
+// ── HealthLogView ─────────────────────────────────────────────────────────────
+// Compact log-style list for standalone health update requests.
+// No progress bar, no journey card — just who reported what, on which device, when.
+const HealthLogView = ({ groups, canApprove, onApprove }) => {
+  // Flatten all health requests across groups, sorted newest-first
+  const rows = []
+  groups.forEach(g => {
+    const allReqs = [...g.pendingRequests, ...g.approvedHistory]
+    allReqs.forEach(req => {
+      rows.push({ req, group: g })
+    })
+  })
+  rows.sort((a, b) => new Date(b.req.createdAt) - new Date(a.req.createdAt))
+
+  const HEALTH_ROW_STYLE = {
+    ok:      { badge: 'bg-emerald-100 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500', label: 'Healthy'      },
+    repair:  { badge: 'bg-amber-100  text-amber-700  border-amber-200',     dot: 'bg-amber-500',  label: 'Needs Repair'  },
+    damaged: { badge: 'bg-red-100    text-red-700    border-red-200',       dot: 'bg-red-500',    label: 'Damaged'       },
+    lost:    { badge: 'bg-gray-100   text-gray-600   border-gray-200',      dot: 'bg-gray-400',   label: 'Lost'          },
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 py-16 px-6 text-center shadow-sm">
+        <div className="w-14 h-14 rounded-full bg-cyan-50 border border-cyan-100 flex items-center justify-center mx-auto mb-3">
+          <Heart size={24} className="text-cyan-300" />
+        </div>
+        <p className="text-sm font-bold text-text-secondary">No health change requests</p>
+        <p className="text-xs text-text-muted mt-1">Standalone health updates will appear here.</p>
+      </div>
+    )
+  }
+
+  return (
+    <section>
+      <div className="flex items-center gap-2.5 mb-3">
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-cyan-100">
+          <Heart size={15} className="text-cyan-600" />
+        </div>
+        <div>
+          <h2 className="text-sm font-bold text-text-primary leading-none">Health Updates</h2>
+          <p className="text-[11px] text-text-muted mt-0.5">
+            {rows.length} report{rows.length !== 1 ? 's' : ''} · standalone device health changes
+          </p>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden divide-y divide-gray-100">
+        {rows.map(({ req, group }, i) => {
+          const hs = HEALTH_ROW_STYLE[req.healthStatus] || HEALTH_ROW_STYLE.ok
+          const isPending = req.status === 'pending'
+          const waiting = isPending ? waitingDuration(req.createdAt) : null
+
+          return (
+            <div key={req.id ?? i} className={`flex items-center gap-3 px-4 py-3 ${isPending ? 'bg-amber-50/50' : ''}`}>
+              {/* Health dot */}
+              <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${hs.dot}`} />
+
+              {/* Device code */}
+              <span className="font-mono text-xs font-bold text-gray-700 flex-shrink-0 min-w-[64px]">
+                {group.code}
+              </span>
+
+              {/* Health badge */}
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border flex-shrink-0 ${hs.badge}`}>
+                {hs.label}
+              </span>
+
+              {/* Note (if any) */}
+              {req.healthNote && (
+                <span className="text-xs text-gray-500 truncate flex-1 min-w-0 hidden sm:block">
+                  {req.healthNote}
+                </span>
+              )}
+
+              {/* Spacer */}
+              <div className="flex-1" />
+
+              {/* Who · when */}
+              <div className="flex items-center gap-2 flex-shrink-0 text-right">
+                <div className="hidden sm:block">
+                  <p className="text-[10px] font-semibold text-gray-600">{req.requestedByName || '—'}</p>
+                  <p className="text-[10px] text-gray-400">{timeAgo(req.createdAt)}</p>
+                </div>
+
+                {isPending && canApprove ? (
+                  <div className="flex items-center gap-1">
+                    {waiting?.urgent && (
+                      <span className="text-[9px] font-bold text-red-500 hidden sm:block">{waiting.label}</span>
+                    )}
+                    <button
+                      onClick={() => onApprove(req, 'approve')}
+                      className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold transition-colors"
+                    >
+                      <CheckCircle size={11} /> Approve
+                    </button>
+                    <button
+                      onClick={() => onApprove(req, 'reject')}
+                      className="flex items-center gap-1 px-2 py-1.5 border border-red-200 text-red-600 hover:bg-red-50 rounded-lg text-[10px] font-bold transition-colors"
+                    >
+                      <XCircle size={11} />
+                    </button>
+                  </div>
+                ) : isPending ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-300">
+                    <Clock size={9} /> Pending
+                  </span>
+                ) : (
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border
+                    ${req.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                    {req.status === 'approved' ? <CheckCircle size={9} /> : <XCircle size={9} />}
+                    {req.status === 'approved' ? 'Approved' : 'Rejected'}
+                  </span>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+
+// ─── DeviceEditRequestPanel ────────────────────────────────────────────────────
+// Shows edit_device inventory requests — before/after diff, approve/reject
+const fmtDT = (dt) => dt ? new Date(dt).toLocaleString('en-IN', {
+  day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+}) : null
+
+const EditStatusBadge = ({ status }) => {
+  const styles = {
+    pending:  'bg-amber-100 text-amber-700 border-amber-200',
+    approved: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    rejected: 'bg-red-100 text-red-700 border-red-200',
+  }
+  const labels = { pending: '⏳ Pending', approved: '✅ Approved', rejected: '❌ Rejected' }
+  return (
+    <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${styles[status] || styles.pending}`}>
+      {labels[status] || status}
+    </span>
+  )
+}
+
+function DeviceEditRequestPanel({ requests, loading, userRole, canApprove, onRefresh }) {
+  const [rejectingId,  setRejectingId]  = useState(null)
+  const [rejectNote,   setRejectNote]   = useState('')
+  const [actionBusy,   setActionBusy]   = useState(null)
+  const [error,        setError]        = useState('')
+  const norm = r => (r ?? '').toLowerCase().replace(/[\s_-]/g, '')
+  const isGroundTeam = norm(userRole) === 'groundteam'
+
+  const filteredRequests = isGroundTeam
+    ? requests  // ground team sees own (backend already filtered)
+    : requests  // managers see all
+
+  const handleApprove = async (id) => {
+    setActionBusy(id); setError('')
+    try {
+      await inventoryRequestApi.approve(id)
+      onRefresh()
+    } catch (e) {
+      setError(e?.response?.data?.error || 'Failed to approve')
+    } finally { setActionBusy(null) }
+  }
+
+  const handleReject = async (id) => {
+    if (!rejectNote.trim()) return
+    setActionBusy(id); setError('')
+    try {
+      await inventoryRequestApi.reject(id, rejectNote)
+      setRejectingId(null); setRejectNote('')
+      onRefresh()
+    } catch (e) {
+      setError(e?.response?.data?.error || 'Failed to reject')
+    } finally { setActionBusy(null) }
+  }
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-12 gap-2 text-gray-400">
+      <RefreshCw className="w-5 h-5 animate-spin" /><span className="text-sm">Loading…</span>
+    </div>
+  )
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center">
+            <Pencil className="w-4 h-4 text-amber-600" />
+          </div>
+          <div>
+            <h2 className="text-sm font-bold text-gray-800">Device Edit Requests</h2>
+            <p className="text-[11px] text-gray-400">
+              Hardware attribute change requests
+              {filteredRequests.filter(r => r.status === 'pending').length > 0 && (
+                <span className="ml-2 text-amber-600 font-semibold">
+                  · {filteredRequests.filter(r => r.status === 'pending').length} pending
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+        <button onClick={onRefresh} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition">
+          <RefreshCw className="w-4 h-4" />
+        </button>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 text-red-600 text-xs bg-red-50 border border-red-200 px-3 py-2 rounded-xl">
+          <AlertCircle className="w-3.5 h-3.5" /> {error}
+        </div>
+      )}
+
+      {filteredRequests.length === 0 ? (
+        <div className="text-center py-12 text-gray-400">
+          <Pencil className="w-10 h-10 mx-auto mb-2 opacity-20" />
+          <p className="text-sm">No device edit requests</p>
+        </div>
+      ) : (
+        filteredRequests.map(req => {
+          const changes = req.proposedChanges || {}
+          const changeFields = Object.keys(changes)
+          const isPending = req.status === 'pending'
+          const isRejecting = rejectingId === req.id
+
+          return (
+            <div
+              key={req.id}
+              className={`bg-white border rounded-2xl p-4 shadow-sm space-y-3 ${
+                isPending ? 'border-amber-200' : 'border-gray-100'
+              }`}
+            >
+              {/* Header */}
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-sm font-bold text-gray-900">{req.targetDeviceCode || `Device #${req.targetDeviceId}`}</span>
+                    <EditStatusBadge status={req.status} />
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Requested by <span className="font-medium text-gray-600">{req.requestedByName}</span>
+                    {req.createdAt && <span> · {fmtDT(req.createdAt)}</span>}
+                  </p>
+                </div>
+              </div>
+
+              {/* Proposed changes diff */}
+              {changeFields.length > 0 && (
+                <div className="bg-gray-50 rounded-xl px-3 py-2.5 space-y-1.5">
+                  <p className="text-[10px] font-extrabold uppercase tracking-widest text-gray-400 mb-1">Proposed Changes</p>
+                  {changeFields.map(field => (
+                    <div key={field} className="flex items-center gap-2 text-xs">
+                      <span className="capitalize text-gray-500 w-14 flex-shrink-0">{field}</span>
+                      <ArrowRight className="w-3 h-3 text-gray-300 flex-shrink-0" />
+                      <span className="font-semibold text-emerald-700 px-2 py-0.5 bg-emerald-50 rounded-lg border border-emerald-200">{changes[field]}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Note */}
+              {req.note && (
+                <p className="text-xs text-gray-400 italic bg-gray-50 rounded-lg px-3 py-2">"{req.note}"</p>
+              )}
+
+              {/* Rejection note */}
+              {req.rejectionNote && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                  <p className="text-xs font-semibold text-red-700 mb-0.5">Rejection reason:</p>
+                  <p className="text-xs text-red-600">{req.rejectionNote}</p>
+                </div>
+              )}
+
+              {/* Actions — manager only, pending only */}
+              {canApprove && isPending && (
+                isRejecting ? (
+                  <div className="space-y-2">
+                    <textarea
+                      value={rejectNote}
+                      onChange={e => setRejectNote(e.target.value)}
+                      placeholder="Reason for rejection (required)"
+                      rows={2}
+                      className="w-full px-3 py-2 text-sm border border-red-200 rounded-xl focus:ring-2 focus:ring-red-400 outline-none resize-none"
+                      autoFocus
+                    />
+                    <div className="flex gap-2">
+                      <button onClick={() => { setRejectingId(null); setRejectNote('') }}
+                        className="flex-1 py-2 border border-gray-200 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-50 transition">
+                        Cancel
+                      </button>
+                      <button onClick={() => handleReject(req.id)} disabled={!rejectNote.trim() || actionBusy === req.id}
+                        className="flex-1 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 disabled:opacity-40 flex items-center justify-center gap-1.5 transition">
+                        {actionBusy === req.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />}
+                        Confirm Reject
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button onClick={() => setRejectingId(req.id)}
+                      className="flex-1 py-2 border border-red-200 text-red-600 rounded-xl text-sm font-medium hover:bg-red-50 transition">
+                      Reject
+                    </button>
+                    <button onClick={() => handleApprove(req.id)} disabled={actionBusy === req.id}
+                      className="flex-1 py-2 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 disabled:opacity-40 flex items-center justify-center gap-1.5 transition">
+                      {actionBusy === req.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                      Approve &amp; Apply
+                    </button>
+                  </div>
+                )
+              )}
+            </div>
+          )
+        })
+      )}
+    </div>
+  )
+}
+
 const Requests = ({ userRole }) => {
   const role         = normaliseRole(userRole)
   const isGroundTeam = role === ROLES.GROUNDTEAM
@@ -285,11 +611,63 @@ const Requests = ({ userRole }) => {
   const [approveModal,     setApproveModal]     = useState(null)
 
   const [activeTab,        setActiveTab]        = useState('all')  // 'all' | 'deployments' | 'returns' | 'health' | 'completed'
+  const [highlightId,      setHighlightId]      = useState(null)   // request id to scroll+highlight on load
+  const location = useLocation()
+
+  const [detailRequests,  setDetailRequests]  = useState([])
+  const [detailReqLoading, setDetailReqLoading] = useState(false)
+
+  // ── Deep-link: ?tab=inventory&highlight=42 ──────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const tab = params.get('tab')
+    const hid = params.get('highlight')
+    if (tab) setActiveTab(tab)
+    if (hid) {
+      setHighlightId(parseInt(hid))
+      // After render, scroll the card into view and clear highlight after 3s
+      setTimeout(() => {
+        const el = document.getElementById(`req-${hid}`)
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 600)
+      setTimeout(() => setHighlightId(null), 3500)
+    }
+  }, [location.search]) // eslint-disable-line
   const [globalSearch,     setGlobalSearch]     = useState('')
   const [globalFilterClient, setGlobalFilterClient] = useState('')
+  const [invRequests,        setInvRequests]        = useState([])
+  const [invReqLoading,      setInvReqLoading]      = useState(false)
 
   const [groundUsers,  setGroundUsers]  = useState([])
+  const fetchDetailRequests = useCallback(async () => {
+    setDetailReqLoading(true)
+    try {
+      const data = await inventoryRequestApi.getAll({ requestType: 'edit_device' })
+      setDetailRequests(Array.isArray(data) ? data : [])
+    } catch (e) {
+      console.error('Failed to load detail requests:', e)
+    } finally {
+      setDetailReqLoading(false)
+    }
+  }, [])
+
+  const fetchInvRequests = useCallback(async () => {
+    try {
+      setInvReqLoading(true)
+      const data = await inventoryRequestApi.getAll()
+      setInvRequests(Array.isArray(data) ? data : [])
+    } catch (e) {
+      console.error('Failed to load inventory requests:', e)
+    } finally {
+      setInvReqLoading(false)
+    }
+  }, [])
   const deviceSetMapRef = useRef({})
+
+  useEffect(() => {
+    if (activeTab === 'inventory') fetchInvRequests()
+    if (activeTab === 'details') fetchDetailRequests()
+  }, [activeTab, fetchInvRequests])
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   const fetchRequests = useCallback(async () => {
@@ -440,6 +818,33 @@ const Requests = ({ userRole }) => {
         const db = new Date(a.approvedAt || a.updatedAt || a.createdAt)
         return da - db
       })
+
+      // ── Cycle trimming ────────────────────────────────────────────────────
+      // One deploy→active→return sequence is one "cycle". When a device is
+      // returned then re-assigned, a new cycle starts. We only keep the current
+      // cycle in approvedHistory — old cycles are still visible in the device
+      // timeline. Detection: walk oldest-first, find last "returned" then any
+      // later "assigning" — that assigning marks the new cycle start.
+      const sorted = [...g.approvedHistory].sort(
+        (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
+      )
+      let cycleStartIdx = 0
+      let lastReturnedIdx = -1
+      sorted.forEach((req, idx) => {
+        if (req.toStep === 'returned') {
+          lastReturnedIdx = idx
+        } else if (req.toStep === 'assigning' && lastReturnedIdx !== -1 && idx > lastReturnedIdx) {
+          cycleStartIdx = idx
+          lastReturnedIdx = -1
+        }
+      })
+      if (cycleStartIdx > 0) {
+        g.approvedHistory = sorted.slice(cycleStartIdx).sort((a, b) => {
+          const da = new Date(b.approvedAt || b.updatedAt || b.createdAt)
+          const db = new Date(a.approvedAt || a.updatedAt || a.createdAt)
+          return da - db
+        })
+      }
     })
     return Object.values(groups)
   // deviceSetMapRef is a ref (always current) — allRequests change is the trigger
@@ -556,10 +961,10 @@ const Requests = ({ userRole }) => {
   const tabs = [
     {
       key: 'all',
-      label: 'All',
-      icon: <ClipboardList size={13} />,
-      pending: counts.deployPending + counts.returnPending,
-      accentActive: 'bg-primary-600 text-white border-primary-600',
+      label: 'Pending',
+      icon: <Hourglass size={13} />,
+      pending: counts.deployPending + counts.returnPending + counts.healthPending,
+      accentActive: 'bg-amber-500 text-white border-amber-500',
       accentBadge: 'bg-white/25 text-white',
     },
     {
@@ -592,6 +997,22 @@ const Requests = ({ userRole }) => {
       icon: <CheckCircle2 size={13} />,
       pending: 0,
       accentActive: 'bg-emerald-600 text-white border-emerald-600',
+      accentBadge: 'bg-white/25 text-white',
+    },
+    {
+      key: 'inventory',
+      label: 'Inventory',
+      icon: <Plus size={13} />,
+      pending: invRequests.filter(r => r.status === 'pending').length,
+      accentActive: 'bg-violet-600 text-white border-violet-600',
+      accentBadge: 'bg-white/25 text-white',
+    },
+    {
+      key: 'details',
+      label: 'Details',
+      icon: <Pencil size={13} />,
+      pending: detailRequests.filter(r => r.status === 'pending').length,
+      accentActive: 'bg-amber-500 text-white border-amber-500',
       accentBadge: 'bg-white/25 text-white',
     },
   ]
@@ -827,80 +1248,29 @@ const Requests = ({ userRole }) => {
           {/* ── Tab Content ───────────────────────────────────────────────── */}
           <div className="space-y-6">
 
-            {/* ALL tab */}
+            {/* PENDING tab — only items awaiting approval */}
             {activeTab === 'all' && (
               <>
-                {/* ── Awaiting Approval: ALL pending groups (deploy + return merged) ── */}
-                {allPendingGroups.length > 0 && (
-                  <>
-                    {renderSection({
-                      icon: <Hourglass size={15} className="text-amber-600" />,
-                      title: 'Awaiting Approval',
-                      subtitle: `Across all request types`,
-                      pendingCount: allPendingGroups.reduce((n, g) => n + g.pendingRequests.length, 0),
-                      accentIcon: 'bg-amber-100',
-                      emptyIcon: <Hourglass size={20} className="text-amber-300" />,
-                      emptyMsg: '',
-                      groups: allPendingGroups,
-                    })}
-                    <div className="border-t border-dashed border-gray-200" />
-                  </>
+                {allPendingGroups.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-gray-200 py-16 px-6 text-center shadow-sm">
+                    <div className="w-14 h-14 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center mx-auto mb-3">
+                      <CheckCircle2 size={24} className="text-emerald-400" />
+                    </div>
+                    <p className="text-sm font-bold text-text-secondary">All clear!</p>
+                    <p className="text-xs text-text-muted mt-1">No requests are waiting for approval right now.</p>
+                  </div>
+                ) : (
+                  renderSection({
+                    icon: <Hourglass size={15} className="text-amber-600" />,
+                    title: 'Awaiting Approval',
+                    subtitle: `${allPendingGroups.reduce((n, g) => n + g.pendingRequests.length, 0)} request${allPendingGroups.reduce((n, g) => n + g.pendingRequests.length, 0) !== 1 ? 's' : ''} across all types`,
+                    pendingCount: allPendingGroups.reduce((n, g) => n + g.pendingRequests.length, 0),
+                    accentIcon: 'bg-amber-100',
+                    emptyIcon: <Hourglass size={20} className="text-amber-300" />,
+                    emptyMsg: '',
+                    groups: allPendingGroups,
+                  })
                 )}
-
-                {renderSection({
-                  icon: <Truck size={15} className="text-blue-600" />,
-                  title: 'Deployment Requests',
-                  subtitle: `${counts.deployActive} active`,
-                  pendingCount: 0,
-                  accentIcon: 'bg-blue-100',
-                  emptyIcon: <Truck size={20} className="text-blue-300" />,
-                  emptyMsg: 'No active deployment requests',
-                  groups: filteredDeployGroups,
-                })}
-
-                <div className="border-t border-dashed border-gray-200" />
-
-                {renderSection({
-                  icon: <ArrowRight size={15} className="text-rose-500 rotate-180" />,
-                  title: 'Return Requests',
-                  subtitle: `${counts.returnActive} active`,
-                  pendingCount: 0,
-                  accentIcon: 'bg-rose-100',
-                  emptyIcon: <ArrowRight size={20} className="text-rose-300 rotate-180" />,
-                  emptyMsg: 'No active return requests',
-                  groups: filteredReturnGroups,
-                })}
-
-                {/* Health section in All tab — only shown when there are health-only requests */}
-                {filteredHealthGroups.length > 0 && (
-                  <>
-                    <div className="border-t border-dashed border-gray-200" />
-                    {renderSection({
-                      icon: <Heart size={15} className="text-cyan-600" />,
-                      title: 'Health Change Requests',
-                      subtitle: `${counts.healthActive} device${counts.healthActive !== 1 ? 's' : ''}`,
-                      pendingCount: counts.healthPending,
-                      accentIcon: 'bg-cyan-100',
-                      emptyIcon: <Heart size={20} className="text-cyan-300" />,
-                      emptyMsg: 'No health change requests',
-                      groups: filteredHealthGroups,
-                      hideNextStep: true,
-                    })}
-                  </>
-                )}
-
-                <div className="border-t border-dashed border-gray-200" />
-
-                {renderSection({
-                  icon: <CheckCircle2 size={15} className="text-emerald-600" />,
-                  title: 'Completed',
-                  subtitle: `${counts.completed} devices · active or returned to warehouse`,
-                  pendingCount: 0,
-                  accentIcon: 'bg-emerald-100',
-                  emptyIcon: <CheckCircle2 size={20} className="text-emerald-300" />,
-                  emptyMsg: 'No completed requests found',
-                  groups: filteredCompletedGroups,
-                })}
               </>
             )}
 
@@ -928,18 +1298,14 @@ const Requests = ({ userRole }) => {
               groups: filteredReturnGroups,
             })}
 
-            {/* HEALTH tab */}
-            {activeTab === 'health' && renderSection({
-              icon: <Heart size={15} className="text-cyan-600" />,
-              title: 'Health Change Requests',
-              subtitle: `${counts.healthActive} device${counts.healthActive !== 1 ? 's' : ''} with standalone health updates`,
-              pendingCount: counts.healthPending,
-              accentIcon: 'bg-cyan-100',
-              emptyIcon: <Heart size={20} className="text-cyan-300" />,
-              emptyMsg: 'No standalone health change requests',
-              groups: filteredHealthGroups,
-              hideNextStep: true,
-            })}
+            {/* HEALTH tab — compact log view */}
+            {activeTab === 'health' && (
+              <HealthLogView
+                groups={filteredHealthGroups}
+                canApprove={canApprove}
+                onApprove={(request, action) => setApproveModal({ request, action })}
+              />
+            )}
 
             {/* COMPLETED tab */}
             {activeTab === 'completed' && renderSection({
@@ -952,6 +1318,30 @@ const Requests = ({ userRole }) => {
               emptyMsg: 'No completed requests found',
               groups: filteredCompletedGroups,
             })}
+
+
+            {/* DETAILS (edit_device) REQUESTS tab */}
+            {activeTab === 'details' && (
+              <DeviceEditRequestPanel
+                requests={detailRequests}
+                loading={detailReqLoading}
+                userRole={userRole}
+                canApprove={canApprove}
+                onRefresh={fetchDetailRequests}
+              />
+            )}
+
+            {/* INVENTORY REQUESTS tab */}
+            {activeTab === 'inventory' && (
+              <InventoryRequestPanel
+                requests={invRequests}
+                loading={invReqLoading}
+                userRole={userRole}
+                canApprove={canApprove}
+                onRefresh={fetchInvRequests}
+                highlightId={highlightId}
+              />
+            )}
 
           </div>
         </div>
@@ -1012,6 +1402,22 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
   const [done,        setDone]        = useState(false)
   const [submitError, setSubmitError] = useState(null)
 
+  // ── Warehouse location — mandatory when step is 'returned' ───────────────
+  // Pre-fill from the device/set's last known warehouse location (from context)
+  const { devices, deviceSets } = useInventory()
+  const entityData = React.useMemo(() => {
+    if (deviceId) return devices?.find(d => d.id === deviceId) || null
+    if (setId)    return deviceSets?.find(s => s.id === setId) || null
+    return null
+  }, [deviceId, setId, devices, deviceSets])
+
+  const [returnWarehouseId,       setReturnWarehouseId]       = useState(entityData?.warehouseId || null)
+  const [returnWarehouseZone,     setReturnWarehouseZone]     = useState(entityData?.warehouseZone || '')
+  const [returnWarehouseSpecific, setReturnWarehouseSpecific] = useState(entityData?.warehouseSpecificLocation || '')
+
+  const isReturned             = chosenStep === 'returned'
+  const returnWarehouseMissing = isReturned && !returnWarehouseId
+
   // Proof files managed by shared hook
   const proof = useProofFiles()
 
@@ -1024,7 +1430,11 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
     setHealth('ok'); setHealthNote(''); setNote('')
     setSubmitting(false); setDone(false); setSubmitError(null)
     proof.reset()
-  }, [group.key])
+    // Reset warehouse state to current entity data
+    setReturnWarehouseId(entityData?.warehouseId || null)
+    setReturnWarehouseZone(entityData?.warehouseZone || '')
+    setReturnWarehouseSpecific(entityData?.warehouseSpecificLocation || '')
+  }, [group.key]) // eslint-disable-line
 
   // Also reset proof files when step changes (different proof requirements)
   const handleStepChange = (step) => {
@@ -1066,22 +1476,34 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
   const canSubmit     = chosenStep
     && (health === 'ok' || healthNote.trim())
     && !proofMissing
+    && !returnWarehouseMissing
 
   const handleSubmit = async () => {
     if (!canSubmit) {
+      if (returnWarehouseMissing) { setSubmitError('Please select a warehouse location before confirming return.'); return }
       if (proofMissing) setSubmitError(`Proof is required for the '${stepMeta?.label ?? chosenStep}' step. Please attach at least one photo, video, or document.`)
       return
     }
     setSubmitting(true)
     setSubmitError(null)
     try {
+      // For 'returned' step, encode warehouse location into note JSON (same format as LifecycleActionModal)
+      let submitNote = note.trim() || undefined
+      if (chosenStep === 'returned') {
+        submitNote = JSON.stringify({
+          warehouseId:               returnWarehouseId,
+          warehouseZone:             returnWarehouseZone     || null,
+          warehouseSpecificLocation: returnWarehouseSpecific || null,
+          _note: note.trim() || undefined,
+        })
+      }
       await lifecycleRequestApi.create(
         {
           ...(deviceId ? { deviceId } : { setId }),
           toStep:       chosenStep,
           healthStatus: health,
           healthNote:   health !== 'ok' ? healthNote.trim() : undefined,
-          note:         note.trim() || undefined,
+          note:         submitNote,
         },
         proof.files,
       )
@@ -1206,6 +1628,44 @@ const NextStepPanel = ({ group, canApprove, onDone, open, setOpen }) => {
                   maxLength={300}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-primary-300 focus:border-primary-400 resize-none"
                 />
+              </div>
+            )}
+
+            {/* ── WAREHOUSE LOCATION — mandatory for 'returned' step ─────── */}
+            {isReturned && (
+              <div className="border-2 border-teal-200 rounded-xl overflow-hidden">
+                <div className="flex items-center gap-2 px-3 py-2 bg-teal-50 border-b border-teal-200">
+                  <MapPin size={12} className="text-teal-600 flex-shrink-0" />
+                  <p className="text-[10px] font-extrabold text-teal-800 uppercase tracking-widest">
+                    Return Warehouse Location <span className="text-rose-500">*</span>
+                  </p>
+                  {returnWarehouseId && (
+                    <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-bold text-teal-700 bg-teal-100 border border-teal-300 px-1.5 py-0.5 rounded-full">
+                      <CheckCircle2 size={9} /> Set
+                    </span>
+                  )}
+                </div>
+                <div className="p-3 space-y-2">
+                  <p className="text-[10px] text-teal-700">
+                    {entityData?.warehouseId
+                      ? 'Pre-filled with last known location — update if device is going somewhere different.'
+                      : 'Confirm where this device/set will be stored on return.'}
+                  </p>
+                  <WarehouseLocationSelector
+                    warehouseId={returnWarehouseId}
+                    zone={returnWarehouseZone}
+                    specificLocation={returnWarehouseSpecific}
+                    onWarehouseChange={v => { setReturnWarehouseId(v); setReturnWarehouseZone('') }}
+                    onZoneChange={setReturnWarehouseZone}
+                    onSpecificLocationChange={setReturnWarehouseSpecific}
+                    required={true}
+                  />
+                  {returnWarehouseMissing && submitError && (
+                    <p className="text-[10px] text-rose-600 flex items-center gap-1">
+                      <AlertTriangle size={10} /> Please select a warehouse.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 

@@ -13,6 +13,8 @@ export const setApi = {
   getByBarcode: async (barcode) => (await axios.get(`${API_BASE}/sets/barcode/${barcode}`, { headers: getAuthHeaders() })).data,
   create: async (setData) => (await axios.post(`${API_BASE}/sets`, setData, { headers: getAuthHeaders() })).data,
   update: async (id, updates) => (await axios.put(`${API_BASE}/sets/${id}`, updates, { headers: getAuthHeaders() })).data,
-  disassemble: async (id, componentUpdates = []) => (await axios.post(`${API_BASE}/sets/${id}/disassemble`, { componentUpdates }, { headers: getAuthHeaders() })).data,
-  delete: async (id) => (await axios.delete(`${API_BASE}/sets/${id}`, { headers: getAuthHeaders() })).data,
+  disassemble: async (id, componentUpdates = [], reason = '', componentLocations = []) =>
+    (await axios.post(`${API_BASE}/sets/${id}/disassemble`, { componentUpdates, reason, componentLocations }, { headers: getAuthHeaders() })).data,
+  updateLocation: async (id, { warehouseId, warehouseZone, warehouseSpecificLocation, notes }) =>
+    (await axios.patch(`${API_BASE}/sets/${id}/location`, { warehouseId, warehouseZone, warehouseSpecificLocation, notes }, { headers: getAuthHeaders() })).data,
 }

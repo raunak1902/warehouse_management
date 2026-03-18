@@ -21,6 +21,7 @@ import {
   XCircle, Search, X, AlertCircle,
 } from 'lucide-react'
 import BarcodeResultCard from '../../components/BarcodeResultCard'
+import WarehouseLocationSelector from '../../components/WarehouseLocationSelector'
 import { useInventory } from '../../context/InventoryContext'
 
 const BASE = '/api/returns'
@@ -282,6 +283,13 @@ const Return = () => {
   const [barcodeDevice, setBarcodeDevice] = useState(null)   // for BarcodeResultCard modal
   const [barcodeLoading, setBarcodeLoading] = useState(false)
   const [barcodeError, setBarcodeError] = useState('')
+
+  // NEW: warehouse location to receive the returning device
+  const [returnWarehouseId,               setReturnWarehouseId]               = useState(null)
+  const [returnWarehouseZone,             setReturnWarehouseZone]             = useState('Quality Check')
+  const [returnWarehouseSpecificLocation, setReturnWarehouseSpecificLocation] = useState('')
+  const [showReturnWarehouseModal,        setShowReturnWarehouseModal]        = useState(false)
+  const [pendingReturnItem,               setPendingReturnItem]               = useState(null)
   const cardRefs = useRef({})
 
   const fetchTab = useCallback(async (tabId, force = false) => {
@@ -377,12 +385,28 @@ const Return = () => {
   }
 
   const handleInitiateReturn = async (item) => {
+    // Step 1: Ask the user where the device is being returned to.
+    // Pre-fill with the item's last known warehouse location so the manager
+    // just confirms (or updates if it's going to a different spot).
+    setPendingReturnItem(item)
+    setReturnWarehouseId(item.warehouseId || null)
+    setReturnWarehouseZone(item.warehouseZone || 'Quality Check')
+    setReturnWarehouseSpecificLocation(item.warehouseSpecificLocation || '')
+    setShowReturnWarehouseModal(true)
+  }
+
+  const handleConfirmReturn = async () => {
+    const item = pendingReturnItem
+    if (!item) return
+
     if (!item.barcode) {
       setBarcodeError('No barcode found for this device.')
+      setShowReturnWarehouseModal(false)
       return
     }
     setBarcodeLoading(true)
     setBarcodeError('')
+    setShowReturnWarehouseModal(false)
     try {
       const deviceData = await scanDevice(item.barcode)
       setBarcodeDevice(deviceData)
@@ -407,6 +431,7 @@ const Return = () => {
       console.error('Failed to load barcode card:', e)
     } finally {
       setBarcodeLoading(false)
+      setPendingReturnItem(null)
     }
   }
 
@@ -538,6 +563,65 @@ const Return = () => {
       </div>
 
       {extendItem && <ExtendModal item={extendItem} onClose={() => setExtendItem(null)} onExtended={handleExtended} />}
+
+      {/* ── Return Warehouse Location Modal ──────────────────────────────────── */}
+      {/* Shown before initiating a return — user picks which warehouse/zone   */}
+      {/* the device is coming back to (defaults to Quality Check zone)        */}
+      {showReturnWarehouseModal && pendingReturnItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-bold text-gray-900">Confirm Return Location</h3>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  Where is <span className="font-semibold text-gray-700">{pendingReturnItem.code}</span> being returned to?
+                </p>
+              </div>
+              <button
+                onClick={() => { setShowReturnWarehouseModal(false); setPendingReturnItem(null) }}
+                className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Context note — device returning from client, may go to new location */}
+            <div className="flex items-start gap-2 mb-4 px-3 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
+              <MapPin size={14} className="text-blue-500 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-blue-700">
+                Pre-filled with the last known warehouse location. Since the device is returning from a client, confirm or update the storage location.
+              </p>
+            </div>
+
+            <WarehouseLocationSelector
+              warehouseId={returnWarehouseId}
+              zone={returnWarehouseZone}
+              specificLocation={returnWarehouseSpecificLocation}
+              onWarehouseChange={setReturnWarehouseId}
+              onZoneChange={setReturnWarehouseZone}
+              onSpecificLocationChange={setReturnWarehouseSpecificLocation}
+              suggestedZone="Quality Check"
+              required={true}
+            />
+
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={handleConfirmReturn}
+                disabled={!returnWarehouseId}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2"
+              >
+                <RotateCcw size={14} /> Confirm Return
+              </button>
+              <button
+                onClick={() => { setShowReturnWarehouseModal(false); setPendingReturnItem(null) }}
+                className="px-4 text-sm text-gray-500 hover:bg-gray-100 rounded-xl border border-gray-200"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Barcode loading overlay */}
       {barcodeLoading && (
