@@ -23,7 +23,7 @@ import {
 import {
   isImage, isVideo, isPdf, ProofUploadPanel,
 } from './ProofUpload'
-import AssignToClientModal from './AssignToClientModal'
+import AssignToClientModal from "./Assigntoclientmodal"
 import HealthUpdateModal, { LostHealthBanner } from './HealthUpdateModal'
 import LifecycleActionModal from './LifecycleActionModal'
 
