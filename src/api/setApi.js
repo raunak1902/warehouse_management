@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE = '/api'
+const API_BASE = `${import.meta.env.VITE_API_URL || ''}/api`
 
 const getAuthHeaders = () => {
   const token = localStorage.getItem('token')
@@ -18,3 +18,5 @@ export const setApi = {
   updateLocation: async (id, { warehouseId, warehouseZone, warehouseSpecificLocation, notes }) =>
     (await axios.patch(`${API_BASE}/sets/${id}/location`, { warehouseId, warehouseZone, warehouseSpecificLocation, notes }, { headers: getAuthHeaders() })).data,
 }
+
+export default setApi

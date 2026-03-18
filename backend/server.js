@@ -39,6 +39,7 @@ import { seedBuiltinTypes }       from "./routes/catalogue.js";
 dotenv.config();
 
 const app    = express();
+app.set('trust proxy', 1);
 const prisma = new PrismaClient();
 
 // ═══ CORS Configuration (Production-Ready) ═══

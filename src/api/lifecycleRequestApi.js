@@ -3,9 +3,11 @@
  * ───────────────────────────────
  * All API calls for the unified lifecycle request system.
  */
+const API_URL = import.meta.env.VITE_API_URL || ''
 
-const BASE = '/api/lifecycle-requests'
-const NOTIF_BASE = '/api/notifications'
+const BASE = `${API_URL}/api/lifecycle-requests`
+const NOTIF_BASE = `${API_URL}/api/notifications`
+
 
 const authHeaders = () => ({
   Authorization: `Bearer ${localStorage.getItem('token')}`,

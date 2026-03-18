@@ -1,14 +1,14 @@
 import axios from 'axios';
 
-// Empty base URL - all calls use relative paths, proxied by Vite
+const API_URL = import.meta.env.VITE_API_URL || '';
+
 const api = axios.create({
-  baseURL: '',
+  baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Add auth token to requests
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
@@ -20,7 +20,6 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Handle response errors
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -34,10 +33,6 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
-
-// ==========================================
-// DEVICE API METHODS
-// ==========================================
 
 export const deviceApi = {
   getAll: async () => (await api.get('/api/devices')).data,
@@ -57,10 +52,6 @@ export const deviceApi = {
   search: async (filters) => (await api.post('/api/devices/search', filters)).data,
   getStats: async () => (await api.get('/api/devices/stats/summary')).data,
 };
-
-// ==========================================
-// AUTH API METHODS
-// ==========================================
 
 export const authApi = {
   login: async (email, password) => (await api.post('/login', { email, password })).data,
