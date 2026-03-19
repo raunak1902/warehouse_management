@@ -298,7 +298,7 @@ export const InventoryProvider = ({ children }) => {
   const fetchClients = useCallback(async () => {
     try {
       setClientsLoading(true)
-      const fetched = await clientApi.getAll()
+      const fetched = await clientApi.getAll({ archived: false })
       setClients(fetched)
     } catch (err) {
       console.error('Error loading clients:', err)
@@ -709,8 +709,29 @@ export const InventoryProvider = ({ children }) => {
   }, [refresh])
 
   const removeClient = useCallback(async (clientId) => {
-    await clientApi.delete(clientId)
+    // May throw a 409 error with { error, message, assignedItems, counts }
+    // if the client has active device assignments — caller must handle this
+    try {
+      await clientApi.delete(clientId)
+      await refresh()
+    } catch (err) {
+      // Re-throw axios error as a plain object the UI can inspect
+      const data = err?.response?.data
+      if (data?.error === 'CLIENT_HAS_ACTIVE_ASSIGNMENTS') {
+        const e = new Error(data.message)
+        e.code = 'CLIENT_HAS_ACTIVE_ASSIGNMENTS'
+        e.assignedItems = data.assignedItems
+        e.counts = data.counts
+        throw e
+      }
+      throw err
+    }
+  }, [refresh])
+
+  const restoreClient = useCallback(async (clientId) => {
+    const restored = await clientApi.restore(clientId)
     await refresh()
+    return restored
   }, [refresh])
 
   const getClientById = useCallback((clientId) => {
@@ -903,6 +924,7 @@ export const InventoryProvider = ({ children }) => {
     addClient,
     updateClient,
     removeClient,
+    restoreClient,
     getClientById,
     loadClients,
 

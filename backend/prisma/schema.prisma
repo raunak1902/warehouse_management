@@ -94,6 +94,11 @@ model Client {
   notes             String?
   createdAt         DateTime           @default(now())
 
+  // Soft-delete fields — clients are never hard-deleted
+  isArchived        Boolean            @default(false)
+  archivedAt        DateTime?
+  archivedById      Int?
+
   // Existing relations
   devices           Device[]
   deviceSets        DeviceSet[]
@@ -102,6 +107,8 @@ model Client {
   // NEW: all device location history entries associated with this client
   locationHistory   DeviceLocationHistory[]
   editRequests      InventoryRequest[]       @relation("ClientEditRequests")
+
+  @@index([isArchived])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

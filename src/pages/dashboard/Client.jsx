@@ -4,6 +4,7 @@ import {
   Package, ChevronDown, ChevronUp, Clock, CheckCircle2, XCircle,
   Monitor, Smartphone, LayoutGrid, Layers, Calendar, ArrowRight,
   AlertTriangle, Shield, Wrench, History, Box, ChevronRight,
+  Archive, RotateCcw, X,
 } from 'lucide-react'
 import { useInventory } from '../../context/InventoryContext'
 import { clientApi } from '../../api/clientApi'
@@ -348,7 +349,7 @@ const ClientCard = ({ client, onEdit, onDelete }) => {
                 <button onClick={() => onEdit(client)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Edit">
                   <Edit className="w-4 h-4" />
                 </button>
-                <button onClick={() => onDelete(client)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Delete">
+                <button onClick={() => onDelete(client)} className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors" title="Archive client">
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
@@ -472,7 +473,7 @@ const ClientCard = ({ client, onEdit, onDelete }) => {
 
 // ── Main Client page ───────────────────────────────────────────
 const Client = () => {
-  const { clients, clientsLoading, addClient, updateClient, removeClient } = useInventory()
+  const { clients, clientsLoading, addClient, updateClient, removeClient, restoreClient } = useInventory()
 
   const [showModal, setShowModal]         = useState(false)
   const [editingClient, setEditingClient] = useState(null)
@@ -480,6 +481,10 @@ const Client = () => {
   const [formData, setFormData]           = useState(defaultForm)
   const [saving, setSaving]               = useState(false)
   const [formError, setFormError]         = useState(null)
+  const [archiveBlock, setArchiveBlock]   = useState(null)  // { client, assignedItems, counts }
+  const [showArchived, setShowArchived]   = useState(false)
+  const [archivedClients, setArchivedClients] = useState([])
+  const [archivedLoading, setArchivedLoading] = useState(false)
 
   const filteredClients = useMemo(() => {
     const q = searchTerm.toLowerCase()
@@ -550,21 +555,46 @@ const Client = () => {
   }
 
   const handleDelete = async (client) => {
-    const standaloneCount = (client.devices || []).filter(d => !d.setId).length
-    const setCount = client.deviceSets?.length || 0
-    const total = standaloneCount + setCount
-    const parts = []
-    if (standaloneCount > 0) parts.push(`${standaloneCount} device(s)`)
-    if (setCount > 0) parts.push(`${setCount} set(s)`)
-    const msg = total > 0
-      ? `${client.name} has ${parts.join(' and ')} assigned. Deleting will unassign them. Continue?`
-      : `Delete client "${client.name}"?`
-    if (!confirm(msg)) return
+    // Confirm before archiving — but only show a simple confirm, no unassign warning
+    if (!confirm(`Archive client "${client.name}"? They will be hidden from active clients but all data is preserved.`)) return
     try {
       await removeClient(client.id)
     } catch (err) {
-      alert(err.message || 'Failed to delete client')
+      if (err.code === 'CLIENT_HAS_ACTIVE_ASSIGNMENTS') {
+        // Show the detailed block modal instead of a plain alert
+        setArchiveBlock({ client, assignedItems: err.assignedItems, counts: err.counts })
+      } else {
+        alert(err.message || 'Failed to archive client')
+      }
     }
+  }
+
+  const handleRestore = async (clientId) => {
+    try {
+      await restoreClient(clientId)
+      // Refresh archived list
+      setArchivedClients(prev => prev.filter(c => c.id !== clientId))
+    } catch (err) {
+      alert(err.message || 'Failed to restore client')
+    }
+  }
+
+  const loadArchivedClients = async () => {
+    setArchivedLoading(true)
+    try {
+      const data = await clientApi.getAll({ archived: true })
+      setArchivedClients(Array.isArray(data) ? data : [])
+    } catch (err) {
+      console.error('Failed to load archived clients:', err)
+    } finally {
+      setArchivedLoading(false)
+    }
+  }
+
+  const handleToggleArchived = () => {
+    const next = !showArchived
+    setShowArchived(next)
+    if (next && archivedClients.length === 0) loadArchivedClients()
   }
 
   return (
@@ -658,6 +688,143 @@ const Client = () => {
               onDelete={handleDelete}
             />
           ))}
+        </div>
+      )}
+
+      {/* ── Archived Clients Section ─────────────────────────────────────── */}
+      <div className="mt-8 border-t border-gray-200 pt-6">
+        <button
+          onClick={handleToggleArchived}
+          className="flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-700 transition-colors"
+        >
+          <Archive className="w-4 h-4" />
+          {showArchived ? 'Hide Archived Clients' : 'Show Archived Clients'}
+          {archivedClients.length > 0 && (
+            <span className="ml-1 px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full text-xs font-bold">
+              {archivedClients.length}
+            </span>
+          )}
+          <ChevronDown className={`w-4 h-4 transition-transform ${showArchived ? 'rotate-180' : ''}`} />
+        </button>
+
+        {showArchived && (
+          <div className="mt-4">
+            {archivedLoading ? (
+              <div className="flex items-center justify-center py-10">
+                <div className="w-6 h-6 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : archivedClients.length === 0 ? (
+              <div className="text-center py-10 text-gray-400">
+                <Archive className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">No archived clients</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {archivedClients.map(client => (
+                  <div key={client.id} className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 bg-gradient-to-br ${avatarColor(client.name)} rounded-lg flex items-center justify-center opacity-60`}>
+                        <span className="text-white font-bold text-xs">{getInitials(client.name)}</span>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-700 text-sm">{client.name}</p>
+                        <p className="text-xs text-gray-400">
+                          {client.company && `${client.company} · `}
+                          Archived {client.archivedAt ? new Date(client.archivedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleRestore(client.id)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Restore
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Archive Block Modal — shown when client has active assignments ── */}
+      {archiveBlock && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col">
+
+            {/* Header */}
+            <div className="flex items-start gap-4 p-6 border-b border-gray-100">
+              <div className="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-6 h-6 text-red-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-lg font-bold text-gray-900">Cannot Archive Client</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  <span className="font-semibold text-gray-700">{archiveBlock.client.name}</span> has active assignments that must be resolved first.
+                </p>
+              </div>
+              <button onClick={() => setArchiveBlock(null)} className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Summary counts */}
+            <div className="flex gap-3 px-6 pt-4">
+              {archiveBlock.counts.devices > 0 && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-100 rounded-xl">
+                  <Monitor className="w-4 h-4 text-blue-600" />
+                  <span className="text-sm font-semibold text-blue-700">{archiveBlock.counts.devices} Device{archiveBlock.counts.devices !== 1 ? 's' : ''}</span>
+                </div>
+              )}
+              {archiveBlock.counts.sets > 0 && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-purple-50 border border-purple-100 rounded-xl">
+                  <Layers className="w-4 h-4 text-purple-600" />
+                  <span className="text-sm font-semibold text-purple-700">{archiveBlock.counts.sets} Set{archiveBlock.counts.sets !== 1 ? 's' : ''}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Assigned items list */}
+            <div className="px-6 pb-2 pt-3">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                Currently Assigned ({archiveBlock.assignedItems.length})
+              </p>
+            </div>
+            <div className="overflow-y-auto px-6 pb-4 space-y-2 flex-1">
+              {archiveBlock.assignedItems.map((item, i) => (
+                <div key={i} className="flex items-center justify-between bg-gray-50 border border-gray-100 rounded-xl px-3 py-2.5">
+                  <div className="flex items-center gap-2.5">
+                    {item.type === 'set'
+                      ? <Layers className="w-4 h-4 text-purple-500 flex-shrink-0" />
+                      : <Monitor className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                    }
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">{item.code}</p>
+                      <p className="text-xs text-gray-400">{item.kind}</p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-medium px-2.5 py-1 bg-amber-100 text-amber-700 border border-amber-200 rounded-full flex-shrink-0">
+                    {item.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
+              <p className="text-xs text-gray-500 mb-3">
+                Complete the return process for all listed items before archiving this client.
+              </p>
+              <button
+                onClick={() => setArchiveBlock(null)}
+                className="w-full px-4 py-2.5 bg-gray-800 text-white rounded-xl hover:bg-gray-900 font-medium transition-colors text-sm"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
