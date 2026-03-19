@@ -4,12 +4,13 @@ import {
   LayoutDashboard, LogOut, Menu, X, Users, Smartphone,
   MapPin, Link2, UsersRound, Wrench, RotateCcw, Truck, Layers, ChevronRight,
   ClipboardList, Shield, Bell, Clock, CheckCircle2, XCircle, ChevronRight as Arrow,
+  KeyRound, UserCircle2, ChevronDown,
 } from 'lucide-react'
 import { normaliseRole, ROLES } from '../App'
 import { STEP_META } from '../api/lifecycleRequestApi'
 import { useSSENotifications } from '../hooks/useSSENotifications'
 import NotificationToast from './NotificationToast'
-// Note: useSSENotifications now uses polling internally — no SSE, works on all platforms
+import ChangePasswordModal from './ChangePasswordModal'
 import LoginBriefing from './LoginBriefing'
 import { API_URL } from '../config/api'
 
@@ -55,20 +56,13 @@ const NotificationBell = ({ userRole }) => {
     finally { setLoading(false) }
   }, [canManage, prevCount])
 
-  // Poll every 15s (same cadence as the toast hook so counts stay in sync)
+  // Poll every 30s
   useEffect(() => {
     if (!canManage) return
     fetchRequests()
-    const id = setInterval(fetchRequests, 15_000)
+    const id = setInterval(fetchRequests, 30000)
     return () => clearInterval(id)
   }, [canManage, fetchRequests])
-
-  // Instant refresh when a new inventory request toast fires
-  useEffect(() => {
-    const handler = () => fetchRequests()
-    window.addEventListener('new-inventory-request', handler)
-    return () => window.removeEventListener('new-inventory-request', handler)
-  }, [fetchRequests])
 
   // Close on outside click
   useEffect(() => {
@@ -232,34 +226,22 @@ const getRoleStyle = (role) =>
   ROLE_STYLES[normaliseRole(role)] ?? { label: role, bg: 'bg-gray-100', text: 'text-gray-700', dot: 'bg-gray-400' }
 
 const Layout = ({ userRole, onLogout }) => {
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen]           = useState(false)
+  const [showChangePassword, setShowChangePassword] = useState(false)
+  const [showProfileMenu, setShowProfileMenu]     = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
   const role = normaliseRole(userRole)
   const roleStyle = getRoleStyle(userRole)
+  const currentUser = (() => { try { return JSON.parse(localStorage.getItem('user')) } catch { return null } })()
 
   const isSuperAdmin = role === ROLES.SUPERADMIN
   const isManager    = role === ROLES.MANAGER
   const isGroundTeam = role === ROLES.GROUNDTEAM
   const canManage    = isSuperAdmin || isManager   // approve requests, see dashboard
 
-  // ── Real-time polling notifications (managers + admins only) ──────────────
-  // useSSENotifications now polls instead of using SSE, so it works on
-  // Vercel, Render, and any platform that kills long-lived connections.
+  // ── Real-time SSE notifications (managers + admins only) ───────────────────
   const { toasts, dismissToast } = useSSENotifications(canManage)
-
-  // When a new inventory-request toast fires, the NotificationBell's own
-  // 30s poll would eventually catch it — but we also want the badge to
-  // update instantly. We do this by listening to the toast array length:
-  // if it grows, there are new requests, so dispatch a DOM event that
-  // the bell can use to trigger an immediate refresh.
-  const prevToastLen = useRef(0)
-  useEffect(() => {
-    if (toasts.length > prevToastLen.current) {
-      window.dispatchEvent(new Event('new-inventory-request'))
-    }
-    prevToastLen.current = toasts.length
-  }, [toasts])
 
   // ── Subscription urgency badge on Return nav item ────────────────────────────
   // UPDATED SECTION - Uses new notification count endpoint
@@ -459,16 +441,40 @@ const Layout = ({ userRole, onLogout }) => {
         </nav>
 
         <div className="p-4 border-t border-gray-200">
-          <div className="mb-3">
-            <p className="text-xs text-gray-500">Logged in as</p>
-            <p className="font-semibold text-gray-800 text-sm">{userRole}</p>
+          <div className="relative">
+            <button
+              onClick={() => setShowProfileMenu(p => !p)}
+              className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors text-sm"
+            >
+              <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
+                <UserCircle2 size={18} className="text-primary-600" />
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <p className="font-semibold text-gray-800 text-xs truncate">{currentUser?.name || userRole}</p>
+                <p className="text-xs text-gray-400 truncate">{roleStyle.label}</p>
+              </div>
+              <ChevronDown size={14} className={`text-gray-400 transition-transform ${showProfileMenu ? 'rotate-180' : ''}`} />
+            </button>
+            {showProfileMenu && (
+              <div className="absolute bottom-full left-0 right-0 mb-1 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-50">
+                <button
+                  onClick={() => { setShowChangePassword(true); setShowProfileMenu(false) }}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  <KeyRound size={15} className="text-gray-400" />
+                  Change Password
+                </button>
+                <div className="border-t border-gray-100" />
+                <button
+                  onClick={onLogout}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                >
+                  <LogOut size={15} />
+                  Logout
+                </button>
+              </div>
+            )}
           </div>
-          <button
-            onClick={onLogout}
-            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-red-600 hover:bg-red-50 transition-colors text-sm"
-          >
-            <LogOut size={18} /><span>Logout</span>
-          </button>
         </div>
       </aside>
 
@@ -530,6 +536,11 @@ const Layout = ({ userRole, onLogout }) => {
 
       {/* ── Real-time toast notifications ──────────────────────────────────── */}
       <NotificationToast toasts={toasts} onDismiss={dismissToast} />
+
+      {/* Change Password Modal */}
+      {showChangePassword && (
+        <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
+      )}
 
       {/* ── Login briefing modal ─────────────────────────────────────────────── */}
       {showBriefing && (

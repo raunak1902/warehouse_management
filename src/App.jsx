@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react'
 import { CatalogueProvider } from './context/CatalogueContext'
 import { InventoryProvider } from './context/InventoryContext'
 import Login from './pages/Login'
+import ForgotPassword from './pages/ForgotPassword'
+import ForceChangePassword from './pages/ForceChangePassword'
 import Dashboard, { Client, Devices, Location, Assigning, Delivery, GroundTeam, Makesets, Installation, Return } from './pages/dashboard'
 import Movements from './pages/dashboard/Movements'
 import SetHistory from './pages/dashboard/SetHistory'
@@ -35,6 +37,12 @@ function App() {
     setUser(storedUser)
   }
 
+  const handlePasswordChanged = () => {
+    // Re-read user from localStorage (mustChangePassword cleared)
+    const storedUser = JSON.parse(localStorage.getItem('user'))
+    setUser(storedUser)
+  }
+
   const handleLogout = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
@@ -49,6 +57,10 @@ function App() {
 
   const ProtectedRoute = ({ children, allowedRoles }) => {
     if (!user) return <Navigate to="/login" replace />
+    // Force password change wall — user cannot access anything else
+    if (user.mustChangePassword) {
+      return <Navigate to="/change-password-required" replace />
+    }
     if (allowedRoles && !hasRole(user.role, ...allowedRoles)) {
       return <Navigate to={defaultRoute(user.role)} replace />
     }
@@ -62,6 +74,19 @@ function App() {
         <Route
           path="/login"
           element={user ? <Navigate to={defaultRoute(user.role)} replace /> : <Login onLogin={handleLogin} />}
+        />
+
+        {/* Forgot password — public, no auth needed */}
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+
+        {/* Force change password wall — shown when mustChangePassword=true */}
+        <Route
+          path="/change-password-required"
+          element={
+            user
+              ? <ForceChangePassword onSuccess={handlePasswordChanged} />
+              : <Navigate to="/login" replace />
+          }
         />
 
         {/* Protected shell */}

@@ -33,6 +33,7 @@ import deletionRequestsRouter   from "./routes/deletionRequests.js";
 import warehouseRoutes          from "./routes/warehouses.js";
 import customLocationRoutes     from "./routes/customLocations.js";
 
+import authRoutes from "./routes/auth.js"
 import { startSubscriptionCron } from "./cron/subscriptionReminders.js";
 import { seedBuiltinTypes }       from "./routes/catalogue.js";
 
@@ -115,10 +116,11 @@ app.post("/login", loginLimiter, async (req, res) => {
     res.json({
       token,
       user: {
-        id:    user.id,
-        name:  user.name,
-        email: user.email,
-        role:  user.role.name,
+        id:                 user.id,
+        name:               user.name,
+        email:              user.email,
+        role:               user.role.name,
+        mustChangePassword: user.mustChangePassword ?? false,
       },
     });
   } catch (error) {
@@ -136,6 +138,7 @@ app.use("/api/users",               usersRouter);
 app.use("/api/roles",               rolesRouter);
 app.use("/api/permissions",         permissionsRouter);
 
+app.use("/api/auth",                  authRoutes);
 app.use("/api/lifecycle-requests",   lifecycleRequestsRouter);
 app.use("/api/notifications",        notificationsRouter);
 app.use("/api/returns",              returnsRouter);

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Edit, Trash2, Search, Mail, User, Shield, Eye, EyeOff, RefreshCw } from 'lucide-react'
+import { Plus, Edit, Trash2, Search, Mail, User, Shield, Eye, EyeOff, RefreshCw, KeyRound, AlertTriangle } from 'lucide-react'
 import { useSuperAdmin } from '../../context/SuperAdminContext'
 
 const ROLE_COLORS = {
@@ -19,11 +19,12 @@ const UserManagement = () => {
   const [editingUser,  setEditingUser]  = useState(null)
   const [searchTerm,   setSearchTerm]   = useState('')
   const [filterRole,   setFilterRole]   = useState('All')
-  const [showPassword, setShowPassword] = useState(false)
   const [submitting,   setSubmitting]   = useState(false)
   const [formError,    setFormError]    = useState(null)
+  const [resetingId,   setResetingId]   = useState(null)
+  const [resetMsg,     setResetMsg]     = useState(null)
   const [formData,     setFormData]     = useState({
-    name: '', email: '', password: '',
+    name: '', email: '',
     role: roles[0]?.name || 'GroundTeam', status: 'Active',
   })
 
@@ -40,12 +41,11 @@ const UserManagement = () => {
     setFormError(null)
     if (user) {
       setEditingUser(user)
-      setFormData({ name: user.name, email: user.email, password: '', role: user.role, status: user.status })
+      setFormData({ name: user.name, email: user.email, role: user.role, status: user.status })
     } else {
       setEditingUser(null)
-      setFormData({ name: '', email: '', password: '', role: roles[0]?.name || 'GroundTeam', status: 'Active' })
+      setFormData({ name: '', email: '', role: roles[0]?.name || 'GroundTeam', status: 'Active' })
     }
-    setShowPassword(false)
     setShowModal(true)
   }
 
@@ -57,7 +57,6 @@ const UserManagement = () => {
     setSubmitting(true)
     try {
       const body = { ...formData }
-      if (editingUser && !body.password) delete body.password
       if (editingUser) {
         await updateUser(editingUser.id, body)
       } else {
@@ -74,6 +73,27 @@ const UserManagement = () => {
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this user? This cannot be undone.')) return
     try { await deleteUser(id) } catch (err) { alert(err.message) }
+  }
+
+  const handleResetPassword = async (user) => {
+    if (!window.confirm(`Reset password for ${user.name}? A new temporary password will be emailed to ${user.email}.`)) return
+    setResetingId(user.id)
+    setResetMsg(null)
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/users/${user.id}/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.message || 'Failed to reset password')
+      setResetMsg({ id: user.id, msg: data.message, ok: true })
+      setTimeout(() => setResetMsg(null), 5000)
+    } catch (err) {
+      setResetMsg({ id: user.id, msg: err.message, ok: false })
+      setTimeout(() => setResetMsg(null), 5000)
+    } finally {
+      setResetingId(null)
+    }
   }
 
   // Unique roles from actual roles list for filter dropdown
@@ -193,7 +213,17 @@ const UserManagement = () => {
                   </td>
                   <td className="px-5 py-4 text-sm text-gray-500">{user.createdAt?.split('T')[0] ?? '—'}</td>
                   <td className="px-5 py-4">
+                    {resetMsg?.id === user.id && (
+                      <p className={`text-xs mb-1 ${resetMsg.ok ? 'text-emerald-600' : 'text-red-600'}`}>{resetMsg.msg}</p>
+                    )}
                     <div className="flex items-center justify-end gap-1">
+                      {user.mustChangePassword && (
+                        <span className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full font-medium mr-1">Temp pw</span>
+                      )}
+                      <button onClick={() => handleResetPassword(user)} disabled={resetingId === user.id} title="Reset password — sends temp password to user's email"
+                        className="p-2 text-amber-500 hover:bg-amber-50 rounded-lg transition-colors disabled:opacity-40">
+                        {resetingId === user.id ? <div className="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" /> : <KeyRound size={16} />}
+                      </button>
                       <button onClick={() => handleOpenModal(user)} className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"><Edit size={16} /></button>
                       <button onClick={() => handleDelete(user.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16} /></button>
                     </div>
@@ -228,21 +258,12 @@ const UserManagement = () => {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
                   placeholder="user@edsignage.com" required />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  {editingUser ? 'New Password (leave blank to keep)' : 'Password'}
-                </label>
-                <div className="relative">
-                  <input type={showPassword ? 'text' : 'password'} value={formData.password}
-                    onChange={e => setFormData({ ...formData, password: e.target.value })}
-                    className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
-                    placeholder="Min 8 characters" required={!editingUser} minLength={editingUser ? 0 : 8} />
-                  <button type="button" onClick={() => setShowPassword(s => !s)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
+              {!editingUser && (
+                <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5">
+                  <AlertTriangle size={15} className="text-blue-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-blue-700">A temporary password will be generated and emailed to the user. They will be required to change it on first login.</p>
                 </div>
-              </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Role</label>
                 <select value={formData.role} onChange={e => setFormData({ ...formData, role: e.target.value })}

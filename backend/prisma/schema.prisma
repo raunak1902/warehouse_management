@@ -26,14 +26,22 @@ model Role {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model User {
-  id               Int                @id @default(autoincrement())
-  name             String
-  email            String             @unique
-  password         String
-  status           String             @default("ACTIVE")
-  createdAt        DateTime           @default(now())
-  roleId           Int
-  role             Role               @relation(fields: [roleId], references: [id])
+  id                  Int                @id @default(autoincrement())
+  name                String
+  email               String             @unique
+  password            String
+  status              String             @default("ACTIVE")
+  createdAt           DateTime           @default(now())
+  roleId              Int
+  role                Role               @relation(fields: [roleId], references: [id])
+
+  // Password management
+  mustChangePassword  Boolean            @default(false)
+  passwordChangedAt   DateTime?
+  otpHash             String?
+  otpExpiresAt        DateTime?
+  otpResetToken       String?
+  otpResetTokenExp    DateTime?
 
   // Existing relations
   ExpenseRequest   ExpenseRequest[]
@@ -94,11 +102,6 @@ model Client {
   notes             String?
   createdAt         DateTime           @default(now())
 
-  // Soft-delete fields — clients are never hard-deleted
-  isArchived        Boolean            @default(false)
-  archivedAt        DateTime?
-  archivedById      Int?
-
   // Existing relations
   devices           Device[]
   deviceSets        DeviceSet[]
@@ -107,8 +110,6 @@ model Client {
   // NEW: all device location history entries associated with this client
   locationHistory   DeviceLocationHistory[]
   editRequests      InventoryRequest[]       @relation("ClientEditRequests")
-
-  @@index([isArchived])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
