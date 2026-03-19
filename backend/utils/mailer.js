@@ -1,34 +1,32 @@
 /**
  * backend/utils/mailer.js
  * ────────────────────────
- * Nodemailer + Gmail using port 465 (SSL) which works on Render.
+ * Resend HTTP API for sending emails — works on Render free tier.
+ * Nodemailer SMTP is blocked by Render's firewall.
  *
- * Required env vars:
- *   GMAIL_USER         = youremail@gmail.com
- *   GMAIL_APP_PASSWORD = xxxx xxxx xxxx xxxx
+ * Required env var on Render:
+ *   RESEND_API_KEY = re_xxxxxxxxxxxx  (from resend.com)
+ *
+ * From address: uses Resend's shared domain for testing.
+ * For production: verify your own domain on resend.com and update FROM_ADDRESS.
  */
 
-import nodemailer from 'nodemailer'
+import { Resend } from 'resend'
 
-const createTransport = () =>
-  nodemailer.createTransport({
-    host:   'smtp.gmail.com',
-    port:   465,
-    secure: true,
-    auth: {
-      user: process.env.GMAIL_USER,
-      pass: process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, ''),
-    },
-    tls: { rejectUnauthorized: false },
-    connectionTimeout: 10000,
-    greetingTimeout:   10000,
-    socketTimeout:     15000,
-  })
+const FROM_ADDRESS = process.env.RESEND_FROM || 'EDSignage <onboarding@resend.dev>'
 
+const getResend = () => {
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error('RESEND_API_KEY environment variable is not set')
+  }
+  return new Resend(process.env.RESEND_API_KEY)
+}
+
+// ── Send welcome email with temporary password ────────────────────────────────
 export async function sendWelcomeEmail({ to, name, tempPassword }) {
-  const transporter = createTransport()
-  await transporter.sendMail({
-    from: `"EDSignage" <${process.env.GMAIL_USER}>`,
+  const resend = getResend()
+  await resend.emails.send({
+    from:    FROM_ADDRESS,
     to,
     subject: 'Your EDSignage Account Has Been Created',
     html: `
@@ -46,16 +44,17 @@ export async function sendWelcomeEmail({ to, name, tempPassword }) {
   })
 }
 
+// ── Send password reset email with temporary password ─────────────────────────
 export async function sendPasswordResetEmail({ to, name, tempPassword }) {
-  const transporter = createTransport()
-  await transporter.sendMail({
-    from: `"EDSignage" <${process.env.GMAIL_USER}>`,
+  const resend = getResend()
+  await resend.emails.send({
+    from:    FROM_ADDRESS,
     to,
     subject: 'Your EDSignage Password Has Been Reset',
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#f9fafb;border-radius:12px;">
         <h2 style="color:#dc2626;margin-bottom:8px;">Password Reset</h2>
-        <p style="color:#374151;margin-bottom:24px;">Hi ${name}, your password has been reset by an administrator.</p>
+        <p style="color:#374151;margin-bottom:24px;">Hi ${name}, your password has been reset by an administrator. Use the temporary password below to log in.</p>
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px;text-align:center;margin-bottom:24px;">
           <p style="margin:0 0 8px;font-size:13px;color:#6b7280;text-transform:uppercase;letter-spacing:1px;">Temporary Password</p>
           <p style="margin:0;font-size:28px;font-weight:bold;letter-spacing:4px;color:#111827;font-family:monospace;">${tempPassword}</p>
@@ -67,10 +66,11 @@ export async function sendPasswordResetEmail({ to, name, tempPassword }) {
   })
 }
 
+// ── Send OTP for forgot-password flow ─────────────────────────────────────────
 export async function sendOtpEmail({ to, name, otp }) {
-  const transporter = createTransport()
-  await transporter.sendMail({
-    from: `"EDSignage" <${process.env.GMAIL_USER}>`,
+  const resend = getResend()
+  await resend.emails.send({
+    from:    FROM_ADDRESS,
     to,
     subject: 'Your EDSignage Password Reset OTP',
     html: `
