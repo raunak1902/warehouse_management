@@ -30,8 +30,15 @@ router.use(authMiddleware)
 const norm = (r) => (r ?? '').toLowerCase().replace(/[\s_-]/g, '')
 
 // ── Server base URL (used to build file URLs) ─────────────────────────────────
-const serverBaseUrl = () =>
-  process.env.SERVER_BASE_URL || `http://localhost:${process.env.PORT || 5000}`
+// SERVER_BASE_URL must be set as an environment variable on Render.
+// Without it, proof file URLs are saved as localhost:5000 in the DB —
+// unreachable from any browser in production.
+const serverBaseUrl = () => {
+  if (!process.env.SERVER_BASE_URL) {
+    console.warn('[WARNING] SERVER_BASE_URL is not set. Proof URLs will be saved as localhost and will not load in production!')
+  }
+  return process.env.SERVER_BASE_URL || `http://localhost:${process.env.PORT || 5000}`
+}
 
 // ── Step gating ───────────────────────────────────────────────────────────────
 const VALID_NEXT_STEPS = {

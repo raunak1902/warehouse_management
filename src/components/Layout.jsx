@@ -9,6 +9,7 @@ import { normaliseRole, ROLES } from '../App'
 import { STEP_META } from '../api/lifecycleRequestApi'
 import { useSSENotifications } from '../hooks/useSSENotifications'
 import NotificationToast from './NotificationToast'
+// Note: useSSENotifications now uses polling internally — no SSE, works on all platforms
 import LoginBriefing from './LoginBriefing'
 import { API_URL } from '../config/api'
 
@@ -54,13 +55,20 @@ const NotificationBell = ({ userRole }) => {
     finally { setLoading(false) }
   }, [canManage, prevCount])
 
-  // Poll every 30s
+  // Poll every 15s (same cadence as the toast hook so counts stay in sync)
   useEffect(() => {
     if (!canManage) return
     fetchRequests()
-    const id = setInterval(fetchRequests, 30000)
+    const id = setInterval(fetchRequests, 15_000)
     return () => clearInterval(id)
   }, [canManage, fetchRequests])
+
+  // Instant refresh when a new inventory request toast fires
+  useEffect(() => {
+    const handler = () => fetchRequests()
+    window.addEventListener('new-inventory-request', handler)
+    return () => window.removeEventListener('new-inventory-request', handler)
+  }, [fetchRequests])
 
   // Close on outside click
   useEffect(() => {
@@ -235,8 +243,23 @@ const Layout = ({ userRole, onLogout }) => {
   const isGroundTeam = role === ROLES.GROUNDTEAM
   const canManage    = isSuperAdmin || isManager   // approve requests, see dashboard
 
-  // ── Real-time SSE notifications (managers + admins only) ───────────────────
+  // ── Real-time polling notifications (managers + admins only) ──────────────
+  // useSSENotifications now polls instead of using SSE, so it works on
+  // Vercel, Render, and any platform that kills long-lived connections.
   const { toasts, dismissToast } = useSSENotifications(canManage)
+
+  // When a new inventory-request toast fires, the NotificationBell's own
+  // 30s poll would eventually catch it — but we also want the badge to
+  // update instantly. We do this by listening to the toast array length:
+  // if it grows, there are new requests, so dispatch a DOM event that
+  // the bell can use to trigger an immediate refresh.
+  const prevToastLen = useRef(0)
+  useEffect(() => {
+    if (toasts.length > prevToastLen.current) {
+      window.dispatchEvent(new Event('new-inventory-request'))
+    }
+    prevToastLen.current = toasts.length
+  }, [toasts])
 
   // ── Subscription urgency badge on Return nav item ────────────────────────────
   // UPDATED SECTION - Uses new notification count endpoint

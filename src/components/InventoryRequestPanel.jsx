@@ -19,6 +19,7 @@ import {
 import { useCatalogue } from '../context/CatalogueContext'
 import inventoryRequestApi from '../api/inventoryRequestApi'
 import { ROLES, normaliseRole } from '../App'
+import WarehouseLocationSelector from './WarehouseLocationSelector'
 
 // Format datetime with time for display on cards
 const fmtDateTime = (dt) =>
@@ -395,6 +396,9 @@ export const AddDeviceRequestForm = ({ onSuccess, onCancel, prefillData = null }
     inDate: prefillData?.inDate || '',
     healthStatus: 'ok',
     note: prefillData?.note || '',
+    warehouseId: prefillData?.warehouseId || null,
+    warehouseZone: prefillData?.warehouseZone || '',
+    warehouseSpecificLocation: prefillData?.warehouseSpecificLocation || '',
   })
   const [isBulk, setIsBulk] = useState((prefillData?.quantity || 1) > 1)
   const [submitting, setSubmitting] = useState(false)
@@ -408,6 +412,7 @@ export const AddDeviceRequestForm = ({ onSuccess, onCancel, prefillData = null }
 
   const handleSubmit = async () => {
     if (!form.deviceTypeId) { setErr('Product type is required'); return }
+    if (!form.warehouseId) { setErr('Warehouse location is required'); return }
     if (!form.inDate) { setErr('IN Date is required'); return }
     setSubmitting(true)
     setErr('')
@@ -516,6 +521,22 @@ export const AddDeviceRequestForm = ({ onSuccess, onCancel, prefillData = null }
         </select>
       </div>
 
+      {/* Warehouse Location */}
+      <div>
+        <label className="text-xs font-semibold text-gray-600 mb-1 block">
+          Warehouse Location * <span className="text-red-500">required</span>
+        </label>
+        <WarehouseLocationSelector
+          warehouseId={form.warehouseId}
+          zone={form.warehouseZone}
+          specificLocation={form.warehouseSpecificLocation}
+          onWarehouseChange={id => setForm(f => ({ ...f, warehouseId: id }))}
+          onZoneChange={z => setForm(f => ({ ...f, warehouseZone: z }))}
+          onSpecificLocationChange={sl => setForm(f => ({ ...f, warehouseSpecificLocation: sl }))}
+          required={true}
+        />
+      </div>
+
       {/* IN Date */}
       <div>
         <label className="text-xs font-semibold text-gray-600 mb-1 block">IN Date * (date entered warehouse)</label>
@@ -566,7 +587,7 @@ export const AddDeviceRequestForm = ({ onSuccess, onCancel, prefillData = null }
         </button>
         <button
           onClick={handleSubmit}
-          disabled={submitting || !form.deviceTypeId || !form.inDate}
+          disabled={submitting || !form.deviceTypeId || !form.warehouseId || !form.inDate}
           className="flex-1 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 disabled:opacity-50 flex items-center justify-center gap-2"
         >
           {submitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}

@@ -1,34 +1,48 @@
 /**
  * src/hooks/useSSENotifications.js
  * ──────────────────────────────────
- * Opens a persistent SSE connection to /api/notifications/stream.
- * Receives instant push events when a ground-team request is created.
+ * Polls /api/inventory-requests/pending-count every 15s to detect new
+ * inventory requests. When the count rises, shows a toast notification.
  *
- * Returns a queue of toast items that the NotificationToast component renders.
- * Max 3 toasts visible at once; older ones are auto-dismissed (8s countdown).
+ * Previously used SSE (Server-Sent Events) which broke on Render/Vercel
+ * because those platforms kill long-lived HTTP connections and the in-memory
+ * sseClients Map is wiped on every redeploy. Polling is simpler and works
+ * identically on every hosting platform.
+ *
+ * Returns the same { toasts, dismissToast } shape so NotificationToast
+ * and Layout.jsx need zero changes.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { API_URL } from '../config/api'
 
-const STREAM_URL   = `${API_URL}/api/notifications/stream`
-const AUTO_DISMISS = 5 * 60 * 1000 // 5 minutes — stays until addressed
-const MAX_VISIBLE  = 3      // max toasts stacked on screen
-const RETRY_DELAY  = 5000   // ms before reconnecting after disconnect
+const POLL_INTERVAL = 15_000        // check every 15 seconds
+const AUTO_DISMISS  = 5 * 60 * 1000 // toast stays for 5 minutes
+const MAX_VISIBLE   = 3
+
+const authHeaders = () => ({
+  'Content-Type': 'application/json',
+  Authorization: `Bearer ${localStorage.getItem('token')}`,
+})
 
 export function useSSENotifications(enabled) {
-  const [toasts, setToasts]   = useState([])
-  const esRef                 = useRef(null)
-  const retryTimer            = useRef(null)
-  const nextId                = useRef(0)
+  const [toasts, setToasts]  = useState([])
+  const prevCountRef         = useRef(null)  // null = not yet initialised
+  const nextId               = useRef(0)
+  const timerRef             = useRef(null)
 
-  const addToast = useCallback((payload) => {
+  const addToast = useCallback((delta) => {
     const id = ++nextId.current
-    setToasts(prev => {
-      const updated = [{ ...payload, _toastId: id }, ...prev].slice(0, MAX_VISIBLE)
-      return updated
-    })
-    // Auto-dismiss after AUTO_DISMISS ms
+    const payload = {
+      _toastId:        id,
+      type:            'inventory_request',
+      label:           delta === 1
+        ? '1 new inventory request'
+        : `${delta} new inventory requests`,
+      requestedByName: '',
+      createdAt:       new Date().toISOString(),
+    }
+    setToasts(prev => [payload, ...prev].slice(0, MAX_VISIBLE))
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t._toastId !== id))
     }, AUTO_DISMISS)
@@ -38,50 +52,38 @@ export function useSSENotifications(enabled) {
     setToasts(prev => prev.filter(t => t._toastId !== toastId))
   }, [])
 
-  // Connect / reconnect SSE
-  const connect = useCallback(() => {
+  const poll = useCallback(async () => {
     if (!enabled) return
-    if (esRef.current) {
-      esRef.current.close()
-      esRef.current = null
-    }
-
     const token = localStorage.getItem('token')
     if (!token) return
+    try {
+      const res = await fetch(
+        `${API_URL}/api/inventory-requests/pending-count`,
+        { headers: authHeaders() }
+      )
+      if (!res.ok) return
+      const { count } = await res.json()
 
-    // EventSource doesn't support custom headers — pass token as query param
-    // The backend auth middleware must accept ?token= as a fallback.
-    const es = new EventSource(`${STREAM_URL}?token=${encodeURIComponent(token)}`)
-    esRef.current = es
+      // First poll — just record baseline, no toast
+      if (prevCountRef.current === null) {
+        prevCountRef.current = count
+        return
+      }
 
-    es.addEventListener('new_request', (e) => {
-      try {
-        const payload = JSON.parse(e.data)
-        addToast(payload)
-      } catch (_) {}
-    })
-
-    es.addEventListener('connected', () => {
-      // Connection confirmed — nothing to do
-    })
-
-    es.onerror = () => {
-      es.close()
-      esRef.current = null
-      // Retry after delay
-      retryTimer.current = setTimeout(connect, RETRY_DELAY)
+      const delta = count - prevCountRef.current
+      if (delta > 0) addToast(delta)
+      prevCountRef.current = count
+    } catch (_) {
+      // Network hiccup — ignore, will retry next tick
     }
   }, [enabled, addToast])
 
   useEffect(() => {
     if (!enabled) return
-    connect()
-    return () => {
-      esRef.current?.close()
-      esRef.current = null
-      clearTimeout(retryTimer.current)
-    }
-  }, [enabled, connect])
+    poll()  // immediate first check on mount
+    timerRef.current = setInterval(poll, POLL_INTERVAL)
+    return () => clearInterval(timerRef.current)
+  }, [enabled, poll])
 
   return { toasts, dismissToast }
 }

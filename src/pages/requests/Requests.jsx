@@ -18,7 +18,6 @@ import { ProofUploadPanel, useProofFiles } from '../../components/ProofUpload'
 import InventoryRequestPanel from '../../components/InventoryRequestPanel'
 import { inventoryRequestApi } from '../../api/inventoryRequestApi'
 import WarehouseLocationSelector from '../../components/WarehouseLocationSelector'
-import { API_URL } from '../../config/api'
 
 const authHeaders = () => ({
   'Content-Type': 'application/json',
@@ -665,6 +664,14 @@ const Requests = ({ userRole }) => {
   }, [])
   const deviceSetMapRef = useRef({})
 
+  // Always fetch inv requests so pending tab count is accurate.
+  // Also poll every 15s so the badge updates without needing SSE.
+  useEffect(() => {
+    fetchInvRequests()
+    const id = setInterval(fetchInvRequests, 15_000)
+    return () => clearInterval(id)
+  }, [fetchInvRequests])
+
   useEffect(() => {
     if (activeTab === 'inventory') fetchInvRequests()
     if (activeTab === 'details') fetchDetailRequests()
@@ -771,7 +778,7 @@ const Requests = ({ userRole }) => {
 
   useEffect(() => {
     if (!canApprove) return
-    fetch(`${API_URL}/api/users`, { headers: authHeaders() })
+    fetch('/api/users', { headers: authHeaders() })
       .then(r => r.json())
       .then(data => {
         const users = Array.isArray(data) ? data : []
@@ -964,7 +971,7 @@ const Requests = ({ userRole }) => {
       key: 'all',
       label: 'Pending',
       icon: <Hourglass size={13} />,
-      pending: counts.deployPending + counts.returnPending + counts.healthPending,
+      pending: counts.deployPending + counts.returnPending + counts.healthPending + invRequests.filter(r => r.status === 'pending').length,
       accentActive: 'bg-amber-500 text-white border-amber-500',
       accentBadge: 'bg-white/25 text-white',
     },
@@ -1252,7 +1259,23 @@ const Requests = ({ userRole }) => {
             {/* PENDING tab — only items awaiting approval */}
             {activeTab === 'all' && (
               <>
-                {allPendingGroups.length === 0 ? (
+                {/* Pending inventory requests (add device / bulk add / make set) */}
+                {invRequests.filter(r => r.status === 'pending').length > 0 && (
+                  <div className="bg-white rounded-xl border border-violet-200 shadow-sm overflow-hidden mb-4">
+                    <div className="px-5 py-3 bg-violet-50 border-b border-violet-100 flex items-center gap-2">
+                      <span className="text-xs font-semibold text-violet-700 uppercase tracking-wider">
+                        📦 Pending Inventory Requests ({invRequests.filter(r => r.status === 'pending').length})
+                      </span>
+                    </div>
+                    <InventoryRequestPanel
+                      requests={invRequests.filter(r => r.status === 'pending')}
+                      userRole="MANAGER"
+                      onRefresh={fetchInvRequests}
+                      compact
+                    />
+                  </div>
+                )}
+                {allPendingGroups.length === 0 && invRequests.filter(r => r.status === 'pending').length === 0 ? (
                   <div className="bg-white rounded-xl border border-gray-200 py-16 px-6 text-center shadow-sm">
                     <div className="w-14 h-14 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center mx-auto mb-3">
                       <CheckCircle2 size={24} className="text-emerald-400" />
@@ -1260,7 +1283,7 @@ const Requests = ({ userRole }) => {
                     <p className="text-sm font-bold text-text-secondary">All clear!</p>
                     <p className="text-xs text-text-muted mt-1">No requests are waiting for approval right now.</p>
                   </div>
-                ) : (
+                ) : allPendingGroups.length > 0 ? (
                   renderSection({
                     icon: <Hourglass size={15} className="text-amber-600" />,
                     title: 'Awaiting Approval',
@@ -1271,7 +1294,7 @@ const Requests = ({ userRole }) => {
                     emptyMsg: '',
                     groups: allPendingGroups,
                   })
-                )}
+                ) : null}
               </>
             )}
 
