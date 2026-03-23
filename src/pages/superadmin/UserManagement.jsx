@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Edit, Trash2, Search, Mail, User, Shield, Eye, EyeOff, RefreshCw, RotateCcw, Lock, KeyRound } from 'lucide-react'
+import { Plus, Edit, Trash2, Search, Mail, User, Shield, RefreshCw, RotateCcw, Lock, KeyRound } from 'lucide-react'
 import { useSuperAdmin } from '../../context/SuperAdminContext'
 import TempPasswordModal from '../../components/TempPasswordModal'
 
@@ -22,13 +22,12 @@ const UserManagement = () => {
   const [editingUser,           setEditingUser]           = useState(null)
   const [searchTerm,            setSearchTerm]            = useState('')
   const [filterRole,            setFilterRole]            = useState('All')
-  const [showPassword,          setShowPassword]          = useState(false)
   const [submitting,            setSubmitting]            = useState(false)
   const [formError,             setFormError]             = useState(null)
   const [showTempPasswordModal, setShowTempPasswordModal] = useState(false)
   const [tempPasswordData,      setTempPasswordData]      = useState(null)
   const [formData,              setFormData]              = useState({
-    name: '', email: '', password: '',
+    name: '', email: '',
     role: roles[0]?.name || 'GroundTeam', status: 'Active',
   })
 
@@ -45,12 +44,11 @@ const UserManagement = () => {
     setFormError(null)
     if (user) {
       setEditingUser(user)
-      setFormData({ name: user.name, email: user.email, password: '', role: user.role, status: user.status })
+      setFormData({ name: user.name, email: user.email, role: user.role, status: user.status })
     } else {
       setEditingUser(null)
-      setFormData({ name: '', email: '', password: '', role: roles[0]?.name || 'GroundTeam', status: 'Active' })
+      setFormData({ name: '', email: '', role: roles[0]?.name || 'GroundTeam', status: 'Active' })
     }
-    setShowPassword(false)
     setShowModal(true)
   }
 
@@ -61,14 +59,11 @@ const UserManagement = () => {
     setFormError(null)
     setSubmitting(true)
     try {
-      const body = { ...formData }
-      if (editingUser && !body.password) delete body.password
       if (editingUser) {
-        await updateUser(editingUser.id, body)
+        await updateUser(editingUser.id, formData)
         handleClose()
       } else {
-        // createUser returns the response with tempPassword
-        const result = await createUser(body)
+        const result = await createUser(formData)
         if (result?.tempPassword) {
           setTempPasswordData(result)
           setShowTempPasswordModal(true)
@@ -283,9 +278,11 @@ const UserManagement = () => {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="p-6 border-b border-gray-100">
               <h3 className="text-xl font-bold text-gray-900">{editingUser ? 'Edit User' : 'Create New User'}</h3>
-              {!editingUser && (
-                <p className="text-xs text-gray-500 mt-1">A temporary password will be generated and shown once.</p>
-              )}
+              <p className="text-xs text-gray-500 mt-1">
+                {editingUser
+                  ? 'Update user details. Use the reset button on the table to change their password.'
+                  : 'A temporary password will be generated and shown once.'}
+              </p>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               {formError && (
@@ -305,22 +302,6 @@ const UserManagement = () => {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
                   placeholder="user@edsignage.com" required />
               </div>
-              {/* Password field only shown when editing — create auto-generates it */}
-              {editingUser && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">New Password <span className="text-gray-400 font-normal">(leave blank to keep)</span></label>
-                  <div className="relative">
-                    <input type={showPassword ? 'text' : 'password'} value={formData.password}
-                      onChange={e => setFormData({ ...formData, password: e.target.value })}
-                      className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
-                      placeholder="Min 8 characters" minLength={0} />
-                    <button type="button" onClick={() => setShowPassword(s => !s)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                </div>
-              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Role</label>
                 <select value={formData.role} onChange={e => setFormData({ ...formData, role: e.target.value })}
