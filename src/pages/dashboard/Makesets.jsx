@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { useInventory } from '../../context/InventoryContext'
 import { useCatalogue } from '../../context/CatalogueContext'
-import { hasRole, ROLES } from '../../App'
+import { hasRole, ROLES } from '../../config/roles'
 import { inventoryRequestApi } from '../../api/inventoryRequestApi'
 import { setApi } from '../../api/setApi'
 import { resolveTypeId, getTypeLabel, getCodePrefixForType, deviceMatchesSlot, getAllTypes, loadCustomTypes, getColorClasses } from '../../config/deviceTypeRegistry'

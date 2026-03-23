@@ -10,7 +10,7 @@ import {
   MoreHorizontal, Clipboard, ClipboardCheck,
   Pencil, MapPin,
 } from 'lucide-react'
-import { normaliseRole, ROLES } from '../../App'
+import { normaliseRole, ROLES } from '../../config/roles'
 import { useInventory } from '../../context/InventoryContext'
 import { lifecycleRequestApi, STEP_META, VALID_NEXT_STEPS, PROOF_CONFIG, HEALTH_REQUIRES_PROOF, MAX_PROOF_FILES } from '../../api/lifecycleRequestApi'
 import LifecycleTimeline, { TimelineItem, ProofFilesPanel, ProofAttachmentButton } from '../../components/LifecycleTimeline'

@@ -21,6 +21,7 @@ import clientsRouter            from "./routes/clients.js";
 import usersRouter              from "./routes/users.js";
 import rolesRouter              from "./routes/roles.js";
 import permissionsRouter        from "./routes/Permissions.js";
+import authRouter               from "./routes/auth.js";
 
 import lifecycleRequestsRouter  from "./routes/lifecycleRequests.js";
 import notificationsRouter      from "./routes/notifications.js";
@@ -33,7 +34,6 @@ import deletionRequestsRouter   from "./routes/deletionRequests.js";
 import warehouseRoutes          from "./routes/warehouses.js";
 import customLocationRoutes     from "./routes/customLocations.js";
 
-import authRoutes from "./routes/auth.js"
 import { startSubscriptionCron } from "./cron/subscriptionReminders.js";
 import { seedBuiltinTypes }       from "./routes/catalogue.js";
 
@@ -91,28 +91,79 @@ app.get("/health", async (req, res) => {
 // ── Login (with Rate Limiting) ────────────────────────────────────────────────
 app.post("/login", loginLimiter, async (req, res) => {
   const { email, password } = req.body;
-
+ 
   try {
     const user = await prisma.user.findUnique({
       where: { email },
       include: { role: true },
     });
-
+ 
     if (!user) return res.status(400).json({ message: "User not found" });
-
+ 
+    // Check if account is inactive
     if (user.status?.toLowerCase() === "inactive") {
       return res.status(403).json({ message: "Account is inactive. Contact your administrator." });
     }
-
+ 
+    // Check if account is locked
+    if (user.accountLockedUntil && new Date() < user.accountLockedUntil) {
+      const minutesLeft = Math.ceil((user.accountLockedUntil - new Date()) / 60000);
+      return res.status(403).json({ 
+        message: `Account locked due to too many failed login attempts. Try again in ${minutesLeft} minute(s).`,
+        lockedUntil: user.accountLockedUntil
+      });
+    }
+ 
+    // Verify password
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "Invalid password" });
-
+    
+    if (!isMatch) {
+      // Increment failed login attempts
+      const newFailedAttempts = user.failedLoginAttempts + 1;
+      const updateData = {
+        failedLoginAttempts: newFailedAttempts,
+      };
+ 
+      // Lock account after 10 failed attempts
+      if (newFailedAttempts >= 10) {
+        updateData.accountLockedUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+      }
+ 
+      await prisma.user.update({
+        where: { id: user.id },
+        data: updateData,
+      });
+ 
+      if (newFailedAttempts >= 10) {
+        return res.status(403).json({ 
+          message: "Account locked due to too many failed login attempts. Try again in 15 minutes." 
+        });
+      }
+ 
+      const attemptsLeft = 10 - newFailedAttempts;
+      return res.status(400).json({ 
+        message: `Invalid password. ${attemptsLeft} attempt(s) remaining before account lockout.` 
+      });
+    }
+ 
+    // Password is correct - reset failed login attempts
+    if (user.failedLoginAttempts > 0 || user.accountLockedUntil) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          failedLoginAttempts: 0,
+          accountLockedUntil: null,
+        },
+      });
+    }
+ 
+    // Generate JWT token
     const token = jwt.sign(
       { userId: user.id, role: user.role.name, name: user.name },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
-
+ 
     res.json({
       token,
       user: {
@@ -137,8 +188,8 @@ app.use("/api/clients",             clientsRouter);
 app.use("/api/users",               usersRouter);
 app.use("/api/roles",               rolesRouter);
 app.use("/api/permissions",         permissionsRouter);
+app.use("/api/auth",                authRouter);
 
-app.use("/api/auth",                  authRoutes);
 app.use("/api/lifecycle-requests",   lifecycleRequestsRouter);
 app.use("/api/notifications",        notificationsRouter);
 app.use("/api/returns",              returnsRouter);

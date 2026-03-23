@@ -10,8 +10,8 @@ export default defineConfig({
     open: true,
 
     hmr: {
-      protocol: 'wss',
-      host: true,   // ✅ fixed
+      protocol: 'ws',
+      host: 'localhost',
       port: 5174,
       overlay: false,
     },
@@ -26,11 +26,6 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         ws: false,
-      },
-      '/login': {
-        target: 'http://localhost:5000',
-        changeOrigin: true,
-        secure: false,
       },
       '/uploads': {
         target: 'http://localhost:5000',

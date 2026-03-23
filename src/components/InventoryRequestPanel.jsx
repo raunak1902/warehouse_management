@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { useCatalogue } from '../context/CatalogueContext'
 import inventoryRequestApi from '../api/inventoryRequestApi'
-import { ROLES, normaliseRole } from '../App'
+import { ROLES, normaliseRole } from '../config/roles'
 import WarehouseLocationSelector from './WarehouseLocationSelector'
 
 // Format datetime with time for display on cards

@@ -1,8 +1,4 @@
--- Add password management fields to User table
-
-ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "mustChangePassword" BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "passwordChangedAt"  TIMESTAMP(3);
-ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "otpHash"            TEXT;
-ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "otpExpiresAt"       TIMESTAMP(3);
-ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "otpResetToken"      TEXT;
-ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "otpResetTokenExp"   TIMESTAMP(3);
+-- Superseded by 20260323000003_add_password_management_fields.
+-- OTP-based reset (otpHash, otpExpiresAt, otpResetToken, otpResetTokenExp) was removed.
+-- mustChangePassword and passwordChangedAt are now handled in the later migration.
+-- This file is kept as a placeholder to preserve migration history ordering.

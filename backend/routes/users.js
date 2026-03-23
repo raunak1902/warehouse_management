@@ -1,23 +1,18 @@
 /**
  * backend/routes/users.js
  * ────────────────────────
- * SuperAdmin-only user management.
+ * SuperAdmin-only user management (NO EMAIL SENDING)
  *
- * Changes from original:
- *  - CREATE: no longer accepts a password from the form.
- *            Backend generates a random temp password and emails it.
- *            Sets mustChangePassword: true.
- *  - UPDATE: password field is ignored — SuperAdmin cannot set passwords.
- *  - NEW POST /:id/reset-password: generates new temp password,
- *            emails it to user, sets mustChangePassword: true.
+ * Changes:
+ *  - CREATE: Generates temp password, returns it in response (no email)
+ *  - UPDATE: Password changes not allowed here
+ *  - POST /:id/reset-password: Generates new temp password, returns it (no email)
  */
 
 import express        from 'express'
 import { PrismaClient } from '@prisma/client'
 import bcrypt         from 'bcryptjs'
-import crypto         from 'crypto'
 import authMiddleware, { isSuperAdmin } from '../middleware/auth.js'
-import { sendWelcomeEmail, sendPasswordResetEmail } from '../utils/mailer.js'
 
 const router = express.Router()
 const prisma  = new PrismaClient()
@@ -64,6 +59,8 @@ router.get('/', async (req, res) => {
         createdAt:          u.createdAt,
         mustChangePassword: u.mustChangePassword,
         passwordChangedAt:  u.passwordChangedAt,
+        accountLockedUntil: u.accountLockedUntil,
+        failedLoginAttempts: u.failedLoginAttempts,
       }))
     )
   } catch (err) {
@@ -72,7 +69,7 @@ router.get('/', async (req, res) => {
 })
 
 // ── CREATE user ───────────────────────────────────────────────────────────────
-// Password is NOT accepted from the form — backend generates and emails it
+// Password is generated and RETURNED in response (SuperAdmin must share manually)
 router.post('/', async (req, res) => {
   const { name, email, role: roleName, status = 'Active' } = req.body
 
@@ -96,18 +93,12 @@ router.post('/', async (req, res) => {
         roleId:             role.id,
         status,
         mustChangePassword: true,
+        failedLoginAttempts: 0,
       },
       include: { role: true },
     })
 
-    // Email the temporary password to the user
-    try {
-      await sendWelcomeEmail({ to: user.email, name: user.name, tempPassword })
-    } catch (mailErr) {
-      // Log but don't fail the request — admin can trigger a reset manually
-      console.error('[createUser] Failed to send welcome email:', mailErr.message)
-    }
-
+    // Return temp password in response (SuperAdmin sees it ONCE)
     res.status(201).json({
       id:                 user.id,
       name:               user.name,
@@ -116,7 +107,7 @@ router.post('/', async (req, res) => {
       status:             user.status,
       createdAt:          user.createdAt,
       mustChangePassword: user.mustChangePassword,
-      emailSent:          true,
+      tempPassword:       tempPassword, // ← SuperAdmin must copy this!
     })
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ message: 'Email already in use' })
@@ -125,7 +116,7 @@ router.post('/', async (req, res) => {
 })
 
 // ── UPDATE user ───────────────────────────────────────────────────────────────
-// Password changes are intentionally NOT allowed here — use reset-password
+// Password changes are intentionally NOT allowed here
 router.put('/:id', async (req, res) => {
   const id = parseInt(req.params.id)
   const { name, email, role: roleName, status } = req.body
@@ -172,7 +163,7 @@ router.put('/:id', async (req, res) => {
 
 // ── POST /:id/reset-password ──────────────────────────────────────────────────
 // SuperAdmin triggers a password reset for any user.
-// Generates a new temp password, emails it, forces change on next login.
+// Generates a new temp password and RETURNS it (SuperAdmin must share manually)
 router.post('/:id/reset-password', async (req, res) => {
   const id = parseInt(req.params.id)
   try {
@@ -185,27 +176,21 @@ router.post('/:id/reset-password', async (req, res) => {
     await prisma.user.update({
       where: { id },
       data: {
-        password:           hashed,
-        mustChangePassword: true,
-        passwordChangedAt:  null,
-        // Clear any existing OTP state
-        otpHash:            null,
-        otpExpiresAt:       null,
-        otpResetToken:      null,
-        otpResetTokenExp:   null,
+        password:            hashed,
+        mustChangePassword:  true,
+        passwordChangedAt:   null,
+        failedLoginAttempts: 0,
+        accountLockedUntil:  null,
       },
     })
 
-    try {
-      await sendPasswordResetEmail({ to: user.email, name: user.name, tempPassword })
-    } catch (mailErr) {
-      console.error('[resetPassword] Email failed:', mailErr.message)
-      return res.status(500).json({
-        message: 'Password was reset but the email could not be sent. Check your GMAIL_USER and GMAIL_APP_PASSWORD environment variables.',
-      })
-    }
-
-    res.json({ message: `Password reset. A temporary password has been sent to ${user.email}.` })
+    // Return temp password in response (SuperAdmin sees it ONCE)
+    res.json({ 
+      message: `Password reset for ${user.name}`,
+      tempPassword: tempPassword, // ← SuperAdmin must copy this!
+      email: user.email,
+      name: user.name,
+    })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

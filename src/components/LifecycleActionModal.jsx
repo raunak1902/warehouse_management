@@ -23,7 +23,7 @@ import {
   lifecycleRequestApi, STEP_META, VALID_NEXT_STEPS, HEALTH_OPTIONS,
   PROOF_CONFIG, HEALTH_REQUIRES_PROOF, MAX_PROOF_FILES, MAX_FILE_SIZE_MB,
 } from '../api/lifecycleRequestApi'
-import { normaliseRole } from '../App'
+import { normaliseRole } from '../config/roles'
 
 // ── Step icon map ──────────────────────────────────────────────────────────────
 const STEP_ICONS = {

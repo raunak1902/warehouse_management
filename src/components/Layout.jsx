@@ -6,11 +6,11 @@ import {
   ClipboardList, Shield, Bell, Clock, CheckCircle2, XCircle, ChevronRight as Arrow,
   KeyRound, UserCircle2, ChevronDown,
 } from 'lucide-react'
-import { normaliseRole, ROLES } from '../App'
+import { normaliseRole, ROLES } from '../config/roles'
 import { STEP_META } from '../api/lifecycleRequestApi'
 import { useSSENotifications } from '../hooks/useSSENotifications'
 import NotificationToast from './NotificationToast'
-import ChangePasswordModal from './ChangePasswordModal'
+import ChangePasswordModal from './ChangePassword'
 import LoginBriefing from './LoginBriefing'
 import { API_URL } from '../config/api'
 

@@ -37,12 +37,10 @@ model User {
   role                Role               @relation(fields: [roleId], references: [id])
 
   // Password management
-  mustChangePassword  Boolean            @default(false)
+  mustChangePassword  Boolean   @default(true)
   passwordChangedAt   DateTime?
-  otpHash             String?
-  otpExpiresAt        DateTime?
-  otpResetToken       String?
-  otpResetTokenExp    DateTime?
+  failedLoginAttempts Int       @default(0)
+  accountLockedUntil  DateTime?
 
   // Existing relations
   ExpenseRequest   ExpenseRequest[]

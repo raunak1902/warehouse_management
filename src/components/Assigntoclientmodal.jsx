@@ -7,7 +7,7 @@ import {
   Map, Globe,
 } from 'lucide-react'
 import { useInventory } from '../context/InventoryContext'
-import { normaliseRole, ROLES } from '../App'
+import { normaliseRole, ROLES } from '../config/roles'
 import DeploymentLocationSelector from './DeploymentLocationSelector'
 import { API_URL } from '../config/api'
 

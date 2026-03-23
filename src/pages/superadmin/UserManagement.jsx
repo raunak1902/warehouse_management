@@ -1,6 +1,9 @@
 import { useState } from 'react'
-import { Plus, Edit, Trash2, Search, Mail, User, Shield, Eye, EyeOff, RefreshCw, KeyRound, AlertTriangle } from 'lucide-react'
+import { Plus, Edit, Trash2, Search, Mail, User, Shield, Eye, EyeOff, RefreshCw, RotateCcw, Lock, KeyRound } from 'lucide-react'
 import { useSuperAdmin } from '../../context/SuperAdminContext'
+import TempPasswordModal from '../../components/TempPasswordModal'
+
+const API_URL = import.meta.env.VITE_API_URL || ''
 
 const ROLE_COLORS = {
   SuperAdmin: 'bg-purple-100 text-purple-800',
@@ -15,16 +18,17 @@ const UserManagement = () => {
     createUser, updateUser, deleteUser, toggleUserStatus, fetchUsers,
   } = useSuperAdmin()
 
-  const [showModal,    setShowModal]    = useState(false)
-  const [editingUser,  setEditingUser]  = useState(null)
-  const [searchTerm,   setSearchTerm]   = useState('')
-  const [filterRole,   setFilterRole]   = useState('All')
-  const [submitting,   setSubmitting]   = useState(false)
-  const [formError,    setFormError]    = useState(null)
-  const [resetingId,   setResetingId]   = useState(null)
-  const [resetMsg,     setResetMsg]     = useState(null)
-  const [formData,     setFormData]     = useState({
-    name: '', email: '',
+  const [showModal,             setShowModal]             = useState(false)
+  const [editingUser,           setEditingUser]           = useState(null)
+  const [searchTerm,            setSearchTerm]            = useState('')
+  const [filterRole,            setFilterRole]            = useState('All')
+  const [showPassword,          setShowPassword]          = useState(false)
+  const [submitting,            setSubmitting]            = useState(false)
+  const [formError,             setFormError]             = useState(null)
+  const [showTempPasswordModal, setShowTempPasswordModal] = useState(false)
+  const [tempPasswordData,      setTempPasswordData]      = useState(null)
+  const [formData,              setFormData]              = useState({
+    name: '', email: '', password: '',
     role: roles[0]?.name || 'GroundTeam', status: 'Active',
   })
 
@@ -41,11 +45,12 @@ const UserManagement = () => {
     setFormError(null)
     if (user) {
       setEditingUser(user)
-      setFormData({ name: user.name, email: user.email, role: user.role, status: user.status })
+      setFormData({ name: user.name, email: user.email, password: '', role: user.role, status: user.status })
     } else {
       setEditingUser(null)
-      setFormData({ name: '', email: '', role: roles[0]?.name || 'GroundTeam', status: 'Active' })
+      setFormData({ name: '', email: '', password: '', role: roles[0]?.name || 'GroundTeam', status: 'Active' })
     }
+    setShowPassword(false)
     setShowModal(true)
   }
 
@@ -57,16 +62,41 @@ const UserManagement = () => {
     setSubmitting(true)
     try {
       const body = { ...formData }
+      if (editingUser && !body.password) delete body.password
       if (editingUser) {
         await updateUser(editingUser.id, body)
+        handleClose()
       } else {
-        await createUser(body)
+        // createUser returns the response with tempPassword
+        const result = await createUser(body)
+        if (result?.tempPassword) {
+          setTempPasswordData(result)
+          setShowTempPasswordModal(true)
+        }
+        handleClose()
       }
-      handleClose()
     } catch (err) {
       setFormError(err.message)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handleResetPassword = async (user) => {
+    if (!window.confirm(`Reset password for ${user.name}? They will need to set a new password on next login.`)) return
+    try {
+      const token = localStorage.getItem('token')
+      const { default: axios } = await import('axios')
+      const response = await axios.post(
+        `${API_URL}/api/users/${user.id}/reset-password`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      setTempPasswordData(response.data)
+      setShowTempPasswordModal(true)
+      fetchUsers()
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to reset password')
     }
   }
 
@@ -75,47 +105,31 @@ const UserManagement = () => {
     try { await deleteUser(id) } catch (err) { alert(err.message) }
   }
 
-  const handleResetPassword = async (user) => {
-    if (!window.confirm(`Reset password for ${user.name}? A new temporary password will be emailed to ${user.email}.`)) return
-    setResetingId(user.id)
-    setResetMsg(null)
-    try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/users/${user.id}/reset-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.message || 'Failed to reset password')
-      setResetMsg({ id: user.id, msg: data.message, ok: true })
-      setTimeout(() => setResetMsg(null), 5000)
-    } catch (err) {
-      setResetMsg({ id: user.id, msg: err.message, ok: false })
-      setTimeout(() => setResetMsg(null), 5000)
-    } finally {
-      setResetingId(null)
-    }
-  }
-
-  // Unique roles from actual roles list for filter dropdown
   const roleFilterOptions = ['All', ...roles.map(r => r.name)]
 
   const counts = {
-    total:  users.length,
-    active: users.filter(u => u.status === 'Active').length,
+    total:    users.length,
+    active:   users.filter(u => u.status === 'Active').length,
+    inactive: users.filter(u => u.status !== 'Active').length,
+    pending:  users.filter(u => u.mustChangePassword).length,
   }
 
   return (
     <div className="p-6 space-y-6">
+
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">User Management</h2>
           <p className="text-gray-500 mt-0.5 text-sm">Create and manage user accounts</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={fetchUsers} className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors" title="Refresh">
+          <button onClick={fetchUsers}
+            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors" title="Refresh">
             <RefreshCw size={18} />
           </button>
-          <button onClick={() => handleOpenModal()} className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium">
+          <button onClick={() => handleOpenModal()}
+            className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-sm font-medium">
             <Plus size={18} /> Create User
           </button>
         </div>
@@ -131,12 +145,12 @@ const UserManagement = () => {
           <p className="text-2xl font-bold text-gray-900">{counts.active}</p>
           <p className="text-xs text-gray-500 mt-0.5">Active</p>
         </div>
-        <div className="rounded-xl border bg-blue-50 border-blue-200 p-4">
-          <p className="text-2xl font-bold text-gray-900">{roles.length}</p>
-          <p className="text-xs text-gray-500 mt-0.5">Roles Available</p>
+        <div className="rounded-xl border bg-amber-50 border-amber-200 p-4">
+          <p className="text-2xl font-bold text-gray-900">{counts.pending}</p>
+          <p className="text-xs text-gray-500 mt-0.5">Must Change Password</p>
         </div>
         <div className="rounded-xl border bg-red-50 border-red-200 p-4">
-          <p className="text-2xl font-bold text-gray-900">{users.filter(u => u.status !== 'Active').length}</p>
+          <p className="text-2xl font-bold text-gray-900">{counts.inactive}</p>
           <p className="text-xs text-gray-500 mt-0.5">Inactive</p>
         </div>
       </div>
@@ -155,7 +169,7 @@ const UserManagement = () => {
         </select>
       </div>
 
-      {/* API Error Banner */}
+      {/* API Error */}
       {errors.users && (
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm flex justify-between">
           <span>Error: {errors.users}</span>
@@ -172,19 +186,22 @@ const UserManagement = () => {
                 <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Password</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Created</th>
                 <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {isLoading && (
-                <tr><td colSpan={5} className="px-5 py-12 text-center text-gray-400 text-sm">Loading users…</td></tr>
+                <tr><td colSpan={6} className="px-5 py-12 text-center text-gray-400 text-sm">Loading users…</td></tr>
               )}
               {!isLoading && filteredUsers.length === 0 && (
-                <tr><td colSpan={5} className="px-5 py-12 text-center text-gray-400 text-sm">No users found</td></tr>
+                <tr><td colSpan={6} className="px-5 py-12 text-center text-gray-400 text-sm">No users found</td></tr>
               )}
               {!isLoading && filteredUsers.map(user => (
                 <tr key={user.id} className="hover:bg-gray-50 transition-colors">
+
+                  {/* User */}
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
@@ -196,11 +213,15 @@ const UserManagement = () => {
                       </div>
                     </div>
                   </td>
+
+                  {/* Role */}
                   <td className="px-5 py-4">
                     <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${ROLE_COLORS[user.role] ?? 'bg-gray-100 text-gray-700'}`}>
                       <Shield size={11} />{user.role}
                     </span>
                   </td>
+
+                  {/* Status — clickable toggle */}
                   <td className="px-5 py-4">
                     <button onClick={() => toggleUserStatus(user)}
                       className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium cursor-pointer transition-colors ${
@@ -211,21 +232,42 @@ const UserManagement = () => {
                       {user.status}
                     </button>
                   </td>
-                  <td className="px-5 py-4 text-sm text-gray-500">{user.createdAt?.split('T')[0] ?? '—'}</td>
+
+                  {/* Password status */}
                   <td className="px-5 py-4">
-                    {resetMsg?.id === user.id && (
-                      <p className={`text-xs mb-1 ${resetMsg.ok ? 'text-emerald-600' : 'text-red-600'}`}>{resetMsg.msg}</p>
+                    {user.mustChangePassword ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                        <KeyRound size={11} /> Temp
+                      </span>
+                    ) : user.accountLockedUntil && new Date() < new Date(user.accountLockedUntil) ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                        <Lock size={11} /> Locked
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        OK
+                      </span>
                     )}
+                  </td>
+
+                  {/* Created */}
+                  <td className="px-5 py-4 text-sm text-gray-500">{user.createdAt?.split('T')[0] ?? '—'}</td>
+
+                  {/* Actions */}
+                  <td className="px-5 py-4">
                     <div className="flex items-center justify-end gap-1">
-                      {user.mustChangePassword && (
-                        <span className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full font-medium mr-1">Temp pw</span>
-                      )}
-                      <button onClick={() => handleResetPassword(user)} disabled={resetingId === user.id} title="Reset password — sends temp password to user's email"
-                        className="p-2 text-amber-500 hover:bg-amber-50 rounded-lg transition-colors disabled:opacity-40">
-                        {resetingId === user.id ? <div className="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" /> : <KeyRound size={16} />}
+                      <button onClick={() => handleOpenModal(user)}
+                        className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors" title="Edit">
+                        <Edit size={16} />
                       </button>
-                      <button onClick={() => handleOpenModal(user)} className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"><Edit size={16} /></button>
-                      <button onClick={() => handleDelete(user.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16} /></button>
+                      <button onClick={() => handleResetPassword(user)}
+                        className="p-2 text-orange-500 hover:bg-orange-50 rounded-lg transition-colors" title="Reset Password">
+                        <RotateCcw size={16} />
+                      </button>
+                      <button onClick={() => handleDelete(user.id)}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Delete">
+                        <Trash2 size={16} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -235,12 +277,15 @@ const UserManagement = () => {
         </div>
       </div>
 
-      {/* Modal */}
+      {/* Create / Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="p-6 border-b border-gray-100">
               <h3 className="text-xl font-bold text-gray-900">{editingUser ? 'Edit User' : 'Create New User'}</h3>
+              {!editingUser && (
+                <p className="text-xs text-gray-500 mt-1">A temporary password will be generated and shown once.</p>
+              )}
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               {formError && (
@@ -248,20 +293,32 @@ const UserManagement = () => {
               )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Full Name</label>
-                <input type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })}
+                <input type="text" value={formData.name}
+                  onChange={e => setFormData({ ...formData, name: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
                   placeholder="e.g. Rahul Verma" required />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Email Address</label>
-                <input type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })}
+                <input type="email" value={formData.email}
+                  onChange={e => setFormData({ ...formData, email: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
                   placeholder="user@edsignage.com" required />
               </div>
-              {!editingUser && (
-                <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5">
-                  <AlertTriangle size={15} className="text-blue-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-xs text-blue-700">A temporary password will be generated and emailed to the user. They will be required to change it on first login.</p>
+              {/* Password field only shown when editing — create auto-generates it */}
+              {editingUser && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">New Password <span className="text-gray-400 font-normal">(leave blank to keep)</span></label>
+                  <div className="relative">
+                    <input type={showPassword ? 'text' : 'password'} value={formData.password}
+                      onChange={e => setFormData({ ...formData, password: e.target.value })}
+                      className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 outline-none"
+                      placeholder="Min 8 characters" minLength={0} />
+                    <button type="button" onClick={() => setShowPassword(s => !s)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
                 </div>
               )}
               <div>
@@ -298,6 +355,13 @@ const UserManagement = () => {
           </div>
         </div>
       )}
+
+      {/* Temp Password Modal */}
+      <TempPasswordModal
+        isOpen={showTempPasswordModal}
+        onClose={() => { setShowTempPasswordModal(false); setTempPasswordData(null) }}
+        userData={tempPasswordData}
+      />
     </div>
   )
 }
